@@ -1,0 +1,24 @@
+# Cache headers for static hosts that read this file (Netlify, Cloudflare Pages).
+#
+# Everything under /pyodide/ is a copy of one pinned release of the runtime - about 13 MB,
+# the same bytes for the life of that pin - so it is served immutable and a repeat visit
+# pays nothing for it. A version bump changes `package.json` and so changes these files,
+# which is why the pin, not a query string, is what busts the cache: bump the dependency,
+# re-run `npm run generate`, and redeploy.
+/pyodide/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# And the solid modeller beside it: half a megabyte of one pinned Manifold release, on the
+# same terms and for the same reason.
+/manifold/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Vite's own output is content-hashed, so the same rule is safe for it.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# The entry point must not be cached, or a deploy would never reach anybody.
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache

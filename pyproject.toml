@@ -1,0 +1,232 @@
+[project]
+name = "bench"
+version = "0.1.0"
+description = "Workshop objects as code: a parametric geometry vocabulary for laser, print and CNC"
+requires-python = ">=3.15"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bench"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "mypy>=1.19",
+    "ruff>=0.14",
+    "playwright>=1.56,<1.57",
+]
+
+[tool.uv]
+prerelease = "allow"
+
+# The layer graph of src/bench, enforced by the user's `pypeeker` linter (not installed in
+# every environment; tests/unit/test_layer_graph.py enforces the same graph with `ast` so the
+# rule holds even where the linter isn't available). Each key is a module under src/bench
+# (dotted for a package submodule); its value is every bench module it may import, transitive
+# lower layers listed explicitly. `__init__` modules are barrels (imports and `__all__` only)
+# and are exempt.
+[tool.pypeeker.import-boundaries]
+geometry = []
+# telemetry is the standard library's logging and a span record with the seam a tracer plugs
+# into: nothing of bench's, so every layer that has something to say may import it.
+telemetry = []
+topology = ["geometry"]
+# The fastener table is data and nothing else: one record per size, one enum, one function.
+# It imports nothing at all, which is what lets both `model` (a material's fit table) and
+# `features` (a bore's diameter) read it without either of them reaching upward.
+fasteners = []
+model = ["geometry", "topology", "fasteners"]
+# The verbs a script writes are a chain of three, each importing only downward: ops is the
+# flat half of it - the sketch and the questions a sheet asks of one - and knows nothing of
+# bodies at all, which is what lets nest and export read it without a body vocabulary
+# arriving behind them.
+ops = ["geometry", "topology"]
+# solids is where a body starts: the sweeps, the booleans and the verbs whose subject is
+# `Wire | Face | Solid`, which sit here rather than in `ops` because a body is the widest of
+# the three and this is the lowest layer that knows what one is. It reads `model` for the ref
+# table `plane_of` looks a named face up in.
+solids = ["geometry", "topology", "model", "ops"]
+# features is the hole and the geometry that makes one printable, and it is a layer of its
+# own because it is *built* out of the two below it - a bore is an extrusion cut away, a
+# countersink a loft of two circles. It is also the only one of the three that reads
+# `fasteners` and `model`, which is where a screw's table and a part's way up come from.
+features = ["geometry", "topology", "model", "fasteners", "ops", "solids"]
+joints = ["geometry", "topology", "model", "ops"]
+# Parts are nested before they are exported, so export imports nest (for `Sheet`) and nest
+# imports nothing of export: a `Placement` carries the placed `Part`, not rendered paths.
+nest = ["geometry", "topology", "model", "ops"]
+# kernel is the seam a solid modeller is plugged into and nothing more: a Protocol and the
+# Mesh record. It imports no modeller, and neither may anything else under src/bench - only
+# adapters/ may, which is the rule test_layer_graph.py enforces beside this table. export
+# imports it for the Mesh that stl() and three_mf() write; it never builds one.
+kernel = ["geometry", "topology", "model"]
+export = ["geometry", "topology", "model", "ops", "nest", "kernel"]
+# checks take the kernel as a parameter, exactly as kernel.py takes no implementation: a
+# check that cannot be measured answers UNCHECKED instead of passing. They read the records
+# (a material, an orientation, a build volume) off `model`, so they need no library either.
+checks = ["geometry", "topology", "model", "kernel", "facets"]
+# meshing is the half of building a body that needs no modeller: which named face each
+# triangle of a fresh primitive lies on, and what each triangle of a result answers to. Flat
+# numbers in and out, so a kernel adapter builds and this decides; it imports no modeller.
+meshing = ["geometry", "topology", "model", "kernel"]
+# triangulate is ear clipping on flat (u, v) points: arithmetic, nothing of bench's, so any
+# layer that has a region to fill may read it.
+triangulate = []
+# plates is a laser part swept into the plate it is cut from, named by the refs its cut paths
+# already carry - which is why it sweeps the plate itself rather than asking a kernel, whose
+# names for the same walls would be `side-3`. It hands back the kernel's Mesh record.
+plates = ["geometry", "topology", "model", "ops", "kernel", "triangulate"]
+# facets reads a mesh as triangles - normals, centres, and the ray cast through a grid that
+# measures how thick the material is under each - for `checks` and `survey` to share, so the
+# wall a check measures and the wall a survey reports are the same number by construction.
+facets = ["geometry", "kernel"]
+# placement reads a `[reference]` table into a plane and moves a mesh through it - the frame
+# a maker settled on, applied once, at the edge, before the survey or anything else sees the
+# body. It sits beside `facets`: geometry and the `Mesh` record, and nothing a script writes.
+placement = ["geometry", "kernel"]
+# imported wraps the `Mesh` a host dropped as a `Solid`, so a candidate can be boolean
+# compared against a real object and not only survey-diffed against one. It is the one module
+# that knows both records, which is exactly why it is not a function in `solids`: that layer
+# promises no kernel, and putting it there would hand the seam to `features` and every
+# library above it. It builds a recipe and evaluates nothing, so it needs no modeller either.
+imported = ["geometry", "topology", "kernel"]
+# survey measures a body somebody else made: a mesh in, numbers out. It sits beside `checks`
+# rather than above the verbs because it builds nothing and knows no vocabulary - it reads
+# the `Mesh` record and answers about the triangles in it, which is why reading a downloaded
+# model needs no modeller and no library.
+survey = ["geometry", "kernel", "facets"]
+# report writes a survey out as text, from the survey record alone: it reads `survey` for the
+# records and `geometry` for the points in them, and nothing of the kernel or the mesh, which
+# is what keeps it as modeller-free as the survey it renders.
+report = ["geometry", "survey"]
+"library.gridfinity" = [
+    "geometry",
+    "topology",
+    "model",
+    "ops",
+    "solids",
+    "joints",
+    "nest",
+    "export",
+]
+# The printed bin reads the print domain for its material and its fits - a library may
+# import another library, and this is the pair that proves it: gridfinity3d is an object and
+# print is the domain it is made in.
+"library.gridfinity3d" = [
+    "geometry",
+    "topology",
+    "model",
+    "ops",
+    "solids",
+    "features",
+    "fasteners",
+    "library.print",
+]
+# print is the print domain: the filament profiles, the fit table and the build volumes,
+# plus the one import a script needs to reach the whole vocabulary. It sits above `features`
+# because it re-exports the printable-hole geometry that `hole` is built from - and
+# `features` imports nothing under `library/`, which is what keeps that direction a DAG.
+"library.print" = ["geometry", "topology", "model", "ops", "solids", "features", "fasteners"]
+# The scene is the shape of an answer rather than a step of the work: the closed TypedDicts
+# a run comes back as, mirrored field for field by `web/src/scene.ts`. It sits this high
+# because the records name what the layers below them produced - a severity, a path kind, a
+# process - and it builds nothing itself, which is why `script` may import it and not the
+# other way about.
+scene = ["geometry", "topology", "model", "ops", "nest", "export", "kernel", "checks"]
+# params reads a script's settings class into the panel records `scene` names, and a table of
+# untrusted values into an instance of it. It sits just above `scene`, whose records it makes,
+# and below `script`, which calls it: a settings class and a mapping in, data out, and no run
+# anywhere in sight - which is what lets a host other than the script runtime use it.
+params = ["scene"]
+# stage is where a scene's bodies stand in the 3D view and the floor under them: arithmetic on
+# the kernel's meshes, done in Python so the viewer is handed corners already placed.
+stage = ["topology", "model", "kernel"]
+# transport is a scene as it crosses to the browser: JSON, the buffers a mesh is taken out into,
+# and which files are bytes. It reads the records and nothing else.
+transport = ["scene"]
+# views turns what a run collected into the scene: nesting, the bodies - a laser part's plate,
+# a printed part's body built with the kernel - the stage, the files, and every record as its
+# view. It runs no script and knows nothing of one.
+views = [
+    "topology",
+    "model",
+    "ops",
+    "nest",
+    "export",
+    "kernel",
+    "plates",
+    "checks",
+    "scene",
+    "stage",
+    "telemetry",
+    "transport",
+]
+# script runs a user's script; it does not know which library that script reaches for, so it
+# imports none of them. A host that wants one pre-bound passes it to run(..., extras=...).
+# The same goes for the kernel: script names the Protocol and is handed an implementation,
+# which is also how the checks it injects get one. What it collects, views builds into a scene.
+script = [
+    "geometry",
+    "topology",
+    "model",
+    "nest",
+    "kernel",
+    "checks",
+    "scene",
+    "params",
+    "telemetry",
+    "views",
+]
+# The browser's kernel: it walks the tree itself and asks a Manifold living in JavaScript for
+# each sweep and boolean by handle, deciding every name with `meshing`. It imports no
+# modeller at all - the one it drives is handed to it.
+"adapters.browser" = ["geometry", "topology", "model", "kernel", "meshing", "telemetry"]
+# worker is the host the browser's worker calls: it routes logging and spans to the page and
+# runs a script with the kernel, so it sits above everything it wires together. Since
+# decision-4 it also places the reference the worker hands `reference=` - `kernel` for the
+# `Mesh` it moves, `placement` for the move itself, `report` for `surveyed`'s own report,
+# mirroring `tools/build.py`'s `[reference]` handling one edge over.
+worker = [
+    "script",
+    "transport",
+    "adapters.browser",
+    "library.gridfinity",
+    "survey",
+    "telemetry",
+    "kernel",
+    "placement",
+    "report",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not e2e' --strict-markers"
+markers = [
+    "unit: one module, pure functions in, values out",
+    "functional: several modules through the public API, still pure",
+    "adapter: a real world boundary (JSON contract, the Pyodide runtime), no doubles",
+    "e2e: the built app driven in a browser; run with -m e2e",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py315"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "DOC501", "DOC502"]
+preview = true
+# An unused import is still reported, and the gate still fails on one - it just is not
+# deleted for you. `.claude/hooks/format-python.sh` runs `ruff check --fix` after every
+# single edit, and an import written one edit before the line that uses it is unused for
+# exactly that moment, which was long enough to lose it four times in one sitting. The
+# fix is the one rule whose automatic repair is wrong for something that edits a file in
+# more than one pass.
+unfixable = ["F401"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests", "tools"]

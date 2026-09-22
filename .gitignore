@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# An agent given its own worktree checks the repository out under here. The hooks and the
+# settings beside it are the project's and are tracked; a working copy of the project inside
+# the project is not.
+.claude/worktrees/

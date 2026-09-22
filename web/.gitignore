@@ -1,0 +1,8 @@
+node_modules/
+dist/
+public/pyodide/
+public/manifold/
+src/generated/
+e2e/out/
+qa/out/
+.vitest/

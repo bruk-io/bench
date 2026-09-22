@@ -1,0 +1,22 @@
+# The cabinet this project builds, as against what a cabinet is.
+#
+# `gridfinity_cabinet.py` declares these settings and their defaults; this says which one of
+# them you are making. A field left out of here keeps the script's own default, so a file
+# only has to carry what you changed.
+#
+#   uv run python -m tools.build examples/gridfinity_cabinet.py --out out/
+#
+# The same values the parameters panel edits. See decision-3.
+
+[values]
+units_x = 4
+units_y = 2
+height_u = 3
+drawers = 6
+columns = 1
+kerf = 0.25
+baseplate = true
+# One label per drawer, or none at all and they number themselves. Six here because
+# `drawers` above is six, and the script refuses a list that does not match - which is
+# worth knowing: a values file is checked by the script's own rules, not just parsed.
+labels = "bits, taps, drivers, hinges, screws, sanding"

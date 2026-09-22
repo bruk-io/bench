@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bench</title>
+  </head>
+  <body>
+    <header id="titlebar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M2 5h3v2h3V5h4v2h3V5h3v13H2z" />
+        </svg>
+        <span class="brand-name">bench</span>
+      </div>
+
+      <span id="open-name" class="open-name" title="The script that is open"></span>
+      <span id="made" class="chip"></span>
+
+      <div class="spacer"></div>
+
+      <bench-examples-menu id="examples-menu"></bench-examples-menu>
+      <button id="stop" type="button" disabled title="Stop the running script">Stop</button>
+      <button id="run" type="button" class="primary" title="Run now (Ctrl/Cmd+Enter)">
+        Run <kbd>⌘↵</kbd>
+      </button>
+    </header>
+
+    <div id="shell">
+      <!-- The rail switches what the sidebar is; it does not fire commands. Problems is the
+           one exception, and it says so: it reveals the panel's Problems tab, which is where
+           a finding lives, rather than being a sixth container saying the same thing twice. -->
+      <nav id="rail" aria-label="What the sidebar shows">
+        <button
+          id="rail-files"
+          class="ric"
+          type="button"
+          data-container="files"
+          aria-pressed="false"
+          title="Your scripts"
+        >
+          <svg class="ic" viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M2.5 5.5h5l1.5 2h8.5v8.5h-15z" />
+          </svg>
+        </button>
+        <button
+          id="rail-refs"
+          class="ric"
+          type="button"
+          data-container="refs"
+          aria-pressed="false"
+          title="What this run named"
+        >
+          <svg class="ic" viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M4 4v11h4M4 9.5h4M13 2.5h4v3h-4zM13 8h4v3h-4zM13 13.5h4v3h-4z" />
+          </svg>
+        </button>
+        <button
+          id="rail-parameters"
+          class="ric"
+          type="button"
+          data-container="parameters"
+          aria-pressed="false"
+          title="The parameters this script declares"
+        >
+          <svg class="ic" viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M3 6h14M3 10h14M3 14h14" />
+            <circle cx="7" cy="6" r="2" />
+            <circle cx="13" cy="10" r="2" />
+            <circle cx="6" cy="14" r="2" />
+          </svg>
+          <span id="rail-param-count" class="badge" hidden></span>
+        </button>
+        <button
+          id="rail-sheets"
+          class="ric"
+          type="button"
+          data-container="sheets"
+          aria-pressed="false"
+          title="The sheets this run nested"
+        >
+          <svg class="ic" viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M2.5 3.5h15v13h-15zM2.5 8h15M8 8v8.5M13 3.5V8" />
+          </svg>
+        </button>
+
+        <div class="rail-gap"></div>
+
+        <button id="rail-problems" class="ric" type="button" title="What this run reported">
+          <svg class="ic" viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M10 3 2.5 16.5h15zM10 8.5v3.5M10 14.2v.3" />
+          </svg>
+          <span id="rail-problem-count" class="badge badge-bad" hidden></span>
+        </button>
+      </nav>
+
+      <aside id="sidebar">
+        <section id="container-files" class="container" aria-labelledby="head-files" hidden>
+          <div class="container-head">
+            <span id="head-files" class="container-title">Projects</span>
+          </div>
+          <bench-explorer id="explorer"></bench-explorer>
+        </section>
+
+        <section id="container-refs" class="container" aria-labelledby="head-refs" hidden>
+          <div class="container-head">
+            <span id="head-refs" class="container-title">Refs</span>
+            <span id="refs-count" class="container-count"></span>
+          </div>
+          <bench-refs-tree id="refs-tree"></bench-refs-tree>
+          <p class="container-foot">
+            Click a face to reveal it here; click a row to light it up in the view.
+          </p>
+        </section>
+
+        <section
+          id="container-parameters"
+          class="container"
+          aria-labelledby="head-parameters"
+          hidden
+        >
+          <div class="container-head">
+            <span id="head-parameters" class="container-title">Parameters</span>
+            <span id="param-count" class="container-count"></span>
+            <button id="reset" type="button" class="link push" disabled>reset</button>
+          </div>
+          <div class="container-body">
+            <bench-params id="params"></bench-params>
+          </div>
+        </section>
+
+        <section id="container-sheets" class="container" aria-labelledby="head-sheets" hidden>
+          <div class="container-head">
+            <span id="head-sheets" class="container-title">Sheets</span>
+            <span id="sheet-count" class="container-count"></span>
+          </div>
+          <bench-sheets id="sheets-list"></bench-sheets>
+        </section>
+      </aside>
+
+      <main id="centre">
+        <div id="groups">
+          <!-- The editor group: the script, its values file, and any cut sheet opened beside
+               them. The values are the project's other half (decision-3), so their tab is as
+               permanent as the script's: what the panel edits is readable here as the file it is. -->
+          <section class="group group-editor">
+            <div id="editor-tabs" class="tabs" role="tablist" aria-label="Open documents"></div>
+            <div id="panel-script" class="tab-panel" role="tabpanel">
+              <div id="editor" class="editor"></div>
+            </div>
+            <div id="panel-values" class="tab-panel panel-document" role="tabpanel" hidden>
+              <pre id="values-text" class="document-text"></pre>
+            </div>
+            <div id="panel-sheet" class="tab-panel panel-sheet" role="tabpanel" hidden>
+              <img id="sheet-drawing" alt="" />
+            </div>
+            <!-- The survey of a body dropped on the view, written out: a document a maker
+                 reads through and comes back to while writing the script beside it. -->
+            <div id="panel-report" class="tab-panel panel-document" role="tabpanel" hidden>
+              <pre id="report-text" class="document-text"></pre>
+            </div>
+          </section>
+
+          <!-- The view: a pane, never a tab. Ref selection highlights a face here, so this
+               surface can never be the one that is not on screen. -->
+          <section class="group group-view">
+            <div class="viewer-bar">
+              <div class="picked">
+                <span id="selection" class="selection">click any face to get its ref</span>
+                <button
+                  id="insert"
+                  type="button"
+                  class="small"
+                  disabled
+                  title="Insert ref at the cursor (Ctrl/Cmd+I)"
+                >
+                  Insert ref <kbd>⌘I</kbd>
+                </button>
+                <span id="reference" class="reference" hidden>
+                  <span id="reference-name" class="reference-name"></span>
+                  <button
+                    id="reference-report"
+                    type="button"
+                    class="reference-report"
+                    title="Read what the dropped body measures"
+                  >
+                    survey
+                  </button>
+                  <button
+                    id="reference-detect"
+                    type="button"
+                    class="reference-detect"
+                    title="Colour the dropped body's detected faces, and click one to see what it is"
+                    aria-pressed="false"
+                  >
+                    detect faces
+                  </button>
+                  <button
+                    id="reference-clear"
+                    type="button"
+                    class="reference-clear"
+                    title="Forget the dropped body"
+                  >
+                    ✕
+                  </button>
+                </span>
+              </div>
+              <div class="zoombar" role="group" aria-label="View">
+                <button id="zoom-out" type="button" class="zoom" title="Zoom out">−</button>
+                <button id="fit" type="button" title="Fit everything in view">Fit</button>
+                <button id="zoom-in" type="button" class="zoom" title="Zoom in">+</button>
+              </div>
+            </div>
+            <div id="stage" class="stage">
+              <div id="canvas3d" class="canvas canvas-3d"></div>
+              <!-- decision-7's pick: only ever while faces are being detected, which is the
+                   one mode in which a click on the dropped body means anything. There is no
+                   answer needed for "what does this look like with nothing dropped" - the
+                   chip that turns detection on is itself hidden until something is. -->
+              <aside id="pick" class="pick" hidden aria-label="Place the dropped body">
+                <div class="pick-line">
+                  <span class="pick-title">place this body</span>
+                  <span id="pick-frame" class="pick-frame"></span>
+                </div>
+                <p id="pick-read" class="pick-read">
+                  Click a coloured face: what it measures reads here.
+                </p>
+                <div class="pick-line">
+                  <button id="pick-as-origin" type="button" title="Write the point the ray met into origin" disabled>
+                    origin = hit
+                  </button>
+                  <button id="pick-as-corner" type="button" title="Write the nearest corner of the face into origin - the one a named word can be" disabled>
+                    origin = corner
+                  </button>
+                  <button id="pick-as-up" type="button" title="Write this face's own normal into up" disabled>
+                    up = this face
+                  </button>
+                </div>
+                <label class="pick-field" for="pick-origin">origin</label>
+                <input id="pick-origin" class="pick-value" type="text" spellcheck="false" placeholder="low, high, centre or x, y, z" />
+                <label class="pick-field" for="pick-up">up</label>
+                <input id="pick-up" class="pick-value" type="text" spellcheck="false" placeholder="+Z or x, y, z" />
+                <!-- Typed, and deliberately so: decision-7 designs no edge-pick, and this
+                     builds none. -->
+                <label class="pick-field" for="pick-along">along</label>
+                <input id="pick-along" class="pick-value" type="text" spellcheck="false" placeholder="+X or x, y, z (typed)" />
+                <div class="pick-line">
+                  <button id="pick-write" type="button" title="Write these three numbers into the project's [reference] table">
+                    write [reference]
+                  </button>
+                  <button id="pick-unplace" type="button" class="pick-quiet" title="Forget this project's placement, so a pick reads the body as exported again" hidden>
+                    clear placement
+                  </button>
+                </div>
+                <p id="pick-why" class="pick-why"></p>
+              </aside>
+            </div>
+          </section>
+        </div>
+
+        <bench-panel id="run-panel"></bench-panel>
+      </main>
+    </div>
+
+    <footer id="statusbar">
+      <span id="state" class="state" data-state="boot">booting</span>
+      <span id="status" class="status">loading Python…</span>
+      <span id="stale-bundle" class="state" data-state="error" hidden>stale examples</span>
+      <span class="spacer"></span>
+      <span id="timing" class="timing"></span>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

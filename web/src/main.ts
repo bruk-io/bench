@@ -1,0 +1,1497 @@
+/** The app: a workbench. A rail that says what the sidebar is, the script beside the view, a
+ * panel across the bottom and a status bar under everything. Python runs in a worker.
+ *
+ * This module is the wiring and the run's state - what is running, what hung, the override
+ * table, what is selected, which container is open and which documents are - and nothing it
+ * can hand to a module of its own. The projects kept and which is open are `files.ts`, their
+ * values as the TOML document they are kept and shown as is `values.ts`, what the browser
+ * remembers is `storage.ts`, the wording of the status bar and the hints is `status.ts`, the
+ * files a run made are `exports.ts`, the 3D pane that loads on demand is `deferred3d.ts`, and
+ * every fact about a scene - counts, panes, placements - arrives from Python already worked out.
+ *
+ * **The view is a pane, never a tab.** Every other surface here can be covered by something
+ * else; the view cannot. Selecting a ref - from the tree, from the editor's cursor, from a
+ * click on a face - highlights geometry, and a highlight on a surface that is not on screen is
+ * not a feature. So cut sheets open as tabs in the *editor* group, beside the script and its
+ * values file, and the view keeps its own half of the centre whatever else is open. The
+ * survey of a dropped body opens there too, for a different reason: it is a document of a
+ * few hundred lines that a maker reads through and comes back to while writing the script
+ * that replaces the body, and it outlives every run made while it is open - which is what
+ * the panel across the bottom, redrawn by each run at a height for a run's output, is not for.
+ *
+ * **The values file is the truth and the panel is a view of it.** An edit in the parameters
+ * panel is written to the project at once, as every keystroke in the script already is - there
+ * is no save anywhere in this app, and a save for the values alone would have made the file
+ * truthful only after a click. And what is written is what the run *built*: a number the
+ * script's range held at its end comes back from the scene and is written in place of what
+ * was sent, so the file never says `units_x = 9` about a cabinet that was built four wide.
+ */
+import "./styles.css";
+import "./components/organisms/examples-menu";
+import "./components/organisms/explorer";
+import "./components/organisms/panel";
+import "./components/organisms/params";
+import "./components/organisms/refs-tree";
+import "./components/organisms/sheets";
+
+import { type DetectOutcome, type SurveyOutcome, connect } from "./bridge";
+import type { BenchExamplesMenu } from "./components/organisms/examples-menu";
+import type { BenchExplorer } from "./components/organisms/explorer";
+import type { BenchPanel } from "./components/organisms/panel";
+import type { BenchParams } from "./components/organisms/params";
+import type { BenchRefsTree } from "./components/organisms/refs-tree";
+import type { BenchSheets } from "./components/organisms/sheets";
+import { buttons } from "./components/styles";
+import { deferred3d } from "./deferred3d";
+import { save, zip } from "./downloads";
+import * as editor from "./editor";
+import { pictured } from "./exports";
+import {
+  UNTITLED,
+  type Project,
+  type Workspace,
+  adopted,
+  created,
+  deleted,
+  document as projectDocument,
+  duplicated,
+  normalized,
+  opened,
+  renamed,
+  restored,
+  serialized,
+  switched,
+  withExample,
+  withOverrides,
+  withReference,
+  withSource,
+} from "./files";
+import { EXAMPLES, STARTER } from "./generated/pysources";
+import { type Overrides, asBuilt, declaredOnly, parsed, withOverride } from "./overrides";
+import {
+  type NamedOrigin,
+  between,
+  distances,
+  fieldText,
+  fieldValue,
+  mm,
+  resolvedOrigin,
+  resolvedUp,
+  shown,
+} from "./pick";
+import type { OkScene, Scene, SheetView } from "./scene";
+import { STALE_HINT, STALE_MESSAGE, bundleStale } from "./staleness";
+import { HOW_TO_SELECT, failing, made, noBodiesReason, tally } from "./status";
+// `remember`/`forget` are still here for what belongs to this browser rather than to a
+// project - the hang fingerprint, the rail's container, the panel. The projects themselves
+// go through `store` (see `store.ts` on what does not travel).
+import { KEYS, forget, hashOf, remember, remembered } from "./storage";
+import type { ProjectStore } from "./store";
+import { localStore } from "./store-local";
+import { type Level, attach, consoleSink, isLevel, log, timed, userTimingSink } from "./telemetry";
+import { type ReferenceTable, type ReferenceValue, fromToml, stemOf, tomlName } from "./values";
+// A type only: `viewer3d` itself is fetched when the first scene lands (`deferred3d`), and a
+// type import is erased, so naming the shape a pick comes back as costs the bundle nothing.
+import type { DetectHit } from "./viewer3d";
+
+const FIRST = "gridfinity_cabinet.py";
+const DEBOUNCE = 300;
+const WATCHDOG = 15_000;
+const BOOT_TIMEOUT = 60_000;
+const ZOOM_STEP = 1.4;
+
+// Every record the page, the worker and Python make comes through `telemetry`: to the console
+// at the level `bench.log` in localStorage asks for ("debug" to see everything), and onto the
+// User Timing timeline, where the Performance panel draws the spans. A collector - Datadog RUM,
+// Grafana Faro, an OpenTelemetry exporter - is one more `attach` beside these two.
+attach(consoleSink(levelAsked()));
+attach(userTimingSink);
+
+function levelAsked(): Level {
+  const said = remembered(KEYS.log);
+  return isLevel(said) ? said : "info";
+}
+
+/** What to add under any failure: whatever went wrong, the page can always start over. */
+const RELOAD_HINT = "If the app does not come back on its own, reload the page.";
+
+// ---- the bits of the page ----------------------------------------------------
+
+const need = <T extends Element>(id: string): T => {
+  const found = document.getElementById(id);
+  if (found === null) throw new Error(`the page is missing #${id}`);
+  return found as unknown as T;
+};
+
+const ui = {
+  state: need<HTMLSpanElement>("state"),
+  status: need<HTMLSpanElement>("status"),
+  staleBundle: need<HTMLSpanElement>("stale-bundle"),
+  timing: need<HTMLSpanElement>("timing"),
+  openName: need<HTMLSpanElement>("open-name"),
+  madeChip: need<HTMLSpanElement>("made"),
+  run: need<HTMLButtonElement>("run"),
+  stop: need<HTMLButtonElement>("stop"),
+  insert: need<HTMLButtonElement>("insert"),
+  shell: need<HTMLDivElement>("shell"),
+  rail: need<HTMLElement>("rail"),
+  railProblems: need<HTMLButtonElement>("rail-problems"),
+  railProblemCount: need<HTMLSpanElement>("rail-problem-count"),
+  railParamCount: need<HTMLSpanElement>("rail-param-count"),
+  explorer: need<BenchExplorer>("explorer"),
+  examples: need<BenchExamplesMenu>("examples-menu"),
+  refsTree: need<BenchRefsTree>("refs-tree"),
+  refsCount: need<HTMLSpanElement>("refs-count"),
+  sheetsList: need<BenchSheets>("sheets-list"),
+  sheetCount: need<HTMLSpanElement>("sheet-count"),
+  editorTabs: need<HTMLDivElement>("editor-tabs"),
+  panelScript: need<HTMLDivElement>("panel-script"),
+  panelValues: need<HTMLDivElement>("panel-values"),
+  valuesText: need<HTMLPreElement>("values-text"),
+  panelSheet: need<HTMLDivElement>("panel-sheet"),
+  sheetDrawing: need<HTMLImageElement>("sheet-drawing"),
+  panelReport: need<HTMLDivElement>("panel-report"),
+  reportText: need<HTMLPreElement>("report-text"),
+  editor: need<HTMLDivElement>("editor"),
+  canvas3d: need<HTMLDivElement>("canvas3d"),
+  fit: need<HTMLButtonElement>("fit"),
+  zoomIn: need<HTMLButtonElement>("zoom-in"),
+  zoomOut: need<HTMLButtonElement>("zoom-out"),
+  selection: need<HTMLSpanElement>("selection"),
+  params: need<BenchParams>("params"),
+  paramCount: need<HTMLSpanElement>("param-count"),
+  reset: need<HTMLButtonElement>("reset"),
+  panel: need<BenchPanel>("run-panel"),
+  reference: need<HTMLSpanElement>("reference"),
+  referenceName: need<HTMLSpanElement>("reference-name"),
+  referenceReport: need<HTMLButtonElement>("reference-report"),
+  referenceDetect: need<HTMLButtonElement>("reference-detect"),
+  referenceClear: need<HTMLButtonElement>("reference-clear"),
+  pick: need<HTMLElement>("pick"),
+  pickFrame: need<HTMLSpanElement>("pick-frame"),
+  pickRead: need<HTMLParagraphElement>("pick-read"),
+  pickAsOrigin: need<HTMLButtonElement>("pick-as-origin"),
+  pickAsCorner: need<HTMLButtonElement>("pick-as-corner"),
+  pickAsUp: need<HTMLButtonElement>("pick-as-up"),
+  pickOrigin: need<HTMLInputElement>("pick-origin"),
+  pickUp: need<HTMLInputElement>("pick-up"),
+  pickAlong: need<HTMLInputElement>("pick-along"),
+  pickWrite: need<HTMLButtonElement>("pick-write"),
+  pickUnplace: need<HTMLButtonElement>("pick-unplace"),
+  pickWhy: need<HTMLParagraphElement>("pick-why"),
+};
+
+// The page's own markup is not all components yet, and its buttons are the components' own.
+if (buttons.styleSheet !== undefined) {
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, buttons.styleSheet];
+}
+
+// ---- state -------------------------------------------------------------------
+
+let scene: OkScene | null = null;
+let booting = true;
+let running = false;
+/** Set when this source hung last time and has not been asked for again by hand. */
+let held = false;
+/** When the run in flight was asked for, so the status bar can say what it cost. */
+let asked = 0;
+
+// ---- the scripts kept --------------------------------------------------------
+
+/** Where the projects are kept. One store, chosen here and nowhere else; everything below
+ * this line moves a document and does not know the place (`store.ts`). */
+const store: ProjectStore = localStore();
+
+/** Every project kept, and the open one.
+ *
+ * Starts as the workspace a browser with nothing kept would have, and is replaced by what the
+ * store answers with in `boot()`. It is never *unset*: a store that has to be asked is no
+ * reason for the rest of this file to hold a `Workspace | null` and check it everywhere.
+ */
+let workspace: Workspace = firstWorkspace();
+
+/** A browser with no files yet: the one script it kept from before there were files becomes
+ * the first file, and the keys it was kept under are let go. */
+function firstWorkspace(): Workspace {
+  const found = adopted(remembered(KEYS.source), parsed(remembered(KEYS.overrides)), EXAMPLES, FIRST);
+  forget(KEYS.source);
+  forget(KEYS.overrides);
+  return found;
+}
+
+/** Make `next` the workspace: the browser remembers it, and the title bar, the explorer and
+ * the values tab show it. */
+function keep(next: Workspace): void {
+  workspace = next;
+  // Deliberately not awaited. Every keystroke and every knob turn comes through here, and a
+  // person editing a script must not be made to wait on a write - decision-9's outbox rule,
+  // which is why `keep` stayed synchronous when the store became asynchronous. A write that
+  // fails says so; it does not take the edit down with it.
+  void store.save(serialized(next)).catch((problem: unknown) => {
+    log("error", "bench.store", "the projects were not kept", {
+      "bench.store.kind": store.kind,
+      "bench.store.problem": String(problem),
+    });
+  });
+  ui.explorer.names = next.files.map((file) => file.name);
+  ui.explorer.current = next.current;
+  ui.openName.textContent = next.current;
+  showValues();
+  drawTabs();
+  // A different project may place the very body already dropped, or stop placing the one
+  // that was - so the chip is said again for whichever project is open now, and the pick
+  // panel with it, since what it will let a maker do depends on that very answer.
+  showReferenceChip();
+  showPickState();
+}
+
+/** A project's values as the file they are - the one thing the values tab shows and the
+ * download carries. The lines follow the script's own declaration order once a run has said
+ * it, so the file reads like the dataclass does. */
+const valuesDocument = (project: Project): string =>
+  projectDocument(project, scene?.params.map((one) => one.name) ?? []);
+
+/** Put the open project's values file on its tab. */
+function showValues(): void {
+  ui.valuesText.textContent = valuesDocument(opened(workspace));
+}
+
+
+function setState(state: "boot" | "running" | "ok" | "error", text: string, bad = false): void {
+  ui.state.dataset["state"] = state;
+  ui.state.textContent = state === "boot" ? "booting" : state;
+  ui.status.textContent = text;
+  ui.status.classList.toggle("is-error", bad);
+}
+
+/** Say again what the app is doing, from what it knows - used when "ready" arrives, which
+ * is the moment the boot messages stop being the most useful thing on the line. */
+function repaint(): void {
+  if (running) {
+    setState("running", "running…");
+    return;
+  }
+  if (held) {
+    setState("error", "this script was stopped last time; press Run to try it again", true);
+    return;
+  }
+  if (scene !== null) {
+    setState("ok", tally(scene.summary), failing(scene.summary));
+    return;
+  }
+  setState("ok", "ready");
+}
+
+/** Put a failure in front of somebody: the panel holds it, and the panel comes forward. */
+function showFailure(message: string): void {
+  ui.panel.error = `${message}\n\n${RELOAD_HINT}`;
+  ui.panel.show("problems");
+}
+
+// ---- the three pieces --------------------------------------------------------
+
+/** The view. A click in it is the selection, so `Mod-I` inserts the ref it names, the tree
+ * reveals the row, and the editor's cursor lights up what it is pointing at. */
+const space = deferred3d(ui.canvas3d, {
+  onSelect(ref) {
+    showSelection(ref);
+  },
+  onDetectPick(hit) {
+    detectedPicked(hit);
+  },
+});
+
+/** A body somebody else made, dropped on the view.
+ *
+ * Read once, held as base64, and handed to every run after it as `reference`, so a script
+ * can measure the thing it is copying - `survey(reference)` - while it writes the thing that
+ * replaces it. A second drop replaces the first.
+ */
+let reference: string | null = null;
+
+/** What the dropped body was called, which is what its report's tab is called. */
+let referenceName = "";
+
+/** The survey of the dropped body, written out - asked of the worker once per drop, and kept
+ * for as long as the body is, so the tab it reads on can be shut and opened again without
+ * measuring anything twice. `null` while there is no body, or while the worker is at it. */
+let report: string | null = null;
+
+/** What the chip's button says: the report is a click away, or is still being made. */
+function showSurveyState(): void {
+  ui.referenceReport.disabled = report === null;
+  ui.referenceReport.textContent = report === null ? "measuring…" : "survey";
+}
+
+/** One flat `bench.worker.detected` found, in the terms it answered with - a plain view of
+ * `bench.survey.Flat`, not the class itself, since this crossed the wire as JSON. */
+interface DetectedFlat {
+  readonly normal: readonly [number, number, number];
+  readonly centre: readonly [number, number, number];
+  readonly area: number;
+}
+
+/** Whether the view is currently colouring the dropped body's detected faces. */
+let detecting = false;
+/** The flats a detection last found, indexed the way `space.detect`'s own array is - or
+ * `null` while nothing has been detected, which is also while a click on the backdrop
+ * cannot mean anything. */
+let detectedFlats: readonly DetectedFlat[] | null = null;
+
+/** What the chip's detect button says and does: off, waiting on the worker, or on. */
+function showDetectState(waiting = false): void {
+  ui.referenceDetect.setAttribute("aria-pressed", String(detecting));
+  ui.referenceDetect.disabled = waiting;
+  ui.referenceDetect.textContent = waiting ? "detecting…" : "detect faces";
+}
+
+/** The three points this body's own `origin` words name, as the detection reported them, and
+ * the distance within which a picked point *is* one of them - `bench.survey.ROUND`, read off
+ * the wire rather than held here, so the snap and the survey can never hold two figures. Empty
+ * and zero while nothing has been detected, which is also while nothing can be picked. */
+let detectedOrigins: readonly NamedOrigin[] = [];
+let detectedRound = 0;
+
+/** The last two picks, newest first - two because the distance between two picked faces is how
+ * a maker measures a wall, and there is nothing to measure until there are two. */
+let picks: readonly DetectHit[] = [];
+
+/** One flat as the readout says it. */
+function saidFlat(flatIndex: number | null): string {
+  const flat = flatIndex === null ? undefined : detectedFlats?.[flatIndex];
+  if (flat === undefined || flatIndex === null) return "no detected face here";
+  return (
+    `flat ${flatIndex} · ${flat.area.toFixed(1)} mm²\n` +
+    `normal ${shown(flat.normal, 4)} · centre ${shown(flat.centre)}`
+  );
+}
+
+/** How far this pick is from the one before it - the wall-thickness line: between the two
+ * points clicked, and, when both landed on a detected face, between those faces' own centres,
+ * which is the number a caliper would give. */
+function saidSpan(hit: DetectHit): string {
+  const before = picks[1];
+  if (before === undefined) return "";
+  const lines = [`from the pick before: ${mm(between(hit.point, before.point))}`];
+  const here = hit.flatIndex === null ? undefined : detectedFlats?.[hit.flatIndex];
+  const there = before.flatIndex === null ? undefined : detectedFlats?.[before.flatIndex];
+  if (here !== undefined && there !== undefined && hit.flatIndex !== before.flatIndex) {
+    lines.push(`face centre to face centre: ${mm(between(here.centre, there.centre))}`);
+  }
+  return `\n${lines.join("\n")}`;
+}
+
+/** A detected face was clicked: everything the click resolved to, in the pick panel and in the
+ * log. Numbers only - a measurement is never turned into script text here, which is task-14.3
+ * and decision-7's own position, not a limitation of this panel. */
+function detectedPicked(hit: DetectHit | null): void {
+  if (hit === null) {
+    ui.pickRead.textContent = "That click met the body nowhere. Click a coloured face.";
+    return;
+  }
+  picks = [hit, ...picks].slice(0, 2);
+  const away = distances(hit.vertex, detectedOrigins)
+    .map((one) => `${one.name} ${mm(one.away)}`)
+    .join(" · ");
+  ui.pickRead.textContent =
+    `${saidFlat(hit.flatIndex)}\n` +
+    `hit ${shown(hit.point)}\n` +
+    `corner ${shown(hit.vertex, 4)}\n` +
+    `corner from ${away}${saidSpan(hit)}`;
+  showPickState();
+  log("info", "bench.pick", "a face was picked", {
+    // A word rather than a number for "no face here": a sentinel index would read as a face.
+    "bench.pick.flat": hit.flatIndex === null ? "none" : String(hit.flatIndex),
+    "bench.pick.point": hit.point.join(", "),
+    "bench.pick.corner": hit.vertex.join(", "),
+  });
+}
+
+/** Fill `field` with a resolved value, and say in the panel what it resolved to and why. */
+function assign(field: HTMLInputElement, value: ReferenceValue, what: string): void {
+  field.value = fieldText(value);
+  const how =
+    typeof value === "string"
+      ? `it is within ${mm(detectedRound, 4)} of the point that word names, so the word is what is written`
+      : "the numbers it measured";
+  say(`${what} = ${fieldText(value)}: ${how}.`);
+}
+
+/** Say something in the panel's own line - a refusal, or what a pick resolved to. */
+function say(text: string, bad = false): void {
+  ui.pickWhy.textContent = text;
+  ui.pickWhy.classList.toggle("is-error", bad);
+}
+
+/** The pick panel, as the page's own state makes it: shown only while faces are being detected
+ * (the one mode in which the backdrop answers a click at all), its assign buttons live only
+ * once something has been picked, and its write refused while a placement is already applied -
+ * because then the view, the survey and the detection are all in the placed frame, and a
+ * number picked there is not the number `[reference]` asks for, which is the mesh's own.
+ *
+ * "What does this look like with nothing dropped?" - decision-7's own open question - answers
+ * itself here: the chip that turns detection on is hidden until a body is dropped, so there is
+ * no mode to be in and no panel to grey out. */
+function showPickState(): void {
+  const placed = matchedReference() !== null;
+  ui.pick.hidden = !(detecting && reference !== null);
+  ui.pickFrame.textContent = placed ? "reading the placed frame" : "";
+  const hit = picks[0];
+  const flat = hit?.flatIndex === null || hit === undefined ? undefined : detectedFlats?.[hit.flatIndex];
+  ui.pickAsOrigin.disabled = hit === undefined || placed;
+  ui.pickAsCorner.disabled = hit === undefined || placed;
+  ui.pickAsUp.disabled = flat === undefined || placed;
+  ui.pickWrite.disabled = placed;
+  ui.pickUnplace.hidden = !placed;
+  for (const field of [ui.pickOrigin, ui.pickUp, ui.pickAlong]) field.disabled = placed;
+  if (placed) {
+    say(
+      "This body is already placed by the open project's [reference], so every number here is " +
+        "in the placed frame. Clear the placement to pick against the body as exported.",
+    );
+  }
+}
+
+/** The open project's `[reference]` table, matched against the body dropped on the view - or
+ * `null` when there is nothing dropped, the open project has no placement, or the placement
+ * is for a file that is not the one dropped. decision-4's rule: a placement for one file is
+ * never applied because a different one happened to be dropped. */
+function matchedReference(): ReferenceTable | null {
+  if (referenceName === "") return null;
+  const table = opened(workspace).reference;
+  if (table === null || table["file"] !== referenceName) return null;
+  return table;
+}
+
+/** `matchedReference()`, as the JSON text the worker takes - or `undefined` for nothing to
+ * place with, which is what a run and a survey both take to mean "hand over the mesh exactly
+ * as exported". */
+const referenceTableJson = (): string | undefined => {
+  const table = matchedReference();
+  return table === null ? undefined : JSON.stringify(table);
+};
+
+/** The chip beside the view: the file's name alone, or - once its project's `[reference]`
+ * names it and a run has actually placed it - the word decision-4 asks for. Nothing is moved
+ * silently, so this only ever says `placed` when a placement was applied. */
+/** The dropped bodies as the refs container lists them.
+ *
+ * One today, because a drop replaces what was there; the tree takes a list because a project
+ * is going to hold several (task-49) and the container should not have to change shape again
+ * to show them.
+ */
+function showReferenceRows(): void {
+  ui.refsTree.references = referenceName === "" ? [] : [referenceName];
+}
+
+function showReferenceChip(): void {
+  if (referenceName === "") return;
+  ui.referenceName.textContent = matchedReference() === null ? referenceName : `${referenceName} · placed`;
+}
+
+/** `bytes` as base64, a chunk at a time: spreading a megabyte into `fromCharCode` at once
+ * overflows the call stack, and a dropped body is comfortably a megabyte. */
+function encoded(bytes: Uint8Array): string {
+  let text = "";
+  for (let at = 0; at < bytes.length; at += 0x8000) {
+    text += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+  }
+  return btoa(text);
+}
+
+// Both of these, not just `dragover`: a real drag from the desktop only delivers `drop` to
+// an element that answered `dragenter` as well, and cancelling one without the other is why
+// a synthetic drop can work in a test while a person's drag quietly does nothing at all.
+for (const stage of ["dragenter", "dragover"] as const) {
+  ui.canvas3d.addEventListener(stage, (event: DragEvent) => {
+    if (event.dataTransfer === null) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  });
+}
+
+// And a guard over the whole window, because the default for a file dropped anywhere else is
+// to navigate to it - which throws away the editor, the open file and the run, and is a
+// miserable thing to happen to somebody who missed the view by a few pixels.
+for (const stage of ["dragover", "drop"] as const) {
+  window.addEventListener(stage, (event: DragEvent) => {
+    if (event.defaultPrevented) return;
+    event.preventDefault();
+  });
+}
+
+ui.canvas3d.addEventListener("drop", (event: DragEvent) => {
+  const file = event.dataTransfer?.files[0];
+  if (file === undefined) return;
+  event.preventDefault();
+  void (async () => {
+    reference = encoded(new Uint8Array(await file.arrayBuffer()));
+    referenceName = file.name;
+    report = null;
+    // A new body invalidates any detection of the last one: its triangles are not this
+    // one's, so the toggle goes off rather than colour the wrong mesh's flats onto this one.
+    detecting = false;
+    detectedFlats = null;
+    detectedOrigins = [];
+    detectedRound = 0;
+    picks = [];
+    space.detect(null);
+    showPickState();
+    log("info", "bench.reference", "a body was dropped on the view", {
+      "bench.reference.name": file.name,
+      "bench.reference.bytes": file.size,
+    });
+    ui.reference.hidden = false;
+    showReferenceChip();
+    // A drop replaces what was there, so a selection on the body that has just gone would
+    // name a row nothing holds. Cleared before the new rows go down, not after.
+    if (pickedReference !== null) showSelection(null);
+    showReferenceRows();
+    showSurveyState();
+    showDetectState();
+    // The run first, so the view shows the body at once; the survey follows it in the worker
+    // and its report opens when it lands. A drop is the maker asking what the body measures,
+    // so it is not made to ask twice - and the two verbs it takes are not made to be known.
+    runNow();
+    bridge.survey(reference, referenceTableJson());
+  })();
+});
+
+/** Forget the dropped body: the chip goes, its report goes with it, and the next run draws
+ * the work on its own. The re-run is the point - without it the backdrop would stay on
+ * screen until something else happened to run. */
+ui.referenceClear.addEventListener("click", () => {
+  reference = null;
+  referenceName = "";
+  report = null;
+  detecting = false;
+  detectedFlats = null;
+  detectedOrigins = [];
+  detectedRound = 0;
+  picks = [];
+  space.detect(null);
+  showDetectState();
+  showPickState();
+  ui.reference.hidden = true;
+  ui.referenceName.textContent = "";
+  showReferenceRows();
+  // The row it was selected on has gone, so the selection goes with it rather than pointing
+  // at a body nothing is holding any more.
+  if (pickedReference !== null) showSelection(null);
+  closeReport();
+  runNow();
+});
+
+/** The report, asked for again from the chip after its tab was shut. */
+ui.referenceReport.addEventListener("click", () => {
+  if (report !== null) openReport();
+});
+
+/** The detect toggle: off turns the backdrop back into a plain ghost at once, since nothing
+ * has to be asked for to stop colouring it; on asks the worker for the same body's flats,
+ * the same way a drop asks for its survey. Detection is also the pick's own mode (decision-7
+ * asked for one, and this is it): the panel comes and goes with it, because the backdrop
+ * answers a click only while this is on. */
+ui.referenceDetect.addEventListener("click", () => {
+  if (reference === null) return;
+  if (detecting) {
+    detecting = false;
+    space.detect(null);
+    showDetectState();
+    showPickState();
+    return;
+  }
+  detecting = true;
+  showDetectState(true);
+  showPickState();
+  bridge.detect(reference, referenceTableJson());
+});
+
+/** The point the ray met, as `origin` - the general case, and what decision-7 describes: an
+ * arbitrary point on a real face, written as the triple it measured. */
+ui.pickAsOrigin.addEventListener("click", () => {
+  const hit = picks[0];
+  if (hit === undefined) return;
+  assign(ui.pickOrigin, resolvedOrigin(hit.point, detectedOrigins, detectedRound), "origin");
+});
+
+/** The nearest corner of the face that was clicked, as `origin`. This is the choice that makes
+ * the named word reachable at all: on a body that is an axis-aligned box - decision-4's
+ * systainer foot - `Extent.low` *is* one of the mesh's own vertices, so picking the corner
+ * lands on it to the last float the exporter wrote and the word is written for the right
+ * reason. The point the ray met never would: no mouse lands within a hundredth of a
+ * millimetre of anything. */
+ui.pickAsCorner.addEventListener("click", () => {
+  const hit = picks[0];
+  if (hit === undefined) return;
+  assign(ui.pickOrigin, resolvedOrigin(hit.vertex, detectedOrigins, detectedRound), "origin");
+});
+
+/** The picked face's own normal, as `up` - always as the triple it measured, never snapped to
+ * a signed axis word: that would need a tolerance on an angle, and decision-7 says plainly
+ * that bench has none to borrow. A maker who wants `+Z` types it in the field. */
+ui.pickAsUp.addEventListener("click", () => {
+  const hit = picks[0];
+  const flat = hit?.flatIndex === null || hit === undefined ? undefined : detectedFlats?.[hit.flatIndex];
+  if (flat === undefined) return;
+  assign(ui.pickUp, resolvedUp(flat.normal), "up");
+});
+
+/** Commit: the three fields become the open project's `[reference]` table, in one act.
+ *
+ * Why one act rather than a write per pick, which is what task-18.2's rule for `[values]`
+ * would suggest: a `[reference]` table is applied the moment its `file` names the dropped body
+ * (`matchedReference`), and from there every run, survey and detection puts the mesh through
+ * `bench.placement.placement`, which *raises* on a table missing any of `origin`, `up` or
+ * `along`. A per-field write would break the run with "reference table has no 'up'" between
+ * the first pick and the last, and would move the body the second pick is measured against.
+ * `[values]` has no such feedback: a knob's value does not move the thing being pointed at.
+ * decision-7 left this open; this is the answer, and it is the code's, not a preference.
+ */
+ui.pickWrite.addEventListener("click", () => {
+  if (referenceName === "") return;
+  const origin = fieldValue(ui.pickOrigin.value);
+  const up = fieldValue(ui.pickUp.value);
+  const along = fieldValue(ui.pickAlong.value);
+  const missing = [
+    origin === null ? "origin" : null,
+    up === null ? "up" : null,
+    along === null ? "along (typed - decision-7 designs no edge-pick)" : null,
+  ].filter((one) => one !== null);
+  if (origin === null || up === null || along === null) {
+    say(
+      `A placement is all three or none, because the run refuses a partial table: ${missing.join(", ")} still to say.`,
+      true,
+    );
+    return;
+  }
+  const table: ReferenceTable = { file: referenceName, origin, up, along };
+  keep(withReference(workspace, table));
+  log("info", "bench.pick", "a placement was written", {
+    "bench.reference.name": referenceName,
+    "bench.pick.origin": fieldText(origin),
+    "bench.pick.up": fieldText(up),
+    "bench.pick.along": fieldText(along),
+  });
+  // The body now moves, so nothing measured in the old frame is worth keeping on screen: the
+  // colours are asked for again under the placement, the survey with them, and the run redraws
+  // the body where the table says it stands - which is what makes the chip's "placed" honest.
+  replaced("the placement was written");
+  say("Written. The body is placed by it now - the view, the survey and the chip all say so.");
+});
+
+/** Forget the placement, so a pick reads the body as exported again - the way back out of the
+ * placed frame, and the only way to re-pick a placement this panel wrote. */
+ui.pickUnplace.addEventListener("click", () => {
+  keep(withReference(workspace, null));
+  replaced("the placement was cleared");
+  say("Cleared. The body stands as exported, and a pick reads its own numbers again.");
+});
+
+/** A placement arrived or left: the body's frame changed under everything already measured
+ * about it, so every measurement is dropped and asked for again under the new frame - the
+ * faces, if they were being shown, the survey, and the run that draws the body.
+ *
+ * Nothing measured in the old frame is kept and relabelled: that is the same rule
+ * `bench.worker.detected` follows for a survey, one layer up. */
+function replaced(why: string): void {
+  const again = detecting && reference !== null;
+  detectedFlats = null;
+  detectedOrigins = [];
+  detectedRound = 0;
+  picks = [];
+  space.detect(null);
+  ui.pickRead.textContent = "Click a coloured face: what it measures reads here.";
+  report = null;
+  showSurveyState();
+  showDetectState(again);
+  showPickState();
+  log("info", "bench.reference", why);
+  runNow();
+  if (reference !== null) bridge.survey(reference, referenceTableJson());
+  if (again && reference !== null) bridge.detect(reference, referenceTableJson());
+}
+
+/** The survey came back: the report opens beside the script - or, when there is none, the
+ * chip says so and the run's own failure, which put the same file through the same reader,
+ * has already said why in the panel. */
+function surveyed(outcome: SurveyOutcome): void {
+  if (reference === null) return; // cleared while the worker was at it
+  if ("problem" in outcome) {
+    log("warn", "bench.reference", "the dropped body was not surveyed", {
+      "error.message": outcome.problem,
+    });
+    ui.referenceReport.disabled = true;
+    ui.referenceReport.textContent = "no survey";
+    return;
+  }
+  report = outcome.report;
+  showSurveyState();
+  openReport();
+}
+
+/** The detection came back: the backdrop is coloured by it - or, when there is none, the
+ * toggle goes back off and says why in the log, the same shape `surveyed`'s failure takes. */
+function detected(outcome: DetectOutcome): void {
+  if (reference === null || !detecting) return; // cleared, or turned off while the worker was at it
+  if ("problem" in outcome) {
+    log("warn", "bench.reference", "the dropped body's faces were not detected", {
+      "error.message": outcome.problem,
+    });
+    detecting = false;
+    showDetectState();
+    return;
+  }
+  const found = JSON.parse(outcome.result) as {
+    flat_index: readonly (number | null)[];
+    flats: readonly DetectedFlat[];
+    origins: readonly NamedOrigin[];
+    round: number;
+  };
+  detectedFlats = found.flats;
+  detectedOrigins = found.origins;
+  detectedRound = found.round;
+  space.detect(found.flat_index);
+  showDetectState();
+  showPickState();
+}
+
+let timer: number | undefined;
+
+/** The one override table there is. The panel is handed it and never keeps a copy; an edit
+ * comes back up as `param-change`, and a scene arriving mid-debounce has no table to put
+ * back. */
+let overrides: Overrides = {};
+
+/** The table the latest request was sent with. A scene answers the latest request (the
+ * bridge drops superseded ones), so while this is still `overrides` the scene's values are
+ * the truth about that very table - and an edit made since, still waiting out its debounce,
+ * makes it a table the scene knows nothing about, which is left alone. */
+let sentWith: Overrides = overrides;
+
+/** Replace the table: what the panel shows, what the open project remembers, and whether
+ * there is anything to reset. */
+function setOverrides(next: Overrides): void {
+  overrides = next;
+  ui.params.overrides = next;
+  keep(withOverrides(workspace, next));
+  ui.reset.disabled = Object.keys(next).length === 0;
+}
+
+// Mounted empty: what is in it comes from the store, which has to be asked. `boot()` puts
+// the open project's script in before anything runs.
+const code = editor.mount(ui.editor, "", {
+  onChange() {
+    keep(withSource(workspace, code.text()));
+    window.clearTimeout(timer);
+    timer = window.setTimeout(runNow, DEBOUNCE);
+  },
+  onCursorRef(ref) {
+    space.point(ref);
+  },
+  onRun() {
+    window.clearTimeout(timer);
+    runNow();
+  },
+  onInsert() {
+    insertSelected();
+  },
+});
+
+const bridge = connect(
+  {
+    onStatus(text) {
+      if (text === "ready") {
+        booting = false;
+        repaint();
+        return;
+      }
+      // Anything else is boot progress. A fresh worker after a stop boots again, in the
+      // background, and that must not paint over the news of why it was replaced: the line
+      // is only given to the boot while something is actually waiting on it.
+      booting = true;
+      if (running || (scene === null && !held)) setState("boot", text);
+    },
+    onScene(next) {
+      received(next);
+    },
+    onFailure(message) {
+      booting = false;
+      running = false;
+      ui.stop.disabled = true;
+      setState("error", message, true);
+      showFailure(message);
+    },
+    onRunaway(message) {
+      // This source is a known runaway now: a reload must not replay it by itself.
+      remember(KEYS.hang, hashOf(code.text()));
+      held = true;
+      booting = false;
+      running = false;
+      ui.stop.disabled = true;
+      setState("error", message, true);
+      showFailure(`${message}. Press Run to try it again, or edit it first.`);
+    },
+    onBusy(busy) {
+      running = busy;
+      ui.stop.disabled = !busy;
+    },
+    onSurvey(outcome) {
+      surveyed(outcome);
+    },
+    onDetect(outcome) {
+      detected(outcome);
+    },
+  },
+  { watchdog: WATCHDOG, bootTimeout: BOOT_TIMEOUT },
+);
+
+// ---- running -----------------------------------------------------------------
+
+function runNow(): void {
+  held = false;
+  asked = performance.now();
+  forget(KEYS.hang);
+  // While Python is still coming up, the boot status is the more useful thing to say.
+  if (booting) setState("boot", ui.status.textContent ?? "starting…");
+  else setState("running", "running…");
+  sentWith = overrides;
+  bridge.request(code.text(), overrides, reference ?? undefined, referenceTableJson());
+}
+
+function received(next: Scene): void {
+  booting = false;
+  ui.timing.textContent = `${((performance.now() - asked) / 1000).toFixed(1)} s`;
+  if (!next.ok) {
+    code.showError(next.error.line);
+    flagScript(next.error.line);
+    setState("error", next.error.message, true);
+    ui.panel.error =
+      next.error.traceback.trim() === ""
+        ? next.error.message
+        : `${next.error.message}\n\n${next.error.traceback.trim()}`;
+    showStreams(next);
+    ui.panel.show("problems");
+    return;
+  }
+  scene = next;
+  // A run that got all the way here is not the thing that hung.
+  forget(KEYS.hang);
+  held = false;
+  // The table is pruned to what the script declares, and - when it is still the table this
+  // run was asked with - each value is replaced by what the run built from it, so the file
+  // says what was made. Either way the same table comes back when nothing changed.
+  const declared = declaredOnly(overrides, next.params);
+  const built = overrides === sentWith ? asBuilt(declared, next.values) : declared;
+  if (built !== overrides) setOverrides(built);
+  else showValues(); // the file follows the script's order, which this run has just said
+  // A run can succeed and still be wrong: a check that found an ERROR marks its line in the
+  // editor exactly as a raised exception would, because a part that will not work is not a
+  // detail in a list.
+  code.showError(next.summary.error_line);
+  flagScript(next.summary.error_line);
+  code.knowRefs(next.refs);
+  ui.panel.error = "";
+
+  timed("bench.view.geometry", () => showGeometry(next), { "bench.parts": next.summary.parts });
+  ui.params.params = next.params;
+  countOn(ui.paramCount, ui.railParamCount, next.params.length);
+  ui.refsTree.refs = next.refs;
+  ui.refsTree.flagged = next.violations.flatMap((one) => [...one.refs]);
+  ui.refsCount.textContent = next.refs.length === 0 ? "" : String(next.refs.length);
+  ui.sheetsList.sheets = next.sheets;
+  ui.sheetCount.textContent = next.sheets.length === 0 ? "" : String(next.sheets.length);
+  ui.panel.violations = next.violations;
+  ui.panel.warnings = next.warnings;
+  ui.panel.sheets = next.sheets;
+  ui.panel.files = next.files;
+  showStreams(next);
+  showProblemCount();
+  keepSheetTabs(next.sheets);
+  ui.madeChip.textContent = made(next.summary);
+  // The status bar is the one place the count is said in words.
+  setState("ok", tally(next.summary), failing(next.summary));
+}
+
+/** A count in two places at once - the container's own header, and the rail's badge for when
+ * the container is not the one showing. */
+function countOn(header: HTMLElement, badge: HTMLElement, count: number): void {
+  header.textContent = count === 0 ? "" : String(count);
+  badge.textContent = String(count);
+  badge.hidden = count === 0;
+}
+
+function showProblemCount(): void {
+  const count = ui.panel.problems;
+  ui.railProblemCount.textContent = String(count);
+  ui.railProblemCount.hidden = count === 0;
+}
+
+/** Draw the scene: every part with a body, standing where the stage put it, and why the view
+ * is empty when none has one. */
+function showGeometry(ok: OkScene): void {
+  space.show(ok.parts, ok.stage, ok.sheets, ok.reference);
+  space.say(noBodiesReason(ok.summary));
+}
+
+/** What the script said, from either kind of scene: a run that fell over still printed its
+ * way to the line that broke, and that is the run whose output is worth the most. */
+function showStreams(said: { readonly stdout: string; readonly stderr: string }): void {
+  ui.panel.stdout = said.stdout;
+  ui.panel.stderr = said.stderr;
+  showProblemCount();
+}
+
+// ---- the sidebar: which container the rail has open -------------------------
+
+type Container = "files" | "refs" | "parameters" | "sheets";
+
+const CONTAINERS: readonly Container[] = ["files", "refs", "parameters", "sheets"];
+
+const isContainer = (said: string | null): said is Container =>
+  said !== null && CONTAINERS.includes(said as Container);
+
+/** Which container is showing. Never `null`: the rail's icons switch what the sidebar *is*
+ * rather than toggling it, which is VS Code's model and the one the shape was drawn for. On a
+ * narrow window the sidebar takes the centre's place instead, and there it can be shut. */
+let container: Container = isContainer(remembered(KEYS.container))
+  ? (remembered(KEYS.container) as Container)
+  : "refs";
+
+function showContainer(next: Container, remembering = true): void {
+  container = next;
+  for (const name of CONTAINERS) {
+    need<HTMLElement>(`container-${name}`).hidden = name !== next;
+    need<HTMLButtonElement>(`rail-${name}`).setAttribute(
+      "aria-pressed",
+      String(name === next),
+    );
+  }
+  if (remembering) remember(KEYS.container, next);
+}
+
+/** Whether the sidebar and the centre are sharing the room rather than sitting side by side -
+ * the one width at which putting the sidebar away means anything. */
+const sharing = (): boolean => window.matchMedia("(max-width: 1000px)").matches;
+
+for (const name of CONTAINERS) {
+  need<HTMLButtonElement>(`rail-${name}`).addEventListener("click", () => {
+    // Clicking the container that is already showing puts the sidebar away - but only on a
+    // narrow window, where it is in the centre's place. Side by side there is nowhere for it
+    // to go, and a click that silently did nothing would be worse than one that re-shows.
+    if (name === container && sharing() && ui.shell.classList.contains("is-open")) {
+      ui.shell.classList.remove("is-open");
+      return;
+    }
+    // "The maker asked for the sidebar", which is only ever true of a click. Setting it on
+    // the first paint instead is what made a narrow window open on the sidebar with the
+    // script and the view nowhere to be seen.
+    ui.shell.classList.add("is-open");
+    showContainer(name);
+  });
+}
+
+ui.railProblems.addEventListener("click", () => {
+  ui.panel.show("problems");
+});
+
+// ---- the editor group: the script, its values, and any sheet or report opened beside them ----
+
+/** A document the editor group can show: the open project's script, its values file, one
+ * of the sheets a run nested, or the report of the body dropped on the view. */
+type Doc =
+  | { readonly kind: "script" }
+  | { readonly kind: "values" }
+  | { readonly kind: "sheet"; readonly name: string }
+  | { readonly kind: "report" };
+
+const SCRIPT: Doc = { kind: "script" };
+const VALUES: Doc = { kind: "values" };
+const REPORT: Doc = { kind: "report" };
+const sheetDoc = (name: string): Doc => ({ kind: "sheet", name });
+
+/** The id of a document's tab, which is also what tells two documents apart. */
+const tabId = (doc: Doc): string => (doc.kind === "sheet" ? `tab-sheet-${doc.name}` : `tab-${doc.kind}`);
+
+/** The sheets open as tabs, in the order they were opened. The script and its values are not
+ * in this list: they are always the first two tabs and cannot be closed, because closing the
+ * two documents that *are* the project is not a thing worth being able to do. */
+let openSheets: string[] = [];
+/** Whether the report has a tab. There is one body and one report, so one flag; the tab is
+ * shut by its close button and by the chip forgetting the body, and opened by the report
+ * arriving or the chip asking for it again. */
+let reportOpen = false;
+/** Which document is in front. */
+let front: Doc = SCRIPT;
+/** The line the script is failing on, so a redrawn tab strip keeps its mark. */
+let failingLine: number | null = null;
+
+/** Drop the tabs for sheets this run no longer makes, so no tab points at nothing. */
+function keepSheetTabs(sheets: readonly SheetView[]): void {
+  const names = new Set(sheets.map((sheet) => sheet.name));
+  openSheets = openSheets.filter((name) => names.has(name));
+  if (front.kind === "sheet" && !names.has(front.name)) front = SCRIPT;
+  drawTabs();
+  showDocument();
+}
+
+function drawTabs(): void {
+  ui.editorTabs.replaceChildren();
+  ui.editorTabs.append(tabFor(SCRIPT, workspace.current));
+  ui.editorTabs.append(tabFor(VALUES, tomlName(workspace.current)));
+  for (const name of openSheets) ui.editorTabs.append(tabFor(sheetDoc(name), name));
+  if (reportOpen) ui.editorTabs.append(tabFor(REPORT, referenceName));
+}
+
+/** Put the report in front, on a tab named for the file it measures. */
+function openReport(): void {
+  ui.reportText.textContent = report ?? "";
+  reportOpen = true;
+  front = REPORT;
+  drawTabs();
+  showDocument(front);
+}
+
+/** Take the report's tab away, and the document with it if it was in front. */
+function closeReport(): void {
+  reportOpen = false;
+  ui.reportText.textContent = "";
+  if (front.kind === "report") front = SCRIPT;
+  drawTabs();
+  showDocument();
+}
+
+/** One tab, for `doc`, reading `label`. */
+function tabFor(doc: Doc, label: string): HTMLButtonElement {
+  const tab = document.createElement("button");
+  tab.type = "button";
+  tab.className = "tab";
+  tab.setAttribute("role", "tab");
+  tab.setAttribute("aria-selected", String(tabId(doc) === tabId(front)));
+  tab.id = tabId(doc);
+  if (doc.kind === "script" && failingLine !== null) tab.dataset["flag"] = "error";
+  const text = document.createElement("span");
+  text.className = "name";
+  text.textContent = label;
+  tab.append(text);
+  tab.addEventListener("click", () => {
+    showDocument(doc);
+  });
+  if (doc.kind === "sheet" || doc.kind === "report") {
+    const shut = document.createElement("button");
+    shut.type = "button";
+    shut.className = "tab-close";
+    shut.title = `Close ${label}`;
+    shut.textContent = "✕";
+    shut.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (doc.kind === "report") {
+        closeReport();
+        return;
+      }
+      openSheets = openSheets.filter((one) => one !== doc.name);
+      if (tabId(front) === tabId(doc)) front = SCRIPT;
+      drawTabs();
+      showDocument();
+    });
+    tab.append(shut);
+  }
+  return tab;
+}
+
+/** Whether `doc` has a tab to come to the front on. */
+const isOpen = (doc: Doc): boolean =>
+  doc.kind === "sheet" ? openSheets.includes(doc.name) : doc.kind !== "report" || reportOpen;
+
+/** Bring one document to the front. Called with no argument it shows whatever is already in
+ * front; asked for a sheet or a report that is not open, it shows the script. */
+function showDocument(doc: Doc = front): void {
+  front = isOpen(doc) ? doc : SCRIPT;
+  ui.panelScript.hidden = front.kind !== "script";
+  ui.panelValues.hidden = front.kind !== "values";
+  ui.panelSheet.hidden = front.kind !== "sheet";
+  ui.panelReport.hidden = front.kind !== "report";
+  if (front.kind === "sheet") {
+    const name = front.name;
+    const sheet = scene?.sheets.find((one) => one.name === name);
+    ui.sheetDrawing.src = sheet === undefined ? "" : pictured(sheet.svg);
+    ui.sheetDrawing.alt = `the nest for ${name}`;
+  }
+  for (const tab of ui.editorTabs.querySelectorAll('[role="tab"]')) {
+    tab.setAttribute("aria-selected", String(tab.id === tabId(front)));
+  }
+}
+
+/** Mark the script's tab while it has a failing line, so a person reading a sheet can see
+ * there is something to look at without the document being taken away from them. */
+function flagScript(line: number | null): void {
+  failingLine = line;
+  const tab = document.getElementById("tab-script");
+  if (tab === null) return;
+  if (line === null) delete tab.dataset["flag"];
+  else tab.dataset["flag"] = "error";
+}
+
+ui.sheetsList.addEventListener("sheet-open", (event) => {
+  const { name } = event.detail;
+  if (!openSheets.includes(name)) openSheets.push(name);
+  front = sheetDoc(name);
+  drawTabs();
+  showDocument(front);
+});
+
+// ---- selection ---------------------------------------------------------------
+
+/** What is selected, wherever it was clicked. One owner, so `Mod-I` needs to know nothing
+ * about whether the person was looking at the drawing or the tree. */
+let picked: string | null = null;
+
+/** Which dropped body is selected, when a dropped body is what is selected.
+ *
+ * A second field rather than a wider `picked`, because the two are not the same kind of thing
+ * and only one of them is a ref: a body somebody else made has no ref path, so `ref("…")`
+ * cannot name it and `resolve()` would not find it. Keeping them apart is what makes
+ * *Insert ref* read `picked` and be right by construction rather than by a check. The page
+ * holds both, and holds them mutually exclusive - selecting either clears the other.
+ */
+let pickedReference: string | null = null;
+
+/** Say what is selected, everywhere it is said: the bar, the button that acts on it, and the
+ * tree, which opens whatever was shut above the row and scrolls it into view. */
+function showSelection(ref: string | null): void {
+  picked = ref;
+  // A ref is selected, or nothing is: either way no dropped body is, which is what every
+  // caller of this already meant - `showSelection(null)` is how the app says "nothing".
+  pickedReference = null;
+  ui.selection.textContent = ref ?? HOW_TO_SELECT;
+  ui.selection.classList.toggle("is-set", ref !== null);
+  ui.insert.disabled = ref === null;
+  ui.refsTree.selected = ref;
+  ui.refsTree.selectedReference = null;
+  space.markReference(false);
+}
+
+/** Say that a dropped body is what is selected. The bar names the file rather than anything
+ * shaped like a ref, and *Insert ref* stays off: there is nothing here for it to write. */
+function showReferenceSelection(file: string | null): void {
+  pickedReference = file;
+  if (file !== null) {
+    picked = null;
+    ui.refsTree.selected = null;
+    space.select(null);
+  }
+  ui.selection.textContent = file === null ? HOW_TO_SELECT : `dropped body: ${file}`;
+  ui.selection.classList.toggle("is-set", file !== null);
+  ui.insert.disabled = true;
+  ui.refsTree.selectedReference = file;
+  space.markReference(file !== null);
+}
+
+function insertSelected(): void {
+  if (picked === null) return;
+  // The ref goes into the script, so the script is what has to be in front to see it land.
+  showDocument(SCRIPT);
+  code.insertRef(picked);
+}
+
+// A click in the tree is a selection exactly as a click on a face is: it lights the geometry
+// up and fills the bar, so `Mod-I` works the same from either end of the round-trip.
+ui.refsTree.addEventListener("ref-pick", (event) => {
+  space.select(event.detail.ref);
+  showSelection(event.detail.ref);
+});
+
+// A dropped body is selected the same way, and lights up the same way - it just has no ref to
+// insert, so the bar names the file and the button stays off.
+ui.refsTree.addEventListener("reference-pick", (event) => {
+  showReferenceSelection(pickedReference === event.detail.file ? null : event.detail.file);
+});
+
+// ---- wiring ------------------------------------------------------------------
+
+ui.run.addEventListener("click", () => {
+  window.clearTimeout(timer);
+  runNow();
+});
+
+ui.stop.addEventListener("click", () => {
+  bridge.stop("the script was stopped.");
+});
+
+ui.insert.addEventListener("click", insertSelected);
+ui.fit.addEventListener("click", () => {
+  space.fit();
+});
+ui.zoomIn.addEventListener("click", () => {
+  space.zoom(ZOOM_STEP);
+});
+ui.zoomOut.addEventListener("click", () => {
+  space.zoom(1 / ZOOM_STEP);
+});
+
+// An edit in the panel is an override now and a run shortly - the same debounce as typing
+// in the editor, on the same timer, so an edit to each inside it is one run carrying both.
+ui.params.addEventListener("param-change", (event) => {
+  setOverrides(withOverride(overrides, event.detail.name, event.detail.value));
+  window.clearTimeout(timer);
+  timer = window.setTimeout(runNow, DEBOUNCE);
+});
+
+ui.reset.addEventListener("click", () => {
+  setOverrides({});
+  window.clearTimeout(timer);
+  runNow();
+});
+
+// A finding names the line of the script that asked for the check; that line is a way back to
+// it, so the script comes forward and the cursor lands there.
+document.addEventListener("goto-line", (event) => {
+  showDocument(SCRIPT);
+  code.goTo(event.detail.line);
+});
+
+// The panel asks; the page is what touches the file system.
+document.addEventListener("file-save", (event) => {
+  save(event.detail.name, event.detail.data);
+});
+document.addEventListener("files-save-all", (event) => {
+  save("bench-cut-files.zip", zip(event.detail.files));
+});
+
+ui.panel.addEventListener("click", () => {
+  // Collapsing or opening the panel changes what the rail's badge is standing in for - and
+  // which way it was left is remembered, the way the rail's own container is. The component
+  // has already settled `collapsed` by the time the click reaches its host.
+  showProblemCount();
+  remember(KEYS.panel, ui.panel.collapsed ? "shut" : "open");
+});
+
+/** Open the project `next` has open: its script in the editor, its values in the panel and on
+ * their tab, nothing still selected from the project before, and a run.
+ *
+ * The editor reports the replacement as a change, which writes the same text back into the
+ * same project and starts a debounce; the run here goes at once, so that timer is cleared. */
+function load(next: Workspace): void {
+  keep(next);
+  const file = opened(next);
+  setOverrides(file.overrides);
+  code.replace(file.source);
+  space.select(null);
+  showSelection(null);
+  showDocument(SCRIPT);
+  window.clearTimeout(timer);
+  runNow();
+  // A body already dropped may now be placed differently - or not at all - by whichever
+  // project is open: the report is asked again so it never speaks of the placement a project
+  // left behind. `keep()`, above, has already said what the chip says about it.
+  if (reference !== null) {
+    report = null;
+    showSurveyState();
+    bridge.survey(reference, referenceTableJson());
+    // A detected flat's own numbers are placed coordinates too, and a different project can
+    // place the same drop differently - so a detection made under the project just left is
+    // turned off rather than left showing faces at the wrong numbers.
+    if (detecting) {
+      detecting = false;
+      detectedFlats = null;
+      space.detect(null);
+      showDetectState();
+    }
+  }
+}
+
+// The explorer asks; the workspace is changed here, and only a change of open project reruns.
+ui.explorer.addEventListener("file-new", () => {
+  load(created(workspace, UNTITLED, STARTER));
+  code.focus();
+});
+ui.explorer.addEventListener("file-open", (event) => {
+  load(switched(workspace, event.detail.name));
+});
+ui.explorer.addEventListener("file-rename", (event) => {
+  keep(renamed(workspace, event.detail.from, event.detail.to));
+});
+ui.explorer.addEventListener("file-delete", (event) => {
+  const next = deleted(workspace, event.detail.name, STARTER);
+  if (event.detail.name === workspace.current) load(next);
+  else keep(next);
+});
+ui.explorer.addEventListener("file-duplicate", (event) => {
+  load(duplicated(workspace, event.detail.name));
+});
+
+// A project leaves as its two files in one archive: the script, and the values file named
+// for it - the pair `tools/build.py` runs from a directory, so what was kept in one browser
+// can be run, kept in a repository, or opened in another.
+ui.explorer.addEventListener("file-download", (event) => {
+  const project = workspace.files.find((file) => file.name === event.detail.name);
+  if (project === undefined) return;
+  save(
+    `${stemOf(project.name)}.zip`,
+    zip({ [project.name]: project.source, [tomlName(project.name)]: valuesDocument(project) }),
+  );
+});
+
+// And arrives the same way: each script picked becomes a project, with the values of the
+// `.toml` of the same stem when that was picked too, and a values file picked on its own goes
+// to the open project. The explorer only asked; reading the files is this page's to do.
+ui.explorer.addEventListener("file-import", (event) => {
+  void importFiles(event.detail.files);
+});
+
+/** Open what was picked - or, when any of it cannot be read, open none of it and say why.
+ * One rule for the pick rather than half an import and a message the next run's scene would
+ * wipe from the panel; it is also what `tools/build.py` does with a values file it cannot
+ * read. */
+async function importFiles(picked: readonly File[]): Promise<void> {
+  const texts = await Promise.all(
+    picked.map(async (file) => [file.name, await file.text()] as const),
+  );
+  const scripts = texts.filter(([name]) => name.endsWith(".py"));
+  const documents = new Map(texts.filter(([name]) => name.endsWith(".toml")));
+  const tables = new Map<string, Overrides>();
+  const references = new Map<string, ReferenceTable | null>();
+  const problems: string[] = [];
+  for (const [name, text] of documents) {
+    const found = fromToml(text);
+    if (found.ok) {
+      tables.set(name, found.values);
+      references.set(name, found.reference);
+    } else {
+      problems.push(`${name}: ${found.problem}`);
+    }
+  }
+  // A values file belongs to the script of its stem. Picked alone it is for the project that
+  // is open; picked beside scripts none of which is its own, it is for a script that is not
+  // here, and saying so beats quietly dropping it.
+  const alone = scripts.length === 0 && documents.size === 1;
+  for (const name of documents.keys()) {
+    if (!alone && !scripts.some(([script]) => tomlName(script) === name)) {
+      problems.push(`${name}: no ${stemOf(name)}.py was opened with it`);
+    }
+  }
+  if (problems.length > 0) {
+    showFailure(`Nothing was opened.\n\n${problems.join("\n")}`);
+    return;
+  }
+  if (alone) {
+    const [table] = tables.values();
+    const [reference] = references.values();
+    setOverrides(table ?? {});
+    keep(withReference(workspace, reference ?? null));
+    window.clearTimeout(timer);
+    runNow();
+    return;
+  }
+  let next = workspace;
+  for (const [name, source] of scripts) {
+    const document = tomlName(name);
+    next = created(
+      next,
+      normalized(name),
+      source,
+      tables.get(document) ?? {},
+      references.get(document) ?? null,
+    );
+  }
+  if (next !== workspace) load(next);
+}
+
+// A picked example opens as a file of its own - never over the script being written - and runs.
+ui.examples.names = Object.keys(EXAMPLES).sort();
+ui.examples.addEventListener("example-pick", (event) => {
+  const text = EXAMPLES[event.detail.name];
+  if (text === undefined) return;
+  load(withExample(workspace, event.detail.name, text));
+});
+
+// The examples above came from the bundle, not the disk; say so before anyone picks one that
+// isn't what they think it is. Silent everywhere but `dev` and `preview`, where the route
+// answering this exists - see `src/staleness.ts`.
+void bundleStale().then((isStale) => {
+  ui.staleBundle.hidden = !isStale;
+  ui.staleBundle.textContent = isStale ? STALE_MESSAGE : "";
+  ui.staleBundle.title = isStale ? STALE_HINT : "";
+});
+
+document.addEventListener("keydown", (event) => {
+  // The editor has its own keymap for these; don't act on them twice.
+  if (event.defaultPrevented) return;
+  if (event.key === "Escape") {
+    space.select(null);
+    showSelection(null);
+    return;
+  }
+  const mod = event.metaKey || event.ctrlKey;
+  // Mod+I, not Mod+Shift+I: that one is DevTools in every browser but headless chromium.
+  if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "i") {
+    event.preventDefault();
+    insertSelected();
+    return;
+  }
+  if (mod && event.key === "Enter") {
+    event.preventDefault();
+    window.clearTimeout(timer);
+    runNow();
+  }
+});
+
+// ---- first paint --------------------------------------------------------------
+
+/** What is on screen before the store has answered: the shell, in the state the rail and the
+ * panel were left in. Everything here is about this browser rather than about a project, so
+ * none of it waits on anything. */
+showContainer(container, false);
+showDocument(SCRIPT);
+ui.panel.collapsed = remembered(KEYS.panel) === "shut";
+setState("boot", "loading Python…");
+
+/** Ask the store for the projects, put the open one on screen, and start it.
+ *
+ * The one place that waits. A store that cannot be read is not a browser with nothing kept:
+ * the first would start a person's work again from scratch, so it says so and leaves the
+ * scripts alone rather than overwriting them with an empty workspace.
+ */
+async function boot(): Promise<void> {
+  let kept: string | null = null;
+  try {
+    kept = await store.load();
+  } catch (problem: unknown) {
+    log("error", "bench.store", "the projects could not be read", {
+      "bench.store.kind": store.kind,
+      "bench.store.problem": String(problem),
+    });
+    setState("error", "your projects could not be read", true);
+    showFailure(
+      `The projects kept in the ${store.kind} could not be read: ${String(problem)}.` +
+        " Nothing has been changed. Reload once whatever is wrong is put right.",
+    );
+    return;
+  }
+
+  workspace = restored(kept) ?? workspace;
+  keep(workspace);
+  setOverrides(opened(workspace).overrides);
+  showSelection(null);
+
+  const source = opened(workspace).source;
+  code.replace(source);
+  // `replace` is a change like any other, so it has started a debounce that would run the
+  // script a beat after this does. The run below is the one that should happen.
+  window.clearTimeout(timer);
+
+  // A script that hung last time is not started again by itself: a reload would otherwise
+  // replay the runaway and the tab would read as "booting" for ever.
+  if (remembered(KEYS.hang) === hashOf(source)) {
+    held = true;
+    setState("error", "this script was stopped last time; press Run to try it again", true);
+    showFailure(
+      "This script did not finish the last time it ran, so it was stopped and has not been" +
+        " run again. Press Run to try it anyway, or edit it first.",
+    );
+    return;
+  }
+  runNow();
+}
+
+void boot();

@@ -1,0 +1,66 @@
+/** What the browser remembers between visits, under which keys, and how the app asks.
+ *
+ * `localStorage` can refuse - private browsing, a full quota, a blocked origin - and the app
+ * still works when it does; it just forgets. So every access goes through here, and none of
+ * them throws.
+ */
+
+/** Every key the app keeps something under.
+ *
+ * Most of these are about *this browser on this device* and go nowhere else: which container
+ * the rail had open, whether the panel was shut, the log level, the fingerprint of a script
+ * the watchdog stopped. `files` is the exception and is not read from here by the app any
+ * more - it is what `store-local.ts` keeps, behind `store.ts`'s protocol, so the projects can
+ * live somewhere other than this browser without anything above noticing.
+ */
+export const KEYS = {
+  /** Every project a person keeps - its script, and its values as the TOML document
+   * `tools/build.py` reads - and which one is open (`files.ts`). Reached through
+   * `store-local.ts`, never directly. */
+  files: "bench.files",
+  /** The one script a browser kept before there were files - read once, to adopt it. */
+  source: "bench.source",
+  /** That script's overrides, likewise. */
+  overrides: "bench.overrides",
+  /** The fingerprint of a script the watchdog had to stop, so a reload does not replay it. */
+  hang: "bench.lastHang",
+  /** Which container the rail last had open in the sidebar. */
+  container: "bench.container",
+  /** Whether the bottom panel was last put away. */
+  panel: "bench.panel",
+  /** The console's log level. */
+  log: "bench.log",
+} as const;
+
+export function remembered(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function remember(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // private browsing, a full quota: the app still works, it just forgets
+  }
+}
+
+export function forget(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // as above: nothing to do about it and nothing depends on it
+  }
+}
+
+/** A short, stable fingerprint of a script - FNV-1a, which is plenty to tell two apart. */
+export function hashOf(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let at = 0; at < text.length; at += 1) {
+    hash = Math.imul(hash ^ text.charCodeAt(at), 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}

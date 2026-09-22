@@ -1,0 +1,1065 @@
+/* Light and dark from prefers-color-scheme; the viewer's paper is always white.
+   Chrome is warm and quiet so the drawing's red and blue are the loudest things on screen:
+   the one filled button is ink, not a hue, and colour is kept for state and for geometry.
+
+   The app is a workbench: a title bar, a rail that says what the sidebar is, a sidebar, a
+   centre of the script beside the view, a panel across the bottom and a status bar. Chrome on
+   all four edges is what that costs, so every edge is as thin as it can be read at, and the
+   view is the one region that is never covered by anything. */
+:root {
+  color-scheme: light dark;
+
+  --bg: #eeede8;
+  --panel: #fbfbf9;
+  --panel-2: #f1f0eb;
+  --chrome: #f2f1ec;
+  --fg: #1c1c1a;
+  --fg-dim: #6b6a63;
+  --fg-faint: #9a998f;
+  --line: #e1dfd8;
+  --line-strong: #cfccc3;
+  --ink: #1c1c1a;
+  --ink-fg: #fbfbf9;
+  --accent: #2458c6;
+  --accent-soft: #e2e9f8;
+  --danger: #b4251d;
+  --danger-soft: #fbe6e3;
+  --warn: #8a5a00;
+  --warn-soft: #fbf0d6;
+  --ok: #1a7f37;
+  --ok-soft: #e1f3e5;
+
+  --cut: #d01b1b;
+  --engrave: #1558d6;
+  --select: #0aa;
+
+  --syn-keyword: #9a2bb0;
+  --syn-string: #1a7f37;
+  --syn-number: #8a4b00;
+  --syn-comment: #858479;
+  --syn-def: #2458c6;
+  --syn-builtin: #0b6a76;
+
+  --radius: 7px;
+  --shadow: 0 1px 2px rgb(0 0 0 / 5%);
+  /* What floats over the page - a menu - and nothing that sits in it. */
+  --shadow-pop: 0 12px 32px rgb(0 0 0 / 16%);
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --rail: 46px;
+  --sidebar: 244px;
+  --titlebar: 40px;
+  --statusbar: 24px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1113;
+    --panel: #17191c;
+    --panel-2: #1f2226;
+    --chrome: #14161a;
+    --fg: #e7e6e2;
+    --fg-dim: #9b9fa5;
+    --fg-faint: #6c7076;
+    --line: #272a2f;
+    --line-strong: #373b41;
+    --ink: #e7e6e2;
+    --ink-fg: #141618;
+    --accent: #7eaafa;
+    --accent-soft: #1d2b45;
+    --danger: #ff8a80;
+    --danger-soft: #3a1f1d;
+    --warn: #f0c36d;
+    --warn-soft: #362c16;
+    --ok: #79d88f;
+    --ok-soft: #173020;
+    --shadow: 0 1px 2px rgb(0 0 0 / 30%);
+
+    --syn-keyword: #e39ff6;
+    --syn-string: #9ae6a5;
+    --syn-number: #f3b86c;
+    --syn-comment: #7d858c;
+    --syn-def: #8ab4f8;
+    --syn-builtin: #66d9e8;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: grid;
+  grid-template-rows: var(--titlebar) minmax(0, 1fr) var(--statusbar);
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.45 var(--sans);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+kbd {
+  font: 10px/1 var(--mono);
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid currentcolor;
+  opacity: 0.55;
+}
+
+/* Buttons are defined once, in src/components/styles.ts, and main.ts adopts that sheet here. */
+
+/* ---- the title bar --------------------------------------------------------- */
+
+#titlebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px 0 12px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.brand-mark {
+  width: 16px;
+  height: 16px;
+  fill: var(--fg);
+}
+
+.brand-name {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
+.open-name {
+  min-width: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* What the run amounts to, beside the name it was made from. */
+.chip {
+  flex: none;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--fg-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.chip:empty {
+  display: none;
+}
+
+.spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- the shell ------------------------------------------------------------- */
+
+#shell {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--rail) var(--sidebar) minmax(0, 1fr);
+}
+
+/* ---- the rail -------------------------------------------------------------- */
+
+#rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 0;
+  background: var(--chrome);
+  border-right: 1px solid var(--line);
+}
+
+.rail-gap {
+  flex: 1;
+}
+
+.ric {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  box-shadow: none;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+
+.ric:hover {
+  color: var(--fg);
+  background: var(--panel-2);
+}
+
+/* The container this icon opens is the one showing: marked with the bar VS Code uses, which
+   reads at a glance across a column of five. */
+.ric[aria-pressed="true"] {
+  color: var(--fg);
+  background: var(--panel);
+  box-shadow: inset 2px 0 0 var(--fg);
+}
+
+.ic {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--line-strong);
+  color: var(--fg);
+  font: 600 9px/1 var(--sans);
+}
+
+.badge[hidden] {
+  display: none;
+}
+
+.badge-bad {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* ---- the sidebar ----------------------------------------------------------- */
+
+#sidebar {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.container[hidden] {
+  display: none;
+}
+
+.container-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.container-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.container-count {
+  font: 500 10px/1 var(--mono);
+  color: var(--fg-faint);
+}
+
+.container-count:empty {
+  display: none;
+}
+
+.container-head .push {
+  margin-left: auto;
+}
+
+.container-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 10px 14px;
+}
+
+.container-foot {
+  flex: none;
+  margin: 0;
+  padding: 7px 10px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+
+#explorer,
+#refs-tree,
+#sheets-list {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- the centre ------------------------------------------------------------ */
+
+#centre {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+#groups {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 42fr) minmax(0, 58fr);
+}
+
+.group {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+}
+
+.group-editor {
+  border-right: 1px solid var(--line);
+}
+
+/* ---- the editor group's tabs ----------------------------------------------- */
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  height: 30px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 10px;
+  border: none;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--fg-dim);
+  font: 500 11.5px/1 var(--sans);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tab:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--fg);
+}
+
+.tab[aria-selected="true"],
+.tab[aria-selected="true"]:hover {
+  color: var(--fg);
+  background: var(--panel);
+  box-shadow: inset 0 -2px 0 var(--fg);
+}
+
+.tab .name {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* The script has a failing line and is not in front: say so on the tab, rather than taking
+   the document away from somebody who is reading a sheet. */
+.tab[data-flag="error"][aria-selected="false"]::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+.tab-close {
+  width: 15px;
+  height: 15px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  box-shadow: none;
+  color: var(--fg-faint);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.tab-close:hover:not(:disabled) {
+  background: var(--line);
+  border-color: transparent;
+  color: var(--fg);
+}
+
+.tab-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-panel[hidden] {
+  display: none;
+}
+
+.editor {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The values file and a survey's report are documents to read, in the same face and on the
+   same ground as the script they sit beside. A report runs to hundreds of lines, so the panel
+   scrolls and the text is never wrapped: a line of it is one measurement. */
+.panel-document {
+  overflow: auto;
+  background: var(--panel);
+}
+
+.document-text {
+  margin: 0;
+  padding: 8px 12px;
+  font: 13px/1.5 var(--mono);
+  color: var(--fg);
+  white-space: pre;
+  tab-size: 4;
+}
+
+/* A sheet is a drawing to read, so it gets the room and the white paper a cut file expects. */
+.panel-sheet {
+  overflow: auto;
+  padding: 12px;
+  background: var(--panel-2);
+}
+
+#sheet-drawing {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+/* ---- the view -------------------------------------------------------------- */
+
+.viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 6px 0 10px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line);
+}
+
+/* The selection and the one thing to do with it, side by side. */
+.picked {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.selection {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selection.is-set {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--select) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--select) 45%, transparent);
+  border-radius: 5px;
+  padding: 2px 7px;
+}
+
+/* Nothing to insert: say how to get something rather than show a dead button. */
+.picked button:disabled {
+  display: none;
+}
+
+/* A body dropped on the view: what was read, and the one thing to do about it. Quiet, because
+   it is scenery rather than the work - the drawing is still what the eye should go to. */
+.reference {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  min-width: 0;
+  height: 22px;
+  padding: 0 3px 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-2);
+  color: var(--fg-dim);
+}
+
+.reference[hidden] {
+  display: none;
+}
+
+.reference-name {
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 24ch;
+}
+
+/* The one thing a dropped body is for: its survey, a tab away. Reads "measuring…" and is
+   disabled while the worker is still at it. */
+.reference-report {
+  height: 18px;
+  min-width: 0;
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  box-shadow: none;
+  color: var(--fg-dim);
+}
+
+.reference-report:hover:not(:disabled) {
+  background: var(--line);
+  border-color: transparent;
+  color: var(--fg);
+}
+
+.reference-report:disabled {
+  font-weight: 500;
+  color: var(--fg-faint);
+}
+
+/* Same shape as `.reference-report`, plus a pressed state: on while faces are coloured in
+   the view, so the chip itself says whether a click there means anything right now. */
+.reference-detect {
+  height: 18px;
+  min-width: 0;
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  box-shadow: none;
+  color: var(--fg-dim);
+}
+
+.reference-detect:hover:not(:disabled) {
+  background: var(--line);
+  border-color: transparent;
+  color: var(--fg);
+}
+
+.reference-detect:disabled {
+  font-weight: 500;
+  color: var(--fg-faint);
+}
+
+.reference-detect[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.reference-clear {
+  height: 18px;
+  min-width: 18px;
+  padding: 0;
+  font-size: 10px;
+  line-height: 1;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  box-shadow: none;
+  color: var(--fg-faint);
+}
+
+.reference-clear:hover:not(:disabled) {
+  background: var(--line);
+  border-color: transparent;
+  color: var(--fg);
+}
+
+/* decision-7's pick, over the view's own bottom-left corner: what the last click measured, the
+   three fields a placement is, and the one button that commits them. Over the canvas rather
+   than beside it because it is read while clicking in the canvas - a panel elsewhere would put
+   the numbers and the thing they are about at opposite ends of the screen. */
+.pick {
+  position: absolute;
+  z-index: 6;
+  left: 10px;
+  bottom: 10px;
+  width: 268px;
+  max-width: calc(100% - 20px);
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 6px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--panel-2) 92%, transparent);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(3px);
+}
+
+.pick[hidden] {
+  display: none;
+}
+
+.pick-line {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.pick-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* Which frame the numbers in this panel are in. Said out loud only when it is not the
+   exported one, because that is the case in which a pick cannot be written down. */
+.pick-frame {
+  font-size: 10.5px;
+  color: var(--accent);
+}
+
+.pick-read {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--fg-dim);
+  white-space: pre-line;
+}
+
+.pick-field {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.pick-value {
+  min-width: 0;
+  width: 100%;
+  height: 20px;
+  padding: 0 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.pick button {
+  height: 19px;
+  padding: 0 7px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: 999px;
+}
+
+.pick .pick-quiet {
+  font-weight: 500;
+  color: var(--fg-dim);
+}
+
+.pick-why {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--fg-dim);
+}
+
+.pick-why:empty {
+  display: none;
+}
+
+.pick-why.is-error {
+  color: var(--danger);
+}
+
+/* − Fit + as one control. */
+.zoombar {
+  display: inline-flex;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.zoombar button {
+  height: 22px;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.zoombar button + button {
+  margin-left: -1px;
+}
+
+.zoombar button:first-child {
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+
+.zoombar button:last-child {
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.zoombar button:hover:not(:disabled) {
+  position: relative;
+}
+
+.zoom {
+  font-family: var(--mono);
+  font-size: 14px;
+  /* A touch target a finger can hit: this is the control a phone zooms with. */
+  min-width: 30px;
+  padding: 0 8px;
+}
+
+/* The one view: every part of the scene, laser plates and printed solids on one stage. */
+.stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.canvas {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  background: #fff;
+  overflow: hidden;
+  position: relative;
+  touch-action: none;
+}
+
+.canvas-3d {
+  background: linear-gradient(#f3f4f6, #dfe3e8);
+  cursor: grab;
+}
+
+@media (prefers-color-scheme: dark) {
+  .canvas-3d {
+    background: linear-gradient(#20242a, #121417);
+  }
+}
+
+.canvas-3d .gl {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The ref under the pointer, and the part it belongs to under it. A canvas has no `title`, so
+   hovering says what a face is here instead - the same string a click puts in the bar. */
+.canvas-tip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  max-width: 80%;
+  padding: 3px 7px;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #fff;
+  background: rgb(20 20 20 / 82%);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 20%);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.canvas-tip-part {
+  display: block;
+  color: rgb(255 255 255 / 70%);
+}
+
+.canvas-tip-part:empty {
+  display: none;
+}
+
+.canvas-note {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--fg-dim);
+  pointer-events: none;
+}
+
+.canvas-note:empty {
+  display: none;
+}
+
+/* ---- the bottom panel ------------------------------------------------------ */
+
+#run-panel {
+  height: 190px;
+  min-height: 0;
+}
+
+#run-panel[collapsed] {
+  height: auto;
+}
+
+/* ---- the status bar -------------------------------------------------------- */
+
+#statusbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  background: var(--chrome);
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+/* A dot and a word. The dot pulses while something is happening, so a run that is still
+   going never looks the same as one that finished. */
+.state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 17px;
+  padding: 0 8px 0 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: lowercase;
+  background: var(--panel-2);
+  color: var(--fg-dim);
+}
+
+.state::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.state[data-state="running"],
+.state[data-state="boot"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.state[data-state="running"]::before,
+.state[data-state="boot"]::before {
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.state[data-state="ok"] {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.state[data-state="error"] {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+    transform: scale(0.7);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .state::before {
+    animation: none !important;
+  }
+}
+
+.status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status.is-error {
+  color: var(--danger);
+}
+
+.timing {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-faint);
+}
+
+/* ---- CodeMirror ------------------------------------------------------------ */
+
+.cm-editor {
+  height: 100%;
+  font-size: 12.5px;
+}
+
+.cm-editor .cm-scroller {
+  font-family: var(--mono);
+  line-height: 1.6;
+}
+
+.cm-editor .cm-gutters {
+  border-right-color: transparent !important;
+  color: var(--fg-faint) !important;
+}
+
+.cm-editor .cm-lineNumbers .cm-gutterElement {
+  padding: 0 10px 0 12px;
+}
+
+.cm-errorLine {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+
+.cm-editor .cm-gutter.cm-errorGutter {
+  color: var(--danger);
+  font-size: 11px;
+  line-height: inherit;
+  text-align: center;
+}
+
+/* ---- narrow ---------------------------------------------------------------- */
+
+/* Chrome on four edges is what this shell costs, and a narrow window cannot pay it. The
+   sidebar goes first - it is the one region whose contents are all reachable another way -
+   and then the script and the view stop sharing a row, because 260 px each is neither. */
+@media (max-width: 1000px) {
+  #shell {
+    grid-template-columns: var(--rail) minmax(0, 1fr);
+  }
+
+  #sidebar {
+    display: none;
+  }
+
+  #shell.is-open {
+    grid-template-columns: var(--rail) minmax(0, 1fr);
+  }
+
+  #shell.is-open #sidebar {
+    display: flex;
+    grid-column: 2;
+  }
+
+  #shell.is-open #centre {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  #groups {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 4fr) minmax(0, 6fr);
+  }
+
+  .group-editor {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .open-name {
+    display: none;
+  }
+
+  kbd {
+    display: none;
+  }
+}
