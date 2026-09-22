@@ -3,6 +3,8 @@ name = "bench"
 version = "0.1.0"
 description = "Workshop objects as code: a parametric geometry vocabulary for laser, print and CNC"
 requires-python = ">=3.15"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = []
 
 [build-system]

@@ -402,3 +402,8 @@ deselected unless you ask for `-m e2e`). Every example script is run in both of 
 layers: without a modeller it has to come back clean, and with one its mesh is measured
 through the refs its own script wrote. There are no mocks or monkeypatching anywhere; `tests/conftest.py`
 fails the session if any appears. See **Testing** in `DESIGN.md`.
+
+## License
+
+GNU Affero General Public License v3.0 or later - see `LICENSE`. A changed bench, whether
+handed over or served to people over a network, comes with its source.
