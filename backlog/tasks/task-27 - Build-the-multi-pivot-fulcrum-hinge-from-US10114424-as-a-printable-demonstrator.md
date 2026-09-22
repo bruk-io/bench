@@ -19,7 +19,7 @@ priority: medium
 <!-- SECTION:DESCRIPTION:BEGIN -->
 A new example: one hinge stack of the sequential multi-pivot hinge disclosed in US 10,114,424 B2 ("Multi-Pivot Hinge", Microsoft, granted Oct 2018, continuation of an application filed Nov 2014; inventors Campbell, Bitz, Tazbaz). This is the Surface Book hinge - the patent itself uses the owner's word for it once, saying the unrolling action "can move the device fulcrum backwards providing a longer wheel base".
 
-The PDF is at /Users/brukhabtu/.claude/uploads/4f6dc56c-e655-41bd-b464-0d843b60aaa6/a09d539b-US10114424.pdf (18 pages; read it with the Read tool's `pages` parameter).
+The source is the patent itself, US 10,114,424 B2 (18 pages), from the USPTO or Google Patents.
 
 **This is NOT the survey path, and the distinction matters.** The patent contains no dimensions at all - not one millimetre, no radii, and no angles beyond "obtuse" and "90 to 180 degrees". Patent figures are not to scale by convention and this one offers nothing to anchor them to. So there is nothing to measure and `survey`/`report` do not apply. What the patent gives is a topology and an interlock rule, precisely described; the numbers are ours to choose and must be recorded as OUR choices, driven by printability, never presented as the patent's.
 
