@@ -962,6 +962,11 @@ kbd {
   color: var(--danger);
 }
 
+.state[data-state="warn"] {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
 @keyframes pulse {
   50% {
     opacity: 0.25;
