@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { type ReferenceTable, fromToml, stemOf, toml, tomlName } from "./values";
+import {
+  BENCH,
+  type Kept,
+  NOTHING_KEPT,
+  type ReferenceTable,
+  fromToml,
+  keptOf,
+  stemOf,
+  toml,
+  tomlName,
+} from "./values";
 
 const CABINET = "gridfinity_cabinet.py";
 
@@ -241,5 +251,95 @@ describe("values, [reference]", () => {
     expect(bad("origin = [1, 2, 3")).toBe(
       "line 2: origin is not a number, a string, true/false or a triple",
     );
+  });
+});
+
+describe("values, [project] and what this version does not read", () => {
+  it("reads [project]'s entry, and passes the table over in fromToml", () => {
+    const text = '[project]\nentry = "cabinet.py"\n\n[values]\nw = 3\n';
+    expect(keptOf(text)).toEqual({ entry: "cabinet.py", root: [], project: [], tables: [] });
+    expect(fromToml(text)).toEqual({ ok: true, values: { w: 3 }, reference: null });
+  });
+
+  it("has no entry for a document from before [project], and keeps nothing it does not need to", () => {
+    expect(keptOf("[values]\nw = 3\n")).toEqual(NOTHING_KEPT);
+    expect(keptOf("")).toEqual(NOTHING_KEPT);
+    expect(keptOf("# a comment only\n")).toEqual(NOTHING_KEPT);
+  });
+
+  it("keeps every line it does not read: root keys, other [project] keys, other tables", () => {
+    const text = [
+      "# written by hand",
+      'owner = "bruk"',
+      "[project]",
+      'entry = "cabinet.py"',
+      'modules = ["parts.py"]',
+      "entry_style = 2",
+      "[values]",
+      "w = 3",
+      "[[measured]]",
+      'name = "wall"',
+      "# a comment in somebody else's table stays",
+      "value = 2.41",
+      "",
+      "[reference]",
+      'file = "a.stl"',
+      "[later.table]",
+      "anything = { inline = true }",
+    ].join("\n");
+    expect(keptOf(text)).toEqual({
+      entry: "cabinet.py",
+      root: ['owner = "bruk"'],
+      project: ['modules = ["parts.py"]', "entry_style = 2"],
+      tables: [
+        "[[measured]]",
+        'name = "wall"',
+        "# a comment in somebody else's table stays",
+        "value = 2.41",
+        "",
+        "[later.table]",
+        "anything = { inline = true }",
+      ],
+    });
+    // And the document still opens: what it holds that this does not read is not a problem.
+    expect(fromToml(text).ok).toBe(true);
+  });
+
+  it("keeps an entry that is not a string as a line, rather than reading it", () => {
+    expect(keptOf("[project]\nentry = 3\n")).toEqual({ ...NOTHING_KEPT, project: ["entry = 3"] });
+  });
+
+  it("writes [project] above [values], and puts back everything it kept", () => {
+    const kept: Kept = {
+      entry: "cabinet.py",
+      root: ['owner = "bruk"'],
+      project: ['modules = ["parts.py"]'],
+      tables: ["", "[[measured]]", 'name = "wall"', "", ""],
+    };
+    expect(toml({ w: 3 }, "cabinet.py", [], null, kept)).toBe(
+      "# The values cabinet.py builds with. A field left out keeps the script's own default.\n" +
+        'owner = "bruk"\n' +
+        "[project]\n" +
+        'entry = "cabinet.py"\n' +
+        'modules = ["parts.py"]\n' +
+        "\n" +
+        "[values]\n" +
+        "w = 3\n" +
+        "\n" +
+        "[[measured]]\n" +
+        'name = "wall"\n',
+    );
+  });
+
+  it("reads back what it wrote, however many times, without the file growing", () => {
+    const text = '[project]\nentry = "a.py"\nx = 1\n\n[values]\nw = 3\n\n[[measured]]\nv = 2\n';
+    const once = toml({ w: 3 }, "a.py", [], null, keptOf(text));
+    const twice = toml({ w: 3 }, "a.py", [], null, keptOf(once));
+    expect(twice).toBe(once);
+    expect(keptOf(once)).toEqual(keptOf(text));
+  });
+
+  it("names the one document a project directory holds", () => {
+    expect(BENCH).toBe("bench.toml");
   });
 });

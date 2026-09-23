@@ -9,15 +9,23 @@
  *
  * Most of these are about *this browser on this device* and go nowhere else: which container
  * the rail had open, whether the panel was shut, the log level, the fingerprint of a script
- * the watchdog stopped. `files` is the exception and is not read from here by the app any
- * more - it is what `store-local.ts` keeps, behind `store.ts`'s protocol, so the projects can
- * live somewhere other than this browser without anything above noticing.
+ * the watchdog stopped, which project this browser has open. `files` is the exception: the
+ * projects a browser kept before they lived on the host, read once - through
+ * `store-local.ts` - to adopt them there (task-46), and never written again.
  */
 export const KEYS = {
-  /** Every project a person keeps - its script, and its values as the TOML document
-   * `tools/build.py` reads - and which one is open (`files.ts`). Reached through
-   * `store-local.ts`, never directly. */
+  /** Every project a browser kept before projects lived on the host - its script, and its
+   * values as the TOML document `tools/build.py` reads (`files.ts`). Read through
+   * `store-local.ts`, never directly, and only to adopt it; left in place afterwards, since it
+   * is somebody's work and the host now has its own copy. */
   files: "bench.files",
+  /** Whether this browser's own projects were adopted onto the host (`"adopted"`) or the
+   * person said to leave them (`"declined"`) - either way, asked once and not again. */
+  adopted: "bench.adopted",
+  /** Which project, and which of its scripts, this browser has open - `{project, script}` as
+   * JSON. Kept here and never on the host, so a second device switching projects does not
+   * move this one. */
+  open: "bench.open",
   /** The one script a browser kept before there were files - read once, to adopt it. */
   source: "bench.source",
   /** That script's overrides, likewise. */

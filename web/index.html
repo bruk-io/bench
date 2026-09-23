@@ -14,7 +14,7 @@
         <span class="brand-name">bench</span>
       </div>
 
-      <span id="open-name" class="open-name" title="The script that is open"></span>
+      <span id="open-name" class="open-name" title="The project that is open"></span>
       <span id="made" class="chip"></span>
 
       <div class="spacer"></div>
@@ -37,7 +37,7 @@
           type="button"
           data-container="files"
           aria-pressed="false"
-          title="Your scripts"
+          title="Your projects"
         >
           <svg class="ic" viewBox="0 0 20 20" aria-hidden="true">
             <path d="M2.5 5.5h5l1.5 2h8.5v8.5h-15z" />
@@ -144,6 +144,31 @@
                them. The values are the project's other half (decision-3), so their tab is as
                permanent as the script's: what the panel edits is readable here as the file it is. -->
           <section class="group group-editor">
+            <!-- A page with no host behind it: said here, in words, instead of an editor that
+                 looks as if it would keep anything (decision-9: there is no fallback). -->
+            <div id="no-host" class="notice notice-bad" role="alert" hidden>
+              <p class="notice-title">There is no host behind this page.</p>
+              <p id="no-host-why" class="notice-text"></p>
+              <p class="notice-text">
+                bench keeps its projects on the machine that serves it. Start it with
+                <code>npm run dev</code> or <code>npm run preview</code> in <code>web/</code>, then
+                reload this page.
+              </p>
+            </div>
+            <!-- The one-time question for a browser that kept projects from before they were
+                 directories on the host. In the page, never a browser dialog: it writes real
+                 files onto a real disk, so it names them and waits to be answered. -->
+            <div id="adopt" class="notice" role="region" aria-labelledby="adopt-title" hidden>
+              <p id="adopt-title" class="notice-title">This browser is holding projects from before.</p>
+              <p class="notice-text">
+                Projects now live on the host. Writing these there creates:
+              </p>
+              <ul id="adopt-list" class="notice-list"></ul>
+              <p class="notice-actions">
+                <button id="adopt-yes" type="button" class="primary">Write them to the host</button>
+                <button id="adopt-no" type="button">Leave them in this browser</button>
+              </p>
+            </div>
             <div id="editor-tabs" class="tabs" role="tablist" aria-label="Open documents"></div>
             <div id="panel-script" class="tab-panel" role="tabpanel">
               <div id="editor" class="editor"></div>

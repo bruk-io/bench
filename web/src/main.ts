@@ -55,15 +55,21 @@ import {
   deleted,
   document as projectDocument,
   duplicated,
-  normalized,
+  merged,
+  openSource,
   opened,
+  pristine,
   renamed,
   restored,
+  scriptsOf,
   serialized,
+  single,
   switched,
   withExample,
+  withKept,
   withOverrides,
   withReference,
+  withScript,
   withSource,
 } from "./files";
 import { EXAMPLES, STARTER } from "./generated/pysources";
@@ -85,15 +91,14 @@ import { HOW_TO_SELECT, failing, made, noBodiesReason, tally } from "./status";
 // `remember`/`forget` are still here for what belongs to this browser rather than to a
 // project - the hang fingerprint, the rail's container, the panel. The projects themselves
 // go through `store` (see `store.ts` on what does not travel).
-import { host as hostClient } from "./host";
+import { type Host, host as hostClient } from "./host";
 import { type OutboxState, outbox } from "./outbox";
-import { PROJECT } from "./project-files";
 import { KEYS, forget, hashOf, remember, remembered } from "./storage";
 import type { ProjectStore } from "./store";
 import { hostStore } from "./store-host";
 import { localStore } from "./store-local";
 import { type Level, attach, consoleSink, isLevel, log, timed, userTimingSink } from "./telemetry";
-import { type ReferenceTable, type ReferenceValue, fromToml, stemOf, tomlName } from "./values";
+import { BENCH, type ReferenceTable, type ReferenceValue, fromToml, keptOf, stemOf, tomlName } from "./values";
 // A type only: `viewer3d` itself is fetched when the first scene lands (`deferred3d`), and a
 // type import is erased, so naming the shape a pick comes back as costs the bundle nothing.
 import type { DetectHit } from "./viewer3d";
@@ -149,6 +154,12 @@ const ui = {
   refsCount: need<HTMLSpanElement>("refs-count"),
   sheetsList: need<BenchSheets>("sheets-list"),
   sheetCount: need<HTMLSpanElement>("sheet-count"),
+  noHost: need<HTMLDivElement>("no-host"),
+  noHostWhy: need<HTMLParagraphElement>("no-host-why"),
+  adopt: need<HTMLDivElement>("adopt"),
+  adoptList: need<HTMLUListElement>("adopt-list"),
+  adoptYes: need<HTMLButtonElement>("adopt-yes"),
+  adoptNo: need<HTMLButtonElement>("adopt-no"),
   editorTabs: need<HTMLDivElement>("editor-tabs"),
   panelScript: need<HTMLDivElement>("panel-script"),
   panelValues: need<HTMLDivElement>("panel-values"),
@@ -201,17 +212,19 @@ let held = false;
 /** When the run in flight was asked for, so the status bar can say what it cost. */
 let asked = 0;
 
-// ---- the scripts kept --------------------------------------------------------
+// ---- the projects kept --------------------------------------------------------
 
-/** Where the projects are kept. One store, chosen here and nowhere else; everything below
- * this line moves a document and does not know the place (`store.ts`). Reassigned exactly
- * once, by `chosenStore()` at the top of `boot()`, before anything reads or writes a project -
- * a browser-kept workspace and a host-kept one are never both live (decision-9, AC#8). This
- * default is only what a call made before `boot()` finishes would see, and nothing makes one. */
-let store: ProjectStore = localStore();
+/** Where the projects are kept: the host's store, once `chosenStore()` has found the host at
+ * the top of `boot()`, and nothing else. Everything below this line moves a document and does
+ * not know the place (`store.ts`). `null` until then - and for good on a page with no host
+ * behind it, which says so and stops rather than keeping work nowhere (decision-9: "there is no
+ * fallback, and that is the decision"). */
+let store: ProjectStore | null = null;
 
-/** The outbox behind `store`, when it is the host's - `null` for the browser's own store,
- * which never has anything unreached to report. Set alongside `store` and nowhere else. */
+/** The route, and the outbox behind `store` - set alongside it and nowhere else. A dropped mesh
+ * goes to the host through the outbox without being queued (decision-9), and a placement reads
+ * the mesh it names back over the route. */
+let client: Host | null = null;
 let reach: ReturnType<typeof outbox> | null = null;
 
 /** How long to wait before asking the host again, while this browser has host work that must
@@ -219,35 +232,50 @@ let reach: ReturnType<typeof outbox> | null = null;
 const PROBE_START_MS = 1000;
 const PROBE_MAX_MS = 30_000;
 
-/** Which store this session uses, decided once. task-46 will give the host a real per-project
- * directory and an explicit adoption flow; until then, "the host has projects" can only mean
- * "the host already has `workspace/`, the one directory this store writes" - a reachable route
- * with an empty or absent root is not by itself an invitation to move a person's browser-kept
- * work there, which is why that case keeps the local store rather than switching. `no-root`,
- * the route missing entirely (a static build), and the network failing all fall back the same
- * way, *unless* this browser's own outbox already holds host work: a restart mid-session
- * (decision-9's own words) must not read as "never used the host" and quietly go back to
- * showing a browser-kept workspace while the outbox keeps trying to reach a host nothing is
- * asking about any more - so that case waits and retries instead of falling back at all
- * (AC#3, AC#6, AC#8).
+/** What `chosenStore()` found: the host's store, or - in words a person can act on - why there
+ * is no host. */
+type Chosen = { readonly store: ProjectStore } | { readonly none: string };
+
+/** Why the route's answer is not a host to keep projects on. A root the host was told about
+ * and cannot find says so in the route's own words; anything else that answered is a server
+ * without the route - `dist/` behind a plain file server, which decision-9 retired. */
+const noHostReason = (refused: { readonly refused: string; readonly message: string }): string =>
+  refused.refused === "no-root"
+    ? `The host is running, but ${refused.message}.`
+    : `This page is being served without bench's projects route (${refused.message}).`;
+
+/** Which store this session uses, decided once: when the host route answers, the host is where
+ * the projects are (decision-9), and there is no other answer to fall back on - a route that
+ * does not answer is a page with no host, and `boot()` says so rather than keeping work in this
+ * browser as if nothing were wrong.
+ *
+ * *Unless* this browser's own outbox already holds host work: a restart mid-session (decision-9's
+ * own words) must not read as "there is no host" and put a person's unreached edits behind a
+ * message, so that case waits and retries instead. The browser's own store is not a store here
+ * any more: it is read once, to adopt what it held (`offerAdoption`).
  */
-async function chosenStore(): Promise<ProjectStore> {
-  const client = hostClient();
-  const box = outbox(client);
+async function chosenStore(): Promise<Chosen> {
+  const route = hostClient();
+  const box = outbox(route);
   const hadRows = await box.hasRows();
   let backoffMs = 0;
   for (;;) {
-    let listing: Awaited<ReturnType<typeof client.projects>> | null;
+    let listing: Awaited<ReturnType<typeof route.projects>> | null;
     try {
-      listing = await client.projects();
+      listing = await route.projects();
     } catch {
       listing = null;
     }
-    if (listing !== null && listing.ok && (hadRows || listing.value.projects.includes(PROJECT))) {
+    if (listing !== null && listing.ok) {
+      client = route;
       reach = box;
-      return hostStore(client, box);
+      return { store: hostStore(route, box) };
     }
-    if (!hadRows) return localStore();
+    if (!hadRows) {
+      return {
+        none: listing === null ? "Nothing answered at the address this page came from." : noHostReason(listing.refusal),
+      };
+    }
     log("info", "bench.store", "the host is not answering yet, and this browser has unreached host work", {
       "bench.store.waitedMs": String(backoffMs),
     });
@@ -266,6 +294,25 @@ async function chosenStore(): Promise<ProjectStore> {
       window.addEventListener("online", onOnline);
     });
   }
+}
+
+/** A page with no host behind it: said in words, at the top of the editor group and on the
+ * status bar, and everything that would look as if it could keep something is put out of
+ * reach - an editor that took typing and a Run that ran it would be a bench appearing to work
+ * with nowhere to put the work (task-46 AC#5). */
+function showNoHost(why: string): void {
+  log("warn", "bench.store", "there is no host behind this page", { "bench.store.problem": why });
+  ui.noHost.hidden = false;
+  ui.noHostWhy.textContent = why;
+  setState("error", "no host - nothing here can be opened or kept", true);
+  ui.reach.hidden = false;
+  ui.reach.textContent = "no host";
+  ui.reach.title = why;
+  ui.reach.dataset.state = "error";
+  for (const away of [ui.rail, need<HTMLElement>("sidebar"), ui.examples, ui.editorTabs, ui.panelScript]) {
+    away.inert = true;
+  }
+  ui.run.disabled = true;
 }
 
 /** What the reach indicator says for `state`, which colour it reads as, and the longer sentence
@@ -302,36 +349,69 @@ function showReach(state: OutboxState): void {
 
 /** Every project kept, and the open one.
  *
- * Starts as the workspace a browser with nothing kept would have, and is replaced by what the
+ * Starts as the workspace a host with nothing on it would have, and is replaced by what the
  * store answers with in `boot()`. It is never *unset*: a store that has to be asked is no
  * reason for the rest of this file to hold a `Workspace | null` and check it everywhere.
  */
 let workspace: Workspace = firstWorkspace();
 
-/** A browser with no files yet: the one script it kept from before there were files becomes
- * the first file, and the keys it was kept under are let go. */
+/** Whether `workspace` is still `firstWorkspace()` as it was made - a host with nothing on it,
+ * showing the first example, and nobody has changed anything yet. Nothing is written for it
+ * until somebody does: a page loading is not a reason to make a directory on somebody's disk,
+ * and a browser about to be asked whether to adopt its own projects should not find an
+ * untouched example already sitting on the host in their way. */
+let fresh = false;
+
+/** A host with no projects yet: the first example, as a project of its own, not yet written. */
 function firstWorkspace(): Workspace {
-  const found = adopted(remembered(KEYS.source), parsed(remembered(KEYS.overrides)), EXAMPLES, FIRST);
-  forget(KEYS.source);
-  forget(KEYS.overrides);
-  return found;
+  return single(stemOf(FIRST), EXAMPLES[FIRST] ?? "");
 }
 
-/** Make `next` the workspace: the browser remembers it, and the title bar, the explorer and
- * the values tab show it. */
+/** `space` opened where this browser left it: the project and the script it last had open, when
+ * both are still there - or the store's own first project, at its entry, when not. Which
+ * project is open is this browser's alone (`files.ts`), so it comes from here and never from
+ * the host. */
+function reopened(space: Workspace): Workspace {
+  let said: unknown;
+  try {
+    said = JSON.parse(remembered(KEYS.open) ?? "null");
+  } catch {
+    said = null;
+  }
+  if (typeof said !== "object" || said === null) return space;
+  const { project, script } = said as { project?: unknown; script?: unknown };
+  if (typeof project !== "string") return space;
+  const there = switched(space, project);
+  if (there.current !== project) return space;
+  return typeof script === "string" ? withScript(there, script) : there;
+}
+
+/** Make `next` the workspace: the host keeps it, and the title bar, the explorer and the values
+ * tab show it. */
 function keep(next: Workspace): void {
-  workspace = next;
+  fresh = false;
+  show(next);
   // Deliberately not awaited. Every keystroke and every knob turn comes through here, and a
   // person editing a script must not be made to wait on a write - decision-9's outbox rule,
   // which is why `keep` stayed synchronous when the store became asynchronous. A write that
   // fails says so; it does not take the edit down with it.
-  void store.save(serialized(next)).catch((problem: unknown) => {
+  const kept = store;
+  if (kept === null) return;
+  void kept.save(serialized(next)).catch((problem: unknown) => {
     log("error", "bench.store", "the projects were not kept", {
-      "bench.store.kind": store.kind,
+      "bench.store.kind": kept.kind,
       "bench.store.problem": String(problem),
     });
   });
-  ui.explorer.names = next.files.map((file) => file.name);
+}
+
+/** Put `next` on screen as the workspace without keeping it anywhere - what a store has just
+ * answered with needs no writing back, and a fresh host's first example is not written until
+ * somebody changes it. Which project and script are open is remembered here, in this browser. */
+function show(next: Workspace): void {
+  workspace = next;
+  remember(KEYS.open, JSON.stringify({ project: next.current, script: next.script }));
+  ui.explorer.names = next.projects.map((one) => one.name);
   ui.explorer.current = next.current;
   ui.openName.textContent = next.current;
   showValues();
@@ -346,14 +426,85 @@ function keep(next: Workspace): void {
 /** A project's values as the file they are - the one thing the values tab shows and the
  * download carries. The lines follow the script's own declaration order once a run has said
  * it, so the file reads like the dataclass does. */
-const valuesDocument = (project: Project): string =>
-  projectDocument(project, scene?.params.map((one) => one.name) ?? []);
+const valuesDocument = (one: Project): string => projectDocument(one, scene?.params.map((param) => param.name) ?? []);
 
 /** Put the open project's values file on its tab. */
 function showValues(): void {
   ui.valuesText.textContent = valuesDocument(opened(workspace));
 }
 
+// ---- adopting what this browser kept ----------------------------------------------
+
+/** The projects this browser kept before projects lived on the host, waiting on the person's
+ * answer - empty once it is given, and whenever there was nothing to ask about. */
+let adopting: readonly Project[] = [];
+
+/** What this browser kept that is worth asking about: every project in its own store - or,
+ * from before there were files at all, the one script it kept - that is not simply an example
+ * exactly as it shipped, which the app used to open for everybody and nobody would want carried
+ * anywhere. Nothing once the question has been answered either way: it is asked once. */
+async function adoptable(): Promise<readonly Project[]> {
+  if (remembered(KEYS.adopted) !== null) return [];
+  let kept: Workspace | null;
+  try {
+    kept = restored(await localStore().load());
+  } catch {
+    kept = null;
+  }
+  const source = remembered(KEYS.source);
+  const found =
+    kept ?? (source === null ? null : adopted(source, parsed(remembered(KEYS.overrides)), EXAMPLES, FIRST));
+  return (found?.projects ?? []).filter((one) => !pristine(one, EXAMPLES));
+}
+
+/** Where adopting would put `incoming`, beside what is on the host now: the fresh first example
+ * is not on the host and is not kept beside them. */
+const adoptedInto = (incoming: readonly Project[]): Workspace | null => merged(fresh ? null : workspace, incoming);
+
+/** Ask, once, whether to write this browser's own projects onto the host - naming every
+ * directory it would create under the host's root before anything is written (decision-9:
+ * "adopting what is in `localStorage` writes real files onto a real disk. It asks first, naming
+ * the directory it is about to create. It does not happen because the page loaded.") */
+async function offerAdoption(): Promise<void> {
+  const incoming = await adoptable();
+  if (incoming.length === 0 || client === null) return;
+  const listed = await client.projects().catch(() => null);
+  const root = listed?.ok === true ? listed.value.root.replace(/[/\\]+$/, "") : "the host's projects root";
+  const into = adoptedInto(incoming);
+  const names = into === null ? [] : into.projects.slice(-incoming.length).map((one) => one.name);
+  adopting = incoming;
+  ui.adoptList.replaceChildren(
+    ...names.map((name) => {
+      const row = document.createElement("li");
+      row.textContent = `${root}/${name}/`;
+      return row;
+    }),
+  );
+  ui.adopt.hidden = false;
+  log("info", "bench.adopt", "this browser holds projects from before; asking before writing them", {
+    "bench.adopt.count": String(incoming.length),
+  });
+}
+
+ui.adoptYes.addEventListener("click", () => {
+  const into = adoptedInto(adopting);
+  const count = adopting.length;
+  adopting = [];
+  ui.adopt.hidden = true;
+  remember(KEYS.adopted, "adopted");
+  if (into === null) return;
+  log("info", "bench.adopt", "this browser's projects were written to the host", {
+    "bench.adopt.count": String(count),
+  });
+  load(into);
+});
+
+ui.adoptNo.addEventListener("click", () => {
+  adopting = [];
+  ui.adopt.hidden = true;
+  remember(KEYS.adopted, "declined");
+  log("info", "bench.adopt", "this browser's projects were left where they were");
+});
 
 function setState(state: "boot" | "running" | "ok" | "error", text: string, bad = false): void {
   ui.state.dataset["state"] = state;
@@ -569,9 +720,6 @@ const referenceTableJson = (): string | undefined => {
   return table === null ? undefined : JSON.stringify(table);
 };
 
-/** The chip beside the view: the file's name alone, or - once its project's `[reference]`
- * names it and a run has actually placed it - the word decision-4 asks for. Nothing is moved
- * silently, so this only ever says `placed` when a placement was applied. */
 /** The dropped bodies as the refs container lists them.
  *
  * One today, because a drop replaces what was there; the tree takes a list because a project
@@ -582,10 +730,19 @@ function showReferenceRows(): void {
   ui.refsTree.references = referenceName === "" ? [] : [referenceName];
 }
 
+/** The chip beside the view: the file's name, `placed` once its project's `[reference]` names
+ * it and a run has actually placed it - the word decision-4 asks for, since nothing is moved
+ * silently - and `not kept` when the project's directory would not take it (`keepBody`). */
 function showReferenceChip(): void {
   if (referenceName === "") return;
-  ui.referenceName.textContent = matchedReference() === null ? referenceName : `${referenceName} · placed`;
+  const placed = matchedReference() === null ? "" : " · placed";
+  ui.referenceName.textContent = `${referenceName}${placed}${bodyProblem === null ? "" : " · not kept"}`;
+  ui.referenceName.title = bodyProblem === null ? "" : `not kept in the project: ${bodyProblem}`;
 }
+
+/** Why the body on the view is not in the open project's directory, when it is not - the
+ * route's refusal, in its words. `null` for a body that landed, or is on its way. */
+let bodyProblem: string | null = null;
 
 /** `bytes` as base64, a chunk at a time: spreading a megabyte into `fromCharCode` at once
  * overflows the call stack, and a dropped body is comfortably a megabyte. */
@@ -618,40 +775,125 @@ for (const stage of ["dragover", "drop"] as const) {
   });
 }
 
+/** Whether the survey on its way is one nobody asked to read - a body put back on the view
+ * because the open project's `[reference]` names it (`heldBody`) - so its report is kept for
+ * the chip's button rather than brought in front of the script the person opened. */
+let surveyQuietly = false;
+
+/** Make `bytes`, called `name`, the body on the view: measured, run against, surveyed.
+ *
+ * `quietly` for a body the app put back by itself rather than one a person dropped: the run and
+ * the survey are the same, but the report waits behind the chip instead of opening. */
+function hold(name: string, bytes: Uint8Array, quietly: boolean): void {
+  reference = encoded(bytes);
+  referenceName = name;
+  bodyProblem = null;
+  report = null;
+  // A new body invalidates any detection of the last one: its triangles are not this
+  // one's, so the toggle goes off rather than colour the wrong mesh's flats onto this one.
+  detecting = false;
+  detectedFlats = null;
+  detectedOrigins = [];
+  detectedRound = 0;
+  picks = [];
+  space.detect(null);
+  showPickState();
+  log("info", "bench.reference", quietly ? "the placed body was read back from the project" : "a body was dropped on the view", {
+    "bench.reference.name": name,
+    "bench.reference.bytes": bytes.length,
+  });
+  ui.reference.hidden = false;
+  showReferenceChip();
+  // A drop replaces what was there, so a selection on the body that has just gone would
+  // name a row nothing holds. Cleared before the new rows go down, not after.
+  if (pickedReference !== null) showSelection(null);
+  showReferenceRows();
+  showSurveyState();
+  showDetectState();
+  // The run first, so the view shows the body at once; the survey follows it in the worker
+  // and its report opens when it lands. A drop is the maker asking what the body measures,
+  // so it is not made to ask twice - and the two verbs it takes are not made to be known.
+  runNow();
+  surveyQuietly = quietly;
+  bridge.survey(reference, referenceTableJson());
+}
+
+/** Whether two files hold the same bytes. */
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let at = 0; at < a.length; at += 1) if (a[at] !== b[at]) return false;
+  return true;
+}
+
+/** Write a dropped body into `project`'s own directory (task-46 AC#7), so the `[reference]`
+ * table that places it names a file the project holds rather than one a browser happened to
+ * have on its view - and a reload, `tools.build` and the maker's own editor all find it there.
+ *
+ * Straight through, never queued: a mesh is never edited, so there is nothing to coalesce and
+ * nothing to survive a reload for (decision-9) - it lands now or says it did not. The same file
+ * dropped again is already there and nothing more is written. A *different* file of the same
+ * name is not written over: the drop only ever creates, and the chip says the body is not kept
+ * rather than a stale-looking success, because the project's copy may be one a placement was
+ * measured against. */
+async function keepBody(project: string, name: string, bytes: Uint8Array): Promise<void> {
+  if (reach === null || client === null) return;
+  let problem: string;
+  try {
+    const sent = await reach.sendThrough(project, name, bytes);
+    if (sent.ok) {
+      log("info", "bench.reference", "the dropped body was written into the project", {
+        "bench.reference.name": name,
+        "bench.project": project,
+      });
+      return;
+    }
+    if (sent.refusal.refused === "exists") {
+      const there = await client.read(project, name);
+      if (there.ok && sameBytes(there.value.bytes, bytes)) return;
+      problem = `${project} already holds a different ${name}, and a drop does not write over it`;
+    } else {
+      problem = sent.refusal.message;
+    }
+  } catch (thrown: unknown) {
+    problem = `the host could not be reached (${String(thrown)})`;
+  }
+  log("warn", "bench.reference", "the dropped body was not written into the project", {
+    "bench.reference.name": name,
+    "bench.project": project,
+    "bench.store.problem": problem,
+  });
+  if (referenceName !== name) return; // replaced on the view while this was being refused
+  bodyProblem = problem;
+  showReferenceChip();
+}
+
+/** Put back on the view the body the open project's `[reference]` names, read from the
+ * project's own directory - the placement and the body it places now survive a reload
+ * together, which is what writing the drop into the project was for. Nothing when the table
+ * names nothing, names the body already on the view, or names a file the directory does not
+ * hold (decision-4's rule still stands: nothing is placed that is not there). */
+async function heldBody(): Promise<void> {
+  const one = opened(workspace);
+  const file = one.reference?.["file"];
+  if (typeof file !== "string" || file === referenceName || client === null) return;
+  const got = await client.read(one.name, file).catch(() => null);
+  if (got === null || !got.ok) return;
+  if (workspace.current !== one.name) return; // the person has opened something else since
+  hold(file, got.value.bytes, true);
+}
+
 ui.canvas3d.addEventListener("drop", (event: DragEvent) => {
   const file = event.dataTransfer?.files[0];
   if (file === undefined) return;
   event.preventDefault();
+  // A drop is somebody's work arriving in a project, so a fresh host's first example is
+  // written now rather than holding a mesh in a directory with no script beside it.
+  if (fresh) keep(workspace);
+  const project = workspace.current;
   void (async () => {
-    reference = encoded(new Uint8Array(await file.arrayBuffer()));
-    referenceName = file.name;
-    report = null;
-    // A new body invalidates any detection of the last one: its triangles are not this
-    // one's, so the toggle goes off rather than colour the wrong mesh's flats onto this one.
-    detecting = false;
-    detectedFlats = null;
-    detectedOrigins = [];
-    detectedRound = 0;
-    picks = [];
-    space.detect(null);
-    showPickState();
-    log("info", "bench.reference", "a body was dropped on the view", {
-      "bench.reference.name": file.name,
-      "bench.reference.bytes": file.size,
-    });
-    ui.reference.hidden = false;
-    showReferenceChip();
-    // A drop replaces what was there, so a selection on the body that has just gone would
-    // name a row nothing holds. Cleared before the new rows go down, not after.
-    if (pickedReference !== null) showSelection(null);
-    showReferenceRows();
-    showSurveyState();
-    showDetectState();
-    // The run first, so the view shows the body at once; the survey follows it in the worker
-    // and its report opens when it lands. A drop is the maker asking what the body measures,
-    // so it is not made to ask twice - and the two verbs it takes are not made to be known.
-    runNow();
-    bridge.survey(reference, referenceTableJson());
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    hold(file.name, bytes, false);
+    await keepBody(project, file.name, bytes);
   })();
 });
 
@@ -825,7 +1067,8 @@ function surveyed(outcome: SurveyOutcome): void {
   }
   report = outcome.report;
   showSurveyState();
-  openReport();
+  if (surveyQuietly) surveyQuietly = false;
+  else openReport();
 }
 
 /** The detection came back: the backdrop is coloured by it - or, when there is none, the
@@ -870,9 +1113,14 @@ let sentWith: Overrides = overrides;
 /** Replace the table: what the panel shows, what the open project remembers, and whether
  * there is anything to reset. */
 function setOverrides(next: Overrides): void {
+  showOverrides(next);
+  keep(withOverrides(workspace, next));
+}
+
+/** The table on screen and in hand, without keeping it - what a store has just answered with. */
+function showOverrides(next: Overrides): void {
   overrides = next;
   ui.params.overrides = next;
-  keep(withOverrides(workspace, next));
   ui.reset.disabled = Object.keys(next).length === 0;
 }
 
@@ -880,6 +1128,9 @@ function setOverrides(next: Overrides): void {
 // the open project's script in before anything runs.
 const code = editor.mount(ui.editor, "", {
   onChange() {
+    // `replace` reports itself as a change; the same text put back is not an edit, and keeping
+    // it would write a fresh host's untouched first example on the way in (`fresh`).
+    if (code.text() === openSource(workspace)) return;
     keep(withSource(workspace, code.text()));
     window.clearTimeout(timer);
     timer = window.setTimeout(runNow, DEBOUNCE);
@@ -1095,10 +1346,16 @@ ui.railProblems.addEventListener("click", () => {
 
 // ---- the editor group: the script, its values, and any sheet or report opened beside them ----
 
-/** A document the editor group can show: the open project's script, its values file, one
- * of the sheets a run nested, or the report of the body dropped on the view. */
+/** A document the editor group can show: the open script, another of the open project's
+ * scripts, its values file, one of the sheets a run nested, or the report of the body dropped
+ * on the view.
+ *
+ * Every script in the project has a tab, and only the open one is ever in front: clicking
+ * another's opens *it* - into the editor, and as what Run runs (decision-9: "the script you
+ * have open runs", while a fresh open of the project runs its `entry`). */
 type Doc =
   | { readonly kind: "script" }
+  | { readonly kind: "other"; readonly name: string }
   | { readonly kind: "values" }
   | { readonly kind: "sheet"; readonly name: string }
   | { readonly kind: "report" };
@@ -1109,7 +1366,8 @@ const REPORT: Doc = { kind: "report" };
 const sheetDoc = (name: string): Doc => ({ kind: "sheet", name });
 
 /** The id of a document's tab, which is also what tells two documents apart. */
-const tabId = (doc: Doc): string => (doc.kind === "sheet" ? `tab-sheet-${doc.name}` : `tab-${doc.kind}`);
+const tabId = (doc: Doc): string =>
+  doc.kind === "sheet" ? `tab-sheet-${doc.name}` : doc.kind === "other" ? `tab-file-${doc.name}` : `tab-${doc.kind}`;
 
 /** The sheets open as tabs, in the order they were opened. The script and its values are not
  * in this list: they are always the first two tabs and cannot be closed, because closing the
@@ -1135,8 +1393,10 @@ function keepSheetTabs(sheets: readonly SheetView[]): void {
 
 function drawTabs(): void {
   ui.editorTabs.replaceChildren();
-  ui.editorTabs.append(tabFor(SCRIPT, workspace.current));
-  ui.editorTabs.append(tabFor(VALUES, tomlName(workspace.current)));
+  for (const name of scriptsOf(opened(workspace))) {
+    ui.editorTabs.append(tabFor(name === workspace.script ? SCRIPT : { kind: "other", name }, name));
+  }
+  ui.editorTabs.append(tabFor(VALUES, BENCH));
   for (const name of openSheets) ui.editorTabs.append(tabFor(sheetDoc(name), name));
   if (reportOpen) ui.editorTabs.append(tabFor(REPORT, referenceName));
 }
@@ -1173,7 +1433,8 @@ function tabFor(doc: Doc, label: string): HTMLButtonElement {
   text.textContent = label;
   tab.append(text);
   tab.addEventListener("click", () => {
-    showDocument(doc);
+    if (doc.kind === "other") openScript(doc.name);
+    else showDocument(doc);
   });
   if (doc.kind === "sheet" || doc.kind === "report") {
     const shut = document.createElement("button");
@@ -1199,7 +1460,22 @@ function tabFor(doc: Doc, label: string): HTMLButtonElement {
 
 /** Whether `doc` has a tab to come to the front on. */
 const isOpen = (doc: Doc): boolean =>
-  doc.kind === "sheet" ? openSheets.includes(doc.name) : doc.kind !== "report" || reportOpen;
+  doc.kind === "sheet"
+    ? openSheets.includes(doc.name)
+    : doc.kind !== "other" && (doc.kind !== "report" || reportOpen);
+
+/** Open another of the open project's scripts: into the editor, and as what Run runs. Nothing
+ * about the project changes - its `entry` included - so nothing is written; which script this
+ * browser has open is remembered here (`show`), not on the host. */
+function openScript(name: string): void {
+  const next = withScript(workspace, name);
+  if (next === workspace) return;
+  show(next);
+  code.replace(openSource(next));
+  showDocument(SCRIPT);
+  window.clearTimeout(timer);
+  runNow();
+}
 
 /** Bring one document to the front. Called with no argument it shows whatever is already in
  * front; asked for a sheet or a report that is not open, it shows the script. */
@@ -1367,13 +1643,13 @@ ui.panel.addEventListener("click", () => {
 /** Open the project `next` has open: its script in the editor, its values in the panel and on
  * their tab, nothing still selected from the project before, and a run.
  *
- * The editor reports the replacement as a change, which writes the same text back into the
- * same project and starts a debounce; the run here goes at once, so that timer is cleared. */
+ * Kept, because what is open may be new - a project just made, duplicated or adopted - and a
+ * keep of a workspace whose projects did not change writes nothing (`project-files.ts`), so
+ * switching between projects never touches the host. */
 function load(next: Workspace): void {
   keep(next);
-  const file = opened(next);
-  setOverrides(file.overrides);
-  code.replace(file.source);
+  showOverrides(opened(next).overrides);
+  code.replace(openSource(next));
   space.select(null);
   showSelection(null);
   showDocument(SCRIPT);
@@ -1396,6 +1672,9 @@ function load(next: Workspace): void {
       showDetectState();
     }
   }
+  // And the body this project's own placement names, when it holds one and it is not the one
+  // already on the view.
+  void heldBody();
 }
 
 // The explorer asks; the workspace is changed here, and only a change of open project reruns.
@@ -1418,16 +1697,16 @@ ui.explorer.addEventListener("file-duplicate", (event) => {
   load(duplicated(workspace, event.detail.name));
 });
 
-// A project leaves as its two files in one archive: the script, and the values file named
-// for it - the pair `tools/build.py` runs from a directory, so what was kept in one browser
-// can be run, kept in a repository, or opened in another.
+// A project leaves as one archive: its scripts, and its document named for its entry - the
+// pair `tools/build.py` runs from a directory today (`<script>.py` beside `<script>.toml`), so
+// what was kept on one host can be run, kept in a repository, or opened in another. The same
+// document as `bench.toml`, `[project]` table and all; `tools.build` reads `[values]` and
+// `[reference]` out of it and passes over the rest. Downloading the directory itself, with
+// `bench.toml` in it, waits for `tools.build` to read one (task-50).
 ui.explorer.addEventListener("file-download", (event) => {
-  const project = workspace.files.find((file) => file.name === event.detail.name);
-  if (project === undefined) return;
-  save(
-    `${stemOf(project.name)}.zip`,
-    zip({ [project.name]: project.source, [tomlName(project.name)]: valuesDocument(project) }),
-  );
+  const one = workspace.projects.find((each) => each.name === event.detail.name);
+  if (one === undefined) return;
+  save(`${one.name}.zip`, zip({ ...one.scripts, [tomlName(one.entry)]: valuesDocument(one) }));
 });
 
 // And arrives the same way: each script picked becomes a project, with the values of the
@@ -1475,8 +1754,11 @@ async function importFiles(picked: readonly File[]): Promise<void> {
   if (alone) {
     const [table] = tables.values();
     const [reference] = references.values();
+    const [text] = documents.values();
+    // What the file holds beyond the values and the placement comes with them, so a
+    // `[[measured]]` in a picked document is not dropped on the way into the project.
+    keep(withKept(withReference(workspace, reference ?? null), keptOf(text ?? "")));
     setOverrides(table ?? {});
-    keep(withReference(workspace, reference ?? null));
     window.clearTimeout(timer);
     runNow();
     return;
@@ -1486,10 +1768,11 @@ async function importFiles(picked: readonly File[]): Promise<void> {
     const document = tomlName(name);
     next = created(
       next,
-      normalized(name),
+      stemOf(name),
       source,
       tables.get(document) ?? {},
       references.get(document) ?? null,
+      keptOf(documents.get(document) ?? ""),
     );
   }
   if (next !== workspace) load(next);
@@ -1544,51 +1827,59 @@ showDocument(SCRIPT);
 ui.panel.collapsed = remembered(KEYS.panel) === "shut";
 setState("boot", "loading Python…");
 
-/** Ask the store for the projects, put the open one on screen, and start it.
+/** Find the host, ask it for the projects, put the one this browser had open on screen, and
+ * start it.
  *
- * The one place that waits. A store that cannot be read is not a browser with nothing kept:
- * the first would start a person's work again from scratch, so it says so and leaves the
- * scripts alone rather than overwriting them with an empty workspace.
+ * The one place that waits. A page with no host says so and goes no further (AC#5). A store
+ * that cannot be read is not a host with nothing kept: the first would start a person's work
+ * again from scratch, so it says so and leaves the projects alone rather than writing over them
+ * - `store` is let go, so no edit made afterwards is written anywhere.
  */
 async function boot(): Promise<void> {
-  // Decided once, before anything below reads or writes a project (AC#8).
-  store = await chosenStore();
+  // Decided once, before anything below reads or writes a project.
+  const chosen = await chosenStore();
+  if ("none" in chosen) {
+    showNoHost(chosen.none);
+    return;
+  }
+  const found = chosen.store;
+  store = found;
   if (reach !== null) {
     reach.subscribe(showReach);
     showReach(reach.state());
-  } else {
-    ui.reach.hidden = false;
-    ui.reach.textContent = "kept in this browser";
-    ui.reach.title = "no host was reachable, so the projects are kept in this browser's own storage";
-    ui.reach.dataset.state = "ok";
   }
 
   let kept: string | null = null;
   try {
-    kept = await store.load();
+    kept = await found.load();
   } catch (problem: unknown) {
+    store = null;
     log("error", "bench.store", "the projects could not be read", {
-      "bench.store.kind": store.kind,
+      "bench.store.kind": found.kind,
       "bench.store.problem": String(problem),
     });
     setState("error", "your projects could not be read", true);
     showFailure(
-      `The projects kept in the ${store.kind} could not be read: ${String(problem)}.` +
+      `The projects kept on the ${found.kind} could not be read: ${String(problem)}.` +
         " Nothing has been changed. Reload once whatever is wrong is put right.",
     );
     return;
   }
 
-  workspace = restored(kept) ?? workspace;
-  keep(workspace);
-  setOverrides(opened(workspace).overrides);
+  const read = restored(kept);
+  fresh = read === null;
+  show(read === null ? firstWorkspace() : reopened(read));
+  showOverrides(opened(workspace).overrides);
   showSelection(null);
 
-  const source = opened(workspace).source;
+  const source = openSource(workspace);
   code.replace(source);
   // `replace` is a change like any other, so it has started a debounce that would run the
   // script a beat after this does. The run below is the one that should happen.
   window.clearTimeout(timer);
+
+  // Asked beside the run rather than before it: nothing waits on the answer.
+  void offerAdoption();
 
   // A script that hung last time is not started again by itself: a reload would otherwise
   // replay the runaway and the tab would read as "booting" for ever.
@@ -1602,6 +1893,7 @@ async function boot(): Promise<void> {
     return;
   }
   runNow();
+  void heldBody();
 }
 
 void boot();

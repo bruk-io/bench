@@ -3,13 +3,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import "./explorer";
 import type { BenchExplorer, FileImportDetail, FileNameDetail, FileRenameDetail } from "./explorer";
 
-const KEPT = ["gridfinity_cabinet.py", "shelf.py", "untitled.py"];
+const KEPT = ["gridfinity_cabinet", "shelf", "untitled"];
 
 type Fields = Partial<Pick<BenchExplorer, "names" | "current">>;
 
 async function mounted(fields: Fields = {}): Promise<BenchExplorer> {
   const explorer = document.createElement("bench-explorer");
-  Object.assign(explorer, { names: KEPT, current: "shelf.py", ...fields });
+  Object.assign(explorer, { names: KEPT, current: "shelf", ...fields });
   document.body.append(explorer);
   await explorer.updateComplete;
   return explorer;
@@ -51,7 +51,7 @@ describe("bench-explorer, the list", () => {
     const explorer = await mounted();
     expect(files(explorer).map((one) => one.textContent?.trim())).toEqual(KEPT);
     const open = files(explorer).filter((one) => one.getAttribute("aria-current") === "true");
-    expect(open.map((one) => one.textContent?.trim())).toEqual(["shelf.py"]);
+    expect(open.map((one) => one.textContent?.trim())).toEqual(["shelf"]);
   });
 
   it("asks for a file to be opened, and says nothing about the one already open", async () => {
@@ -59,7 +59,7 @@ describe("bench-explorer, the list", () => {
     const detail = caught<FileNameDetail>("file-open", () => {
       files(explorer)[0]?.click();
     });
-    expect(detail).toEqual({ name: "gridfinity_cabinet.py" });
+    expect(detail).toEqual({ name: "gridfinity_cabinet" });
 
     const again = caught<FileNameDetail>("file-open", () => {
       files(explorer)[1]?.click();
@@ -82,11 +82,11 @@ describe("bench-explorer, a project as a whole", () => {
     const copy = caught<FileNameDetail>("file-duplicate", () => {
       inside(explorer, "#file-duplicate")?.click();
     });
-    expect(copy).toEqual({ name: "shelf.py" });
+    expect(copy).toEqual({ name: "shelf" });
     const saved = caught<FileNameDetail>("file-download", () => {
       inside(explorer, "#file-download")?.click();
     });
-    expect(saved).toEqual({ name: "shelf.py" });
+    expect(saved).toEqual({ name: "shelf" });
   });
 
   it("hands up the files picked to open, unread, and nothing for an empty pick", async () => {
@@ -121,22 +121,22 @@ describe("bench-explorer, renaming", () => {
     box.value = "gridfinity_cabinet";
     box.dispatchEvent(new Event("input"));
     await explorer.updateComplete;
-    expect(inside(explorer, "#file-problem")?.textContent).toContain("already a file");
+    expect(inside(explorer, "#file-problem")?.textContent).toContain("already a project");
     expect(inside<HTMLButtonElement>(explorer, "#file-rename-confirm")?.disabled).toBe(true);
   });
 
-  it("sends a good name, with .py supplied", async () => {
+  it("sends a good name, without a .py typed on the end", async () => {
     const explorer = await mounted();
     await click(explorer, "#file-rename");
     const box = inside<HTMLInputElement>(explorer, "#file-name");
     if (box === null) throw new Error("no name box");
-    box.value = "drawer";
+    box.value = "drawer.py";
     box.dispatchEvent(new Event("input"));
     await explorer.updateComplete;
     const detail = caught<FileRenameDetail>("file-rename", () => {
       inside<HTMLFormElement>(explorer, "form")?.requestSubmit();
     });
-    expect(detail).toEqual({ from: "shelf.py", to: "drawer.py" });
+    expect(detail).toEqual({ from: "shelf", to: "drawer" });
   });
 
   it("goes back to the list on Escape rather than leaving the container", async () => {
@@ -158,7 +158,7 @@ describe("bench-explorer, deleting", () => {
     const detail = caught<FileNameDetail>("file-delete", () => {
       inside(explorer, "#file-delete-confirm")?.click();
     });
-    expect(detail).toEqual({ name: "shelf.py" });
+    expect(detail).toEqual({ name: "shelf" });
   });
 
   it("sends nothing when the asking is cancelled", async () => {

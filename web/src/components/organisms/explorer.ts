@@ -1,4 +1,4 @@
-/** The projects kept in this browser, as the sidebar's own container.
+/** The projects on the host, as the sidebar's own container - one row per project directory.
  *
  * What was a menu behind a button is a list that is simply there, which is what the rail buys:
  * the container is only on screen when a person asked for it, so it does not have to fold
@@ -10,8 +10,12 @@
  *
  * A new name is checked here before it is sent, with the same `nameProblem` the page applies,
  * so the reason a name will not do is said beside the box it was typed in. Delete asks once,
- * in place: a project lives nowhere else, so nothing brings a deleted one back - which is what
- * Download is for.
+ * in place: it removes the project's files from the host's disk, and nothing brings them back
+ * until task-48 makes a delete a move to a trash - which is what Download is for.
+ *
+ * Still a list of projects, as it was a list of scripts: decision-9's switcher and the tree of
+ * a project's own files are task-48's. What a row names changed underneath it - a directory,
+ * not a script.
  */
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
@@ -181,7 +185,7 @@ export class BenchExplorer extends LitElement {
 
   private listing() {
     return html`
-      <ul class="list" aria-label="Your scripts">
+      <ul class="list" aria-label="Your projects">
         ${this.names.map(
           (name) => html`
             <li>
@@ -220,7 +224,7 @@ export class BenchExplorer extends LitElement {
           id="file-download"
           class="small ghost"
           type="button"
-          title="Save this project as its two files - the script and its values"
+          title="Save this project as its files - its scripts and its values"
           @click=${this.download}
         >
           Download
@@ -282,7 +286,7 @@ export class BenchExplorer extends LitElement {
     return html`
       <div class="ask">
         <p>
-          Delete <strong>${this.current}</strong>? It is not kept anywhere else, so it cannot be
+          Delete <strong>${this.current}</strong>? Its files are deleted from the host's disk, and cannot be
           brought back.
         </p>
         <div class="footer">
