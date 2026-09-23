@@ -1,5 +1,9 @@
 """Run a script and keep what it made: ``uv run python -m tools.build <script.py> [--out DIR]``.
 
+``--project NAME`` reads ``<script.py>`` from that project under the host's projects root -
+``$BENCH_PROJECTS``, resolved by :mod:`tools.projects` exactly as the app's route resolves it,
+so ``tools.build --project cabinet cabinet.py`` runs the file the app is showing.
+
 The repository had no way to run a script without a browser. Every other host of
 :func:`bench.script.run` is either the app - :mod:`bench.worker`, inside Pyodide - or a test.
 So a maker with a script and a cutting machine had to open a browser to get an SVG out of it,
@@ -32,8 +36,11 @@ being able to do this from a command line.
 import sys
 import tomllib
 from base64 import b64decode
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from tools.projects import project_file
 
 if TYPE_CHECKING:
     from bench.geometry import Plane
@@ -199,12 +206,16 @@ def _said(scene: Scene) -> list[str]:
     return lines
 
 
-def main(argv: tuple[str, ...] | None = None) -> int:
+def main(argv: tuple[str, ...] | None = None, environ: Mapping[str, str] | None = None) -> int:
     """Run the script named, with the values beside it, and say what it made.
 
     ``--out DIR`` writes every file the run produced into ``DIR``. Without it nothing is
     written and the run is only reported, which is what you want while you are still turning
     numbers.
+
+    ``--project NAME`` takes the script as a file in that project under the projects root
+    ``environ`` designates (:data:`os.environ` when it is not given) - the same root the app's
+    route serves, by the same rule.
 
     Returns:
         ``0`` if the run produced geometry, ``1`` if it did not - so this can stand in a
@@ -217,11 +228,27 @@ def main(argv: tuple[str, ...] | None = None) -> int:
     if not args or args[0] in {"-h", "--help"}:
         print(__doc__, file=sys.stderr)
         return 1
-    script = Path(args[0])
+    flags = {"--out", "--project"}
+    given = {flag: args[at + 1] for at, flag in enumerate(args[:-1]) if flag in flags}
+    named = [
+        one
+        for at, one in enumerate(args)
+        if one not in flags and (at == 0 or args[at - 1] not in flags)
+    ]
+    if not named:
+        print(__doc__, file=sys.stderr)
+        return 1
+    script = Path(named[0])
+    if "--project" in given:
+        try:
+            script = project_file(given["--project"], named[0], environ)
+        except ValueError as exc:
+            print(f"failed: {exc}", file=sys.stderr)
+            return 1
     if not script.is_file():
         print(f"no script at {script}", file=sys.stderr)
         return 1
-    out = Path(args[args.index("--out") + 1]) if "--out" in args[1:] else None
+    out = Path(given["--out"]) if "--out" in given else None
 
     values = values_beside(script)
     if values:
