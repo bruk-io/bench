@@ -1,10 +1,10 @@
 ---
 id: task-47
 title: 'An open project is leased to one writer, and everyone else reads it'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-22 15:29'
-updated_date: '2026-09-22 15:30'
+updated_date: '2026-09-23 03:53'
 labels: []
 milestone: m-4
 dependencies:
