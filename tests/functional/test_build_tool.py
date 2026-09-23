@@ -268,3 +268,161 @@ def test_the_root_is_the_default_unless_named_and_never_relative() -> None:
     assert projects.projects_root({projects.VARIABLE: "/srv/projects"}) == Path("/srv/projects")
     with pytest.raises(ValueError, match="absolute"):
         projects.projects_root({projects.VARIABLE: "projects"})
+
+
+# ---- a directory as the project, task-50 -----------------------------------------------
+
+
+def _two_files(at: Path, helper_w: float = 10.0) -> tuple[Path, Path]:
+    """A project of two files: an entry that imports a sibling module for the one number it
+    builds with, and the module itself - the minimal case `[project] entry` exists for."""
+    entry = at / "entry.py"
+    entry.write_text(
+        "from bench import *\n"
+        "import helper\n\n"
+        "show(part('p', fill(rect(helper.W, helper.W)), Stock(3, 'ply')))\n"
+    )
+    (at / "helper.py").write_text(f"W = {helper_w}\n")
+    return entry, at / "helper.py"
+
+
+def test_a_directory_with_bench_toml_runs_its_declared_entry(tmp_path: Path) -> None:
+    """AC#1: `[project] entry` says which script runs, `[values]` is what it builds with."""
+    project = tmp_path / "cabinet"
+    project.mkdir()
+    (project / "cabinet.py").write_text(SCRIPT)
+    (project / "bench.toml").write_text('[project]\nentry = "cabinet.py"\n\n[values]\nw = 90.0\n')
+
+    assert build.main((str(project),)) == 0
+    assert build.values_beside(project / "cabinet.py") == {"w": 90.0}
+
+
+def test_a_directory_with_no_bench_toml_and_one_script_reads_its_own_toml(tmp_path: Path) -> None:
+    """decision-3's older shape, task-46 AC#3's rule kept for the command line: a directory
+    with no `bench.toml` still opens, on its one script's own `<script>.toml`."""
+    project = tmp_path / "panel"
+    project.mkdir()
+    _project(project, "[values]\nw = 77.0\n")
+
+    assert build.main((str(project),)) == 0
+    assert build.values_beside(project / "panel.py") == {"w": 77.0}
+
+
+def test_a_directory_with_an_unknown_table_is_not_an_error(tmp_path: Path) -> None:
+    project = tmp_path / "cabinet"
+    project.mkdir()
+    (project / "cabinet.py").write_text(SCRIPT)
+    (project / "bench.toml").write_text(
+        '[project]\nentry = "cabinet.py"\n\n[measured]\nwall = 2.4\n'
+    )
+
+    assert build.main((str(project),)) == 0
+
+
+def test_project_name_alone_runs_the_entry(tmp_path: Path) -> None:
+    """`--project NAME` with no script named is the same as passing the directory - task-50's
+    answer to what `--project` becomes: a fresh open of the app, from the command line."""
+    root = tmp_path / "projects"
+    project = root / "cabinet"
+    project.mkdir(parents=True)
+    (project / "cabinet.py").write_text(SCRIPT)
+    (project / "bench.toml").write_text('[project]\nentry = "cabinet.py"\n\n[values]\nw = 55.0\n')
+    environ = {projects.VARIABLE: str(root)}
+
+    assert build.main(("--project", "cabinet"), environ) == 0
+    assert build.values_beside(project / "cabinet.py") == {"w": 55.0}
+
+
+def test_a_declared_entry_not_among_the_scripts_falls_back(tmp_path: Path) -> None:
+    """Mirrors `web/src/project-files.ts`'s `entryOf`: a declared entry naming a file that is
+    not there falls back to the script named for the directory, or the first by name - it
+    does not refuse the directory."""
+    project = tmp_path / "cabinet"
+    project.mkdir()
+    (project / "cabinet.py").write_text(SCRIPT)
+    (project / "bench.toml").write_text('[project]\nentry = "gone.py"\n')
+
+    assert build.main((str(project),)) == 0
+
+
+def test_a_two_file_project_imports_its_sibling_module(tmp_path: Path) -> None:
+    """AC#3: a script can import another module beside it - the command line's half, which
+    `web/src/worker.py` mirrors for the browser."""
+    project = tmp_path / "widget"
+    project.mkdir()
+    _two_files(project)
+
+    assert build.main((str(project),)) == 0
+
+
+def test_a_project_or_script_import_that_is_not_there_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC#5: not a raw `ModuleNotFoundError` buried in stderr - the run catches it the way
+    every other exception a script raises is caught, and it is printed with the run's other
+    output, naming the module."""
+    project = tmp_path / "widget"
+    project.mkdir()
+    entry = project / "entry.py"
+    entry.write_text(
+        "from bench import *\nimport helper\n\nshow(part('p', fill(rect(1, 1)), Stock(3, 'ply')))\n"
+    )
+
+    assert build.main((str(entry),)) == 1
+    out = capsys.readouterr().out
+    assert "No module named 'helper'" in out
+
+
+def test_a_project_file_that_would_shadow_the_standard_library_is_refused(
+    tmp_path: Path,
+) -> None:
+    """AC#3-5: a project module cannot shadow `bench` or the stdlib silently - refused by
+    name, before anything is mounted, rather than quietly answering with the wrong module."""
+    project = tmp_path / "widget"
+    project.mkdir()
+    (project / "entry.py").write_text(SCRIPT.replace("panel.py", "entry.py"))
+    (project / "os.py").write_text("X = 1\n")
+
+    assert build.main((str(project / "entry.py"),)) == 1
+
+
+def test_a_project_named_bench_is_refused_too(tmp_path: Path) -> None:
+    project = tmp_path / "widget"
+    project.mkdir()
+    (project / "entry.py").write_text(SCRIPT)
+    (project / "bench.py").write_text("X = 1\n")
+
+    assert build.main((str(project / "entry.py"),)) == 1
+
+
+def test_two_projects_with_a_same_named_helper_do_not_leak_into_each_other(
+    tmp_path: Path,
+) -> None:
+    """The risk a shared `sys.modules` cache creates: two projects, each with its own
+    `helper.py`, run back to back must each see its own, not the one imported first."""
+    first = tmp_path / "a"
+    second = tmp_path / "b"
+    first.mkdir()
+    second.mkdir()
+    _two_files(first, helper_w=10.0)
+    _two_files(second, helper_w=20.0)
+
+    scene_a = build.main((str(first / "entry.py"),))
+    scene_b = build.main((str(second / "entry.py"),))
+    assert scene_a == 0
+    assert scene_b == 0
+    # Run the first again after the second: if `helper` were left in `sys.modules`, this would
+    # come back holding the second project's `W` instead of the first's.
+    import sys
+
+    assert "helper" not in sys.modules
+
+
+def test_a_run_writes_no_bytecode_into_the_project_directory(tmp_path: Path) -> None:
+    """A `__pycache__` under a maker's project is not this tool's file to leave there."""
+    project = tmp_path / "widget"
+    project.mkdir()
+    _two_files(project)
+
+    assert build.main((str(project / "entry.py"),)) == 0
+    assert not (project / "__pycache__").exists()
