@@ -3,10 +3,10 @@ id: task-58
 title: >-
   A solid on sheet Stock, or marked CNC, says it cannot be exported rather than
   exporting nothing
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-23 14:35'
-updated_date: '2026-09-23 17:22'
+updated_date: '2026-09-23 21:33'
 labels: []
 milestone: m-7
 dependencies: []
@@ -23,8 +23,16 @@ At minimum the run should say so - an ERROR naming the part and why (a sheet par
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A Solid on Stock produces a violation naming the part, in the app and in tools.build
-- [ ] #2 A part with Process.CNC says milling is not modelled yet, rather than exporting nothing
-- [ ] #3 tools.build --out never writes an empty SVG for a part it could not draw
-- [ ] #4 Tested at the functional layer
+- [x] #1 A Solid on Stock produces a violation naming the part, in the app and in tools.build
+- [x] #2 A part with Process.CNC says milling is not modelled yet, rather than exporting nothing
+- [x] #3 tools.build --out never writes an empty SVG for a part it could not draw
+- [x] #4 Tested at the functional layer
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged as #21. checks.exportable(shape, stock, process), kernel-free like fits: a Face (laser or CNC-routed 2D profile) is fine; a Solid marked Process.CNC is an ERROR ('milling is not modelled yet - nothing is exported for this part'); a Solid on sheet Stock is an ERROR (needs Printed stock); a Solid on Printed is fine. Recorded against the part so it shows in the app's Problems panel and in tools.build. tools.build --out never writes an empty part-*.svg - widened beyond the report: every printed part used to get a blank SVG too.
+
+Reviewed: the exportable rule and the Problems-panel screenshot (error names `frame`); PR contains no scratch files. Gate after merging main twice: pytest 1068+1 skip x2, e2e 121, vitest 357. The agent stalled twice waiting on backgrounded gate runs; a foreground run finished it.
+<!-- SECTION:NOTES:END -->

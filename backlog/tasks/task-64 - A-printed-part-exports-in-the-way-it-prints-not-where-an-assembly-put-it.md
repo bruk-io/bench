@@ -1,9 +1,10 @@
 ---
 id: task-64
 title: 'A printed part exports in the way it prints, not where an assembly put it'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-23 17:50'
+updated_date: '2026-09-23 21:33'
 labels: []
 milestone: m-7
 dependencies: []
