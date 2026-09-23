@@ -192,7 +192,39 @@ src/components/     the Lit elements, atoms up: a callout; a violation, a file r
 src/downloads.ts    a file at a time, or a store-only zip written by hand
 src/scene.ts        the contract of bench.script as TypeScript types, and `received`, which
                     checks a payload and its buffers before the UI reads them
+src/route.ts        what the projects route will and will not do, decided from the request
+                    alone - the names, the host, the origin, the version a write names
+src/host.ts         the route as typed calls - list, read, write, create, rename, delete -
+                    for task-52's store; nothing in the app uses it yet
+server/projects.ts  the route's edge in Node: the root, symlinks resolved, the disk itself
 ```
+
+**The projects route.** decision-9 moves a person's projects onto the host: one directory per
+project under a root, and `bench:projects` in `vite.config.ts` serves it at
+`/__bench/projects/<project>/<file>` in both `npm run dev` and `npm run preview`. The root is
+`$BENCH_PROJECTS`, which must be an absolute path; unset, it is `projects/` at the top of the
+repository (gitignored, made on first start). `tools.build --project NAME` reads the same
+root by the same rule (`tools/projects.py`). A read carries the file's modification time and
+a version (a SHA-256 of its bytes, as the `ETag`); a write names the version it was made from
+in `If-Match`, and a create says `If-None-Match: *`. What it refuses, each with a one-word
+reason in a JSON body:
+
+- a name that is not one plain name - `..`, `%2e%2e`, an encoded or doubled `/`, a
+  backslash, a NUL, a hidden file, anything deeper than a project and a file (`name`);
+- a file or project that resolves, through a symlink, outside the root (`outside`), and any
+  write, rename or delete aimed at a symlink at all (`link`);
+- a write, rename or delete of anything but `.py`, `.toml` and `.stl`, in any case (`type`);
+- a page on another origin - `Origin` not this server's own scheme and `Host`, or a browser's
+  `Sec-Fetch-Site` other than `same-origin` (`origin`). A request with no `Origin` is let
+  through: browsers always send one on a write, so its absence is a client that is not a page;
+- a `Host` that is not an address, `localhost` or in `allowedHosts` (`host`) - Vite's own
+  host check runs *after* a plugin's middleware and never sees this route, so the route keeps
+  the same rule itself, against DNS rebinding;
+- a write or delete whose file has changed since that version (`moved`, naming the file), a
+  create or rename onto a name that is taken (`exists`), and a write that names no version
+  at all (`precondition`).
+
+A delete is a plain unlink for now; task-48 makes it recoverable.
 
 Nothing that crosses the worker boundary is trusted: `scene.ts`'s `received` checks exactly
 the keys and kinds the app reads, and that every mesh's buffers are the typed arrays of the
@@ -232,7 +264,8 @@ app to draw a laser-cut box never downloads a renderer. The entry chunk is ~448 
 ## Deploying it
 
 Everything is static: `dist/` behind any file server, nothing at run time but the files in
-it. Two things are worth setting up.
+it - except the projects route, which only `npm run dev` and `npm run preview` answer, and
+which a plain file server does not have. Two things are worth setting up.
 
 **Caching.** `public/_headers` is read by Netlify and Cloudflare Pages and asks for
 `/pyodide/*`, `/manifold/*` and `/assets/*` `immutable` for a year, and `index.html`

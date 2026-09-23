@@ -364,7 +364,14 @@ Running a script without a browser at all is the third command:
 
 ```
 uv run python -m tools.build <script.py> [--out DIR]
+uv run python -m tools.build --project NAME <script.py> [--out DIR]
 ```
+
+The second form reads the script from a project under the host's projects root -
+`$BENCH_PROJECTS` (an absolute path), or `projects/` here when it is unset - the same root the
+app's `/__bench/projects` route serves, resolved by the same rule (`tools/projects.py` and
+`web/server/projects.ts`), so the command line and the app cannot disagree about where a
+project is. See `web/README.md` for what the route does and refuses.
 
 It runs the script, says what was made and what the checks found, and with `--out` writes
 every file the run produced - the sheet SVGs and DXFs, a printed part's STL and 3MF, whatever
