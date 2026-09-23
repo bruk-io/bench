@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from bench import Mesh, stl
-from tools import build
+from tools import build, projects
 
 pytestmark = pytest.mark.functional
 
@@ -229,3 +229,42 @@ def test_a_reference_table_that_is_not_a_table_is_refused(tmp_path: Path) -> Non
 
     with pytest.raises(ValueError, match="not a table"):
         build.reference_beside(script)
+
+
+# ---- the projects root: the one the app's route serves -----------------------------------
+
+
+def test_a_project_under_the_root_is_run_by_name(tmp_path: Path) -> None:
+    """`--project` reads the script from the root `BENCH_PROJECTS` names - the directory the
+    app's route serves, resolved by the same rule - so the two cannot disagree about which
+    file a project's script is."""
+    root = tmp_path / "projects"
+    (root / "panel").mkdir(parents=True)
+    _project(root / "panel", "[values]\nw = 120.0\n")
+
+    environ = {projects.VARIABLE: str(root)}
+    assert build.main(("--project", "panel", "panel.py"), environ) == 0
+    assert build.main(("panel.py", "--project", "panel"), environ) == 0
+    assert build.main(("--project", "panel", "nothing.py"), environ) == 1
+
+
+def test_a_project_or_script_that_is_not_a_plain_name_is_refused(tmp_path: Path) -> None:
+    """The route's rule, kept on the command line too: a name, never a path."""
+    root = tmp_path / "projects"
+    (root / "panel").mkdir(parents=True)
+    _project(tmp_path)
+    environ = {projects.VARIABLE: str(root)}
+
+    assert build.main(("--project", "..", "panel.py"), environ) == 1
+    assert build.main(("--project", "panel", "../../panel.py"), environ) == 1
+    assert build.main(("--project", ".hidden", "panel.py"), environ) == 1
+    with pytest.raises(ValueError, match="plain name"):
+        projects.project_file("panel", "a\x00.py", environ)
+
+
+def test_the_root_is_the_default_unless_named_and_never_relative() -> None:
+    assert projects.projects_root({}) == projects.DEFAULT
+    assert projects.projects_root({projects.VARIABLE: ""}) == projects.DEFAULT
+    assert projects.projects_root({projects.VARIABLE: "/srv/projects"}) == Path("/srv/projects")
+    with pytest.raises(ValueError, match="absolute"):
+        projects.projects_root({projects.VARIABLE: "projects"})
