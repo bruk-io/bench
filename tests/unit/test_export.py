@@ -20,6 +20,10 @@ from bench import (
     Ref,
     SvgPath,
     Vector,
+    X,
+    Y,
+    Z,
+    as_printed,
     circle,
     cut,
     face_paths,
@@ -221,6 +225,100 @@ def test_svg_path_is_a_frozen_record() -> None:
     p = SvgPath(Ref("a"), "outer", "M 0 0 Z")
     with pytest.raises(AttributeError):
         p.d = "M 1 1 Z"  # type: ignore[misc]
+
+
+# ---- as_printed ------------------------------------------------------------------------
+
+
+def _box(low: tuple[float, float, float], high: tuple[float, float, float]) -> Mesh:
+    """A mesh of one box, ``low`` to ``high`` - two triangles a face, which is more than
+    :func:`as_printed` reads (only the vertices), but keeps the refs on a face worth
+    naming."""
+    lx, ly, lz = low
+    hx, hy, hz = high
+    corners = [
+        (lx, ly, lz),
+        (hx, ly, lz),
+        (hx, hy, lz),
+        (lx, hy, lz),
+        (lx, ly, hz),
+        (hx, ly, hz),
+        (hx, hy, hz),
+        (lx, hy, hz),
+    ]
+    vertices = tuple(v for corner in corners for v in corner)
+    triangles = (0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7)
+    refs = (Ref("bottom"), None, Ref("top"), None)
+    return Mesh(vertices, triangles, refs)
+
+
+BOX = _box((0.0, 0.0, 0.0), (4.0, 2.0, 1.0))
+"""4 x 2 x 1 mm, its low corner at the world origin - a box lopsided enough in every
+dimension that a swapped axis or a missed turn changes its extent, not just its label."""
+
+
+def test_as_printed_with_up_plus_z_only_drops_it_to_the_bed_and_centres_it() -> None:
+    """``up`` already +Z: nothing turns, only z = 0 and the footprint centred."""
+    out = as_printed(BOX, Z)
+    xs, ys, zs = out.vertices[0::3], out.vertices[1::3], out.vertices[2::3]
+    assert min(zs) == pytest.approx(0.0)
+    assert max(zs) - min(zs) == pytest.approx(1.0)
+    assert max(xs) - min(xs) == pytest.approx(4.0)
+    assert max(ys) - min(ys) == pytest.approx(2.0)
+    assert (min(xs) + max(xs)) / 2 == pytest.approx(0.0)
+    assert (min(ys) + max(ys)) / 2 == pytest.approx(0.0)
+
+
+def test_as_printed_with_up_minus_z_turns_the_box_over() -> None:
+    """A part printed upside down - the enclosure lid's own ``Orient(up=-Z)`` - comes out
+    with what was its lowest corner now its highest, and the other way round."""
+    out = as_printed(BOX, -Z)
+    was_low = out.vertices[0:3]  # vertex 0 was (0, 0, 0), the box's low corner
+    was_high = out.vertices[12:15]  # vertex 4 was (0, 0, 1), straight above it
+    assert was_low[2] == pytest.approx(1.0)
+    assert was_high[2] == pytest.approx(0.0)
+
+
+def test_as_printed_with_up_sideways_stands_that_axis_up() -> None:
+    """``up`` along the box's longest edge (X, 4 mm) makes that edge the height."""
+    out = as_printed(BOX, X)
+    zs = out.vertices[2::3]
+    assert max(zs) - min(zs) == pytest.approx(4.0)
+
+
+def test_as_printed_reads_nothing_of_where_the_mesh_already_is() -> None:
+    """decision-10: an assembly's pose is not part of the maths - only the direction a part
+    prints in. The same box moved far from the origin first exports identically."""
+    elsewhere = _box((100.0, 100.0, 100.0), (104.0, 102.0, 101.0))
+    assert as_printed(elsewhere, Z).vertices == pytest.approx(as_printed(BOX, Z).vertices)
+
+
+def test_bed_along_settles_the_turn_up_alone_leaves_free() -> None:
+    """Aligning ``up`` to +Z is two degrees of freedom; the third - the turn about it - is
+    ``bed_along``'s, not guessed the same way twice by accident: two different ``along``s,
+    both perpendicular to a sideways ``up``, turn the box out differently."""
+    one = as_printed(BOX, X, bed_along=Y)
+    other = as_printed(BOX, X, bed_along=Z)
+    assert one.vertices != pytest.approx(other.vertices)
+
+
+def test_as_printed_is_deterministic() -> None:
+    """The same mesh and the same ``Orient`` give the same bytes every run - decision-9's
+    reproducibility, which a 3MF's fixed zip stamp already promises further down the line."""
+    assert as_printed(BOX, X).vertices == pytest.approx(as_printed(BOX, X).vertices)
+
+
+def test_as_printed_keeps_triangles_and_refs() -> None:
+    """Only the vertices move; a triangle answers to the same ref and the same two other
+    corners it always did."""
+    out = as_printed(BOX, -Z)
+    assert out.triangles == BOX.triangles
+    assert out.refs == BOX.refs
+
+
+def test_as_printed_of_an_empty_mesh_moves_nothing() -> None:
+    empty = Mesh((), (), ())
+    assert as_printed(empty, Z) == empty
 
 
 # ---- what a printer reads ---------------------------------------------------------------

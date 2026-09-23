@@ -27,6 +27,7 @@ from .checks import (
 from .export import (
     SvgPath,
     SvgText,
+    as_printed,
     face_paths,
     part_paths,
     part_svg,
@@ -358,6 +359,7 @@ __all__ = [
     "Z",
     "angle",
     "area",
+    "as_printed",
     "assembly",
     "axis_of",
     "bbox",

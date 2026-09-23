@@ -17,7 +17,7 @@ from dataclasses import replace
 from typing import NamedTuple, assert_never
 
 from .checks import Severity, Violation, exportable
-from .export import part_svg, sheet_dxf, sheet_svg, stl, three_mf
+from .export import as_printed, part_svg, sheet_dxf, sheet_svg, stl, three_mf
 from .kernel import Kernel, Mesh
 from .model import Assembly, Part, Printed, Process, Ref, Stock, Stocked, index
 from .nest import Bed, PartSpec, Sheet, nest, sheet_name
@@ -113,7 +113,7 @@ def scene(
         staging["bench.stage.posed"] = assembly.posed
         offsets, box = as_given(bodies) if assembly.posed else layout(bodies)
     printed = tuple(
-        body if part.process is Process.PRINT else None
+        _as_printed(part, body) if part.process is Process.PRINT else None
         for part, body in zip(parts, bodies, strict=True)
     )
     with timed(tracer, "bench.scene.files"):
@@ -202,6 +202,24 @@ def _body(built: _Built) -> Mesh | None:
             return built
         case _:
             assert_never(built)
+
+
+def _as_printed(part: Part, body: Mesh | None) -> Mesh | None:
+    """``body`` - the assembly-posed mesh the 3D view still draws - laid on the bed the way
+    ``part`` prints (:func:`bench.export.as_printed`), which is what goes in the files a run
+    offers instead. ``None`` without a kernel to have built one in the first place, and the
+    posed mesh unchanged for any stock but :class:`~bench.model.Printed`, which is the only
+    one with a way up to read - :func:`_files` only ever calls this on a printed part's body,
+    so that never actually happens, but a stray call should move nothing rather than guess.
+    """
+    if body is None or not isinstance(part.stock, Printed):
+        return body
+    orient = part.stock.orient
+    shape = part.shape
+    bed_along = None
+    if orient.bed_face is not None and isinstance(shape, Solid):
+        bed_along = plane_of(shape, orient.bed_face).x_dir
+    return as_printed(body, orient.up, bed_along)
 
 
 # ---- the files -----------------------------------------------------------------------------
