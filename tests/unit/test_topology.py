@@ -25,6 +25,7 @@ from bench import (
     Point,
     Ring,
     Solid,
+    SolidFace,
     Vector,
     Wire,
     bounds,
@@ -58,6 +59,7 @@ from bench.topology import (
     Extrude,
     Hull,
     Intersection,
+    Moved,
     Revolve,
     Union,
     moved,
@@ -350,13 +352,15 @@ def test_a_full_revolve_names_only_its_sides_and_a_partial_one_names_its_ends() 
 def test_a_boolean_names_nothing_of_its_own_and_hands_back_its_operands() -> None:
     base = Solid(Extrude(_plain_square(), 4.0))
     tool = Solid(Extrude(_plain_square(2.0), 1.0), Label("pocket"))
-    for node in (
-        Union(base, tool),
-        Difference(base, tool),
-        Intersection(base, tool),
-    ):
+    for node in (Union(base, tool), Intersection(base, tool)):
         assert faces_of(Solid(node)) == ()
         assert node_children(node, identity()) == (base, tool)
+    cut = Difference(base, tool)
+    assert faces_of(Solid(cut)) == ()
+    assert node_children(cut, identity()) == (
+        base,
+        Solid(Moved(tool.node, identity(), cavity=True), Label("pocket")),
+    ), "a cut hands back its tool with the cavity it leaves pushed into its node"
 
 
 def test_a_hull_names_nothing_under_it_at_all() -> None:
@@ -387,6 +391,71 @@ def test_a_move_over_a_boolean_reaches_the_faces_under_it() -> None:
     floor = faces_of(cast("Solid", found[1]))[1]
     assert floor.plane is not None
     assert near(floor.plane.origin, Point(0, 0, 10))
+
+
+# ---- the faces a cut leaves --------------------------------------------------------------
+
+
+def _tool_faces(body: Solid) -> tuple[SolidFace, ...]:
+    """The faces of the second operand of ``body``'s boolean, as the naming walk finds them."""
+    found = node_children(body.node, identity())[1]
+    assert isinstance(found, Solid)
+    return faces_of(found)
+
+
+def test_the_faces_a_cut_leaves_point_out_of_the_material_that_is_left() -> None:
+    """A pocket's floor is its tool's ``bottom``, whose own normal points down out of the tool
+    - into the plate. Left behind by the cut, it bounds the plate, so it is that frame turned
+    over: up out of the plate into the pocket, X still the profile's, Y reversed so the frame
+    stays right-handed. The tool's ``top`` and every side turn over the same way."""
+    tool = Solid(Extrude(_plain_square(2.0), 1.0), Label("pocket"))
+    own = {f.label: f.plane for f in faces_of(tool)}
+    left = {f.label: f.plane for f in _tool_faces(Solid(Difference(_block(), tool)))}
+    assert set(left) == set(own)
+    for name, was in own.items():
+        now = left[name]
+        assert was is not None and now is not None, name
+        assert near(now.origin, was.origin), name
+        assert near(now.normal, -was.normal), name
+        assert near(now.x_dir, was.x_dir), name
+        assert near(now.y_dir, -was.y_dir), name
+
+
+def test_a_round_face_a_cut_leaves_has_its_material_outside_it() -> None:
+    """A bore cut by a cylinder is the cylinder's side, whose material was inside it; what is
+    left of the plate is outside, so the bore's normal points at its axis - the same as a
+    bore drawn as a hole in the plate's own profile."""
+    drill = Solid(Extrude(face(circle(1.0, Point(5, 5))), 4.0), Label("d"))
+    [side] = [f for f in _tool_faces(Solid(Difference(_block(), drill))) if f.curved is not None]
+    assert side.curved is not None
+    assert side.curved.outward is False
+
+
+def test_a_cut_within_a_cut_is_material_again() -> None:
+    """A tool that is itself a block with a hole in it: the hole's walls bound the cavity of
+    the tool, so they bound material of what is left - turned over twice, which is not at
+    all."""
+    inner = Solid(Extrude(_plain_square(1.0), 1.0), Label("core"))
+    tool = Solid(Difference(Solid(Extrude(_plain_square(2.0), 1.0)), inner), Label("ring"))
+    body = Solid(Difference(_block(), tool))
+    ring = node_children(body.node, identity())[1]
+    assert isinstance(ring, Solid)
+    core = node_children(ring.node, identity())[1]
+    assert isinstance(core, Solid)
+    assert faces_of(core) == faces_of(inner)
+
+
+def test_a_move_over_a_cut_carries_the_turned_frames_with_it() -> None:
+    tool = Solid(Extrude(_plain_square(2.0), 1.0), Label("pocket"))
+    body = moved(Solid(Difference(_block(), tool)), translation(Vector(0, 0, 10)))
+    floor = _tool_faces(body)[1]
+    assert floor.plane is not None
+    assert near(floor.plane.origin, Point(0, 0, 10))
+    assert near(floor.plane.normal, Vector(0, 0, 1))
+
+
+def _block() -> Solid:
+    return Solid(Extrude(_plain_square(), 4.0))
 
 
 # ---- bounds ----------------------------------------------------------------------------

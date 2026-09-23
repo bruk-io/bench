@@ -241,10 +241,18 @@ class Moved:
     The one node that takes a bare :data:`Node`: a move creates no new named thing, so it
     grows no rung and renames nothing. The transform need not be rigid; a reflection is
     recorded here too.
+
+    ``cavity`` is whether the faces under it bound a hole in something else rather than
+    material of their own - what a :class:`Difference`'s tool is to the body it is taken out
+    of. It says nothing about where the subtree is, so a kernel builds the node the same
+    either way; it is how :func:`node_children` knows to turn those faces' frames over, so
+    that every face's normal points out of the material that is left. Only the naming walk
+    sets it.
     """
 
     node: Node
     at: Transform
+    cavity: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -557,7 +565,9 @@ _HOLE = "hole"
 """What an unlabelled hole wire is called, numbered by its place among the profile's."""
 
 
-def node_children(node: Node, at: Transform) -> tuple[Solid | SolidFace, ...]:
+def node_children(
+    node: Node, at: Transform, *, cavity: bool = False
+) -> tuple[Solid | SolidFace, ...]:
     """What the model layer walks under a solid: the named bodies that went into it, and
     the named faces it will have.
 
@@ -566,6 +576,14 @@ def node_children(node: Node, at: Transform) -> tuple[Solid | SolidFace, ...]:
     by the :class:`Moved` nodes above, so a face's plane comes out where the face will be;
     an operand of a boolean under a move comes back as a solid with that move pushed into
     its own node, which means it is an equal value rather than the identical object.
+
+    ``cavity`` is whether the faces found are the walls of a hole in something else: a
+    face a cut leaves is one of its tool's faces, and the tool's normal points out of the
+    *tool* - into the cavity, the wrong way for the body that is left. So a cut's tool comes
+    back with ``cavity`` pushed into its node the way a move is, and every face under it
+    comes back turned over the way a ``bottom`` is its ``top`` turned over: normal reversed,
+    X still the profile's, Y reversed; a round face's material on its other side. A tool
+    within a tool is turned back again, because what it leaves is material of the outer body.
 
     The naming rule, in one place:
 
@@ -576,24 +594,25 @@ def node_children(node: Node, at: Transform) -> tuple[Solid | SolidFace, ...]:
     * ``Revolve``: the same ``side-`` and hole faces, plus ``start`` and ``end`` when the
       angle is less than a full turn.
     * ``Union``, ``Difference``, ``Intersection``: the operands themselves, so each keeps
-      its own label path - a tool labelled ``pocket`` puts its floor at ``pocket/bottom``.
+      its own label path - a tool labelled ``pocket`` puts its floor at ``pocket/bottom``,
+      its frame turned over so its normal points out of the plate, into the pocket.
     * ``Hull``: nothing. Identity does not survive a hull.
     * ``Imported``: nothing. A file somebody else wrote has no names in it to keep.
     * ``Moved``: what is under it, planes transformed; it renames nothing.
     """
     match node:
         case Extrude():
-            return _extruded_faces(node, at)
+            return _inside_out(_extruded_faces(node, at), cavity)
         case Revolve():
-            return _revolved_faces(node, at)
+            return _inside_out(_revolved_faces(node, at), cavity)
         case Union(a, b) | Intersection(a, b):
-            return (_body_at(a, at), _body_at(b, at))
+            return (_body_at(a, at, cavity), _body_at(b, at, cavity))
         case Difference(base, tool):
-            return (_body_at(base, at), _body_at(tool, at))
+            return (_body_at(base, at, cavity), _body_at(tool, at, not cavity))
         case Hull() | Imported():
             return ()
-        case Moved(inner, t):
-            return node_children(inner, at @ t)
+        case Moved(inner, t, hollow):
+            return node_children(inner, at @ t, cavity=cavity != hollow)
         case _:
             assert_never(node)
 
@@ -609,11 +628,32 @@ def faces_of(solid: Solid) -> tuple[SolidFace, ...]:
     )
 
 
-def _body_at(solid: Solid, at: Transform) -> Solid:
-    """``solid`` with an accumulated move pushed into its own node, so the faces under it
-    come out where they will be. The identity is left alone, which is what keeps an
-    unmoved tree walking the very objects a script built."""
-    return solid if at == identity() else replace(solid, node=Moved(solid.node, at))
+def _body_at(solid: Solid, at: Transform, cavity: bool = False) -> Solid:
+    """``solid`` with an accumulated move - and whether its faces are a cavity's - pushed into
+    its own node, so the faces under it come out where they will be and facing the way they
+    will. The identity outside a cavity is left alone, which is what keeps an unmoved tree
+    walking the very objects a script built."""
+    if at == identity() and not cavity:
+        return solid
+    return replace(solid, node=Moved(solid.node, at, cavity))
+
+
+def _inside_out(faces: tuple[SolidFace, ...], cavity: bool) -> tuple[SolidFace, ...]:
+    """``faces`` as a cavity's walls when ``cavity`` says they are one: each plane turned
+    over about its own X, the way ``bottom`` is ``top`` turned over, and each round face's
+    material moved to its other side."""
+    if not cavity:
+        return faces
+    return tuple(
+        replace(
+            f,
+            plane=None
+            if f.plane is None
+            else plane(f.plane.origin, -f.plane.normal, f.plane.x_dir),
+            curved=None if f.curved is None else replace(f.curved, outward=not f.curved.outward),
+        )
+        for f in faces
+    )
 
 
 def _role_label(role: FaceRole) -> Label:
