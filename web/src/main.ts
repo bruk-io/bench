@@ -88,12 +88,13 @@ import {
 } from "./pick";
 import type { OkScene, Scene, SheetView } from "./scene";
 import { STALE_HINT, STALE_MESSAGE, bundleStale } from "./staleness";
-import { HOW_TO_SELECT, failing, made, noBodiesReason, tally } from "./status";
+import { HOW_TO_SELECT, failing, made, noBodiesReason, readOnlyWords, tally } from "./status";
 // `remember`/`forget` are still here for what belongs to this browser rather than to a
 // project - the hang fingerprint, the rail's container, the panel. The projects themselves
 // go through `store` (see `store.ts` on what does not travel).
 import { type Host, host as hostClient } from "./host";
 import { type OutboxState, outbox } from "./outbox";
+import { type Leasing, identity, leasing } from "./leasing";
 import { KEYS, forget, hashOf, remember, remembered } from "./storage";
 import type { ProjectStore } from "./store";
 import { hostStore } from "./store-host";
@@ -161,6 +162,17 @@ const ui = {
   adoptList: need<HTMLUListElement>("adopt-list"),
   adoptYes: need<HTMLButtonElement>("adopt-yes"),
   adoptNo: need<HTMLButtonElement>("adopt-no"),
+  lease: need<HTMLDivElement>("lease"),
+  leaseTitle: need<HTMLParagraphElement>("lease-title"),
+  leaseWhy: need<HTMLParagraphElement>("lease-why"),
+  leaseAsk: need<HTMLParagraphElement>("lease-ask"),
+  leaseTake: need<HTMLButtonElement>("lease-take"),
+  leaseConfirm: need<HTMLDivElement>("lease-confirm"),
+  leaseConfirmText: need<HTMLParagraphElement>("lease-confirm-text"),
+  leaseTakeYes: need<HTMLButtonElement>("lease-take-yes"),
+  leaseTakeNo: need<HTMLButtonElement>("lease-take-no"),
+  standing: need<HTMLSpanElement>("standing"),
+  paramsUnkept: need<HTMLParagraphElement>("params-unkept"),
   editorTabs: need<HTMLDivElement>("editor-tabs"),
   panelScript: need<HTMLDivElement>("panel-script"),
   panelValues: need<HTMLDivElement>("panel-values"),
@@ -228,6 +240,30 @@ let store: ProjectStore | null = null;
 let client: Host | null = null;
 let reach: ReturnType<typeof outbox> | null = null;
 
+/** This tab's write lease on the open project (task-47) - set with `store`, and `null` on a page
+ * with no host, which has nothing to lease. */
+let lease: Leasing | null = null;
+
+/** Whether this tab may write the open project: it holds the lease on it. Everything that
+ * writes asks this first - and while the lease is still being asked for, the answer is no, so
+ * nothing is written for a project somebody else turns out to hold. */
+function writable(): boolean {
+  const standing = lease?.standing() ?? null;
+  return standing?.kind === "writer" && standing.project === workspace.current;
+}
+
+/** Whether `next` changes a project this tab does not hold - the open one, while it is being
+ * read here. The backstop under every writing control being turned off: whatever reaches
+ * `keep()` anyway is not kept, because the store writes the whole difference between what it
+ * last saw and `next`, and a reader's change left in the workspace would be written by the
+ * next unrelated `keep()` - a new project, a switch - rather than never. */
+function touchesUnheld(next: Workspace): boolean {
+  const standing = lease?.standing() ?? null;
+  if (standing === null || standing.kind === "writer") return false;
+  const was = workspace.projects.find((one) => one.name === standing.project);
+  return was !== undefined && next.projects.find((one) => one.name === standing.project) !== was;
+}
+
 /** Whether this page found no host to keep projects on (`showNoHost`) - and so has nothing to
  * run and nothing else to say. */
 let hostless = false;
@@ -260,7 +296,8 @@ const noHostReason = (refused: { readonly refused: string; readonly message: str
  * any more: it is read once, to adopt what it held (`offerAdoption`).
  */
 async function chosenStore(): Promise<Chosen> {
-  const route = hostClient();
+  // Every request as this tab, so a write carries the lease it is made under (task-47).
+  const route = hostClient("", fetch, identity());
   const box = outbox(route);
   // Unreached *writes*, not every row: the outbox keeps a row per file it has ever landed, as
   // a version cache, so "has rows" is true of every browser that has used a host at all and
@@ -404,6 +441,12 @@ function reopened(space: Workspace): Workspace {
 /** Make `next` the workspace: the host keeps it, and the title bar, the explorer and the values
  * tab show it. */
 function keep(next: Workspace): void {
+  if (touchesUnheld(next)) {
+    log("warn", "bench.lease", "a change to a project this tab does not hold was not kept", {
+      "bench.project": workspace.current,
+    });
+    return;
+  }
   fresh = false;
   show(next);
   // Deliberately not awaited. Every keystroke and every knob turn comes through here, and a
@@ -437,7 +480,117 @@ function show(next: Workspace): void {
   showReferenceChip();
   showPickState();
   showAdoption();
+  // The lease follows the open project: a different one is let go of and this one asked for.
+  lease?.open(next.current);
+  showStanding();
 }
+
+// ---- the write lease: who may write the open project -----------------------------------
+
+/** Say where this tab stands on the open project, everywhere it changes what a person can do:
+ * the notice over the editor with whose it is, the status bar, the editor taking typing or not,
+ * the knobs' own container, and every control that would write. */
+function showStanding(): void {
+  const standing = lease?.standing() ?? null;
+  const reading = standing?.kind === "reader" && standing.project === workspace.current ? standing : null;
+  const can = writable();
+  code.setReadOnly(!can);
+  ui.editor.dataset["readonly"] = String(!can);
+  ui.explorer.readOnly = reading !== null;
+  ui.paramsUnkept.hidden = reading === null;
+  ui.insert.disabled = picked === null || !can;
+  showPickState();
+  if (reading === null) {
+    ui.lease.hidden = true;
+    ui.leaseConfirm.hidden = true;
+    ui.standing.hidden = true;
+    return;
+  }
+  const words = readOnlyWords(reading.project, reading.holder, reading.lost);
+  ui.lease.hidden = false;
+  ui.leaseTitle.textContent = words.title;
+  ui.leaseWhy.textContent = words.text;
+  ui.leaseAsk.hidden = !ui.leaseConfirm.hidden;
+  ui.leaseConfirmText.textContent =
+    `Take ${reading.project} from ${reading.holder.label} at ${reading.holder.address}? From then on it ` +
+    "can keep nothing: an edit it has not saved yet is refused, and it is told you took it over. " +
+    "Do this when that one is somewhere you cannot reach.";
+  ui.standing.hidden = false;
+  ui.standing.textContent = words.chip;
+  ui.standing.title = words.chipTitle;
+}
+
+/** The lease came back to this tab after somebody else had it: what is on the host now is read
+ * again before anything is written, so the store's own idea of what it last saw - and the
+ * outbox's bases - are the host's rather than what this tab read before the other writer
+ * started. Knob values turned while reading were never kept, and go with it. */
+async function regained(project: string): Promise<void> {
+  if (store === null) return;
+  await reach?.retryLeased(project);
+  let read: Workspace | null;
+  try {
+    read = restored(await store.load());
+  } catch (problem: unknown) {
+    log("warn", "bench.lease", "the project could not be read again on taking its lease", {
+      "bench.store.problem": String(problem),
+    });
+    return;
+  }
+  if (read === null || workspace.current !== project) return;
+  const there = switched(read, project);
+  if (there.current !== project) return;
+  const next = withScript(there, workspace.script);
+  show(next);
+  showOverrides(opened(next).overrides);
+  code.replace(openSource(next));
+  window.clearTimeout(timer);
+  runNow();
+  log("info", "bench.lease", "this tab holds the lease again, and read the project afresh", {
+    "bench.project": project,
+  });
+}
+
+/** What the tab last stood as, so a change can be told from a renewal. */
+let stood: ReturnType<Leasing["standing"]> = null;
+
+function standingChanged(): void {
+  const now = lease?.standing() ?? null;
+  const was = stood;
+  stood = now;
+  if (now?.kind === "writer" && was?.kind === "reader" && was.project === now.project) {
+    void regained(now.project);
+  }
+  if (now?.kind !== "reader") ui.leaseConfirm.hidden = true;
+  showStanding();
+}
+
+ui.leaseTake.addEventListener("click", () => {
+  ui.leaseConfirm.hidden = false;
+  showStanding();
+});
+
+ui.leaseTakeNo.addEventListener("click", () => {
+  ui.leaseConfirm.hidden = true;
+  showStanding();
+});
+
+ui.leaseTakeYes.addEventListener("click", () => {
+  ui.leaseConfirm.hidden = true;
+  log("warn", "bench.lease", "this tab took over a project somebody else was writing", {
+    "bench.project": workspace.current,
+  });
+  void lease?.takeOver();
+});
+
+// Let go on the way out, so the next client has it at once - a courtesy the expiry backs up,
+// since a page may be thrown away without this running at all (decision-9).
+window.addEventListener("pagehide", () => {
+  lease?.release();
+});
+// A page brought back from the back-forward cache let go on its way into it.
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) lease?.resume();
+});
 
 /** A project's values as the file they are - the one thing the values tab shows and the
  * download carries. The lines follow the script's own declaration order once a run has said
@@ -726,8 +879,10 @@ function showPickState(): void {
   ui.pickAsOrigin.disabled = hit === undefined || placed;
   ui.pickAsCorner.disabled = hit === undefined || placed;
   ui.pickAsUp.disabled = flat === undefined || placed;
-  ui.pickWrite.disabled = placed;
+  // A reader picks and reads every number, and writes none of them (task-47).
+  ui.pickWrite.disabled = placed || !writable();
   ui.pickUnplace.hidden = !placed;
+  ui.pickUnplace.disabled = !writable();
   for (const field of [ui.pickOrigin, ui.pickUp, ui.pickAlong]) field.disabled = placed;
   if (placed) {
     say(
@@ -932,12 +1087,20 @@ ui.canvas3d.addEventListener("drop", (event: DragEvent) => {
   event.preventDefault();
   // A drop is somebody's work arriving in a project, so a fresh host's first example is
   // written now rather than holding a mesh in a directory with no script beside it.
-  if (fresh) keep(workspace);
+  const keeping = writable();
+  if (fresh && keeping) keep(workspace);
   const project = workspace.current;
   void (async () => {
     const bytes = new Uint8Array(await file.arrayBuffer());
     hold(file.name, bytes, false);
-    await keepBody(project, file.name, bytes);
+    if (keeping) {
+      await keepBody(project, file.name, bytes);
+      return;
+    }
+    // Read-only here: the body is on the view to be measured, and is not put in a project
+    // somebody else is writing (task-47).
+    bodyProblem = `${project} is open read-only here`;
+    showReferenceChip();
   })();
 });
 
@@ -1033,7 +1196,7 @@ ui.pickAsUp.addEventListener("click", () => {
  * decision-7 left this open; this is the answer, and it is the code's, not a preference.
  */
 ui.pickWrite.addEventListener("click", () => {
-  if (referenceName === "") return;
+  if (referenceName === "" || !writable()) return;
   const origin = fieldValue(ui.pickOrigin.value);
   const up = fieldValue(ui.pickUp.value);
   const along = fieldValue(ui.pickAlong.value);
@@ -1067,6 +1230,7 @@ ui.pickWrite.addEventListener("click", () => {
 /** Forget the placement, so a pick reads the body as exported again - the way back out of the
  * placed frame, and the only way to re-pick a placement this panel wrote. */
 ui.pickUnplace.addEventListener("click", () => {
+  if (!writable()) return;
   keep(withReference(workspace, null));
   replaced("the placement was cleared");
   say("Cleared. The body stands as exported, and a pick reads its own numbers again.");
@@ -1155,10 +1319,15 @@ let overrides: Overrides = {};
 let sentWith: Overrides = overrides;
 
 /** Replace the table: what the panel shows, what the open project remembers, and whether
- * there is anything to reset. */
+ * there is anything to reset.
+ *
+ * A reader's table is the run's and nobody else's (task-47, decision-9's "knobs are the
+ * interesting middle"): it turns, it runs, and it never reaches the workspace - not merely
+ * never reaches the host - because the store writes whatever the workspace holds the next time
+ * anything is kept. */
 function setOverrides(next: Overrides): void {
   showOverrides(next);
-  keep(withOverrides(workspace, next));
+  if (writable()) keep(withOverrides(workspace, next));
 }
 
 /** The table on screen and in hand, without keeping it - what a store has just answered with. */
@@ -1175,6 +1344,9 @@ const code = editor.mount(ui.editor, "", {
     // `replace` reports itself as a change; the same text put back is not an edit, and keeping
     // it would write a fresh host's untouched first example on the way in (`fresh`).
     if (code.text() === openSource(workspace)) return;
+    // The editor takes no typing while reading (`showStanding`); this is for anything that
+    // puts text in by other means, which is not kept either.
+    if (!writable()) return;
     keep(withSource(workspace, code.text()));
     window.clearTimeout(timer);
     timer = window.setTimeout(runNow, DEBOUNCE);
@@ -1590,7 +1762,7 @@ function showSelection(ref: string | null): void {
   pickedReference = null;
   ui.selection.textContent = ref ?? HOW_TO_SELECT;
   ui.selection.classList.toggle("is-set", ref !== null);
-  ui.insert.disabled = ref === null;
+  ui.insert.disabled = ref === null || !writable();
   ui.refsTree.selected = ref;
   ui.refsTree.selectedReference = null;
   space.markReference(false);
@@ -1613,7 +1785,7 @@ function showReferenceSelection(file: string | null): void {
 }
 
 function insertSelected(): void {
-  if (picked === null || hostless) return;
+  if (picked === null || hostless || !writable()) return;
   // The ref goes into the script, so the script is what has to be in front to see it land.
   showDocument(SCRIPT);
   code.insertRef(picked);
@@ -1802,6 +1974,13 @@ async function importFiles(picked: readonly File[]): Promise<void> {
     showFailure(`Nothing was opened.\n\n${problems.join("\n")}`);
     return;
   }
+  if (alone && !writable()) {
+    showFailure(
+      `Nothing was opened: a values file picked on its own goes into ${workspace.current}, which is ` +
+        "open read-only here because somebody else is writing it.",
+    );
+    return;
+  }
   if (alone) {
     const [table] = tables.values();
     const [reference] = references.values();
@@ -1898,6 +2077,11 @@ async function boot(): Promise<void> {
   if (reach !== null) {
     reach.subscribe(showReach);
     showReach(reach.state());
+  }
+  // Asked for as soon as a project is on screen (`show`), and followed from then on.
+  if (client !== null) {
+    lease = leasing(client);
+    lease.subscribe(standingChanged);
   }
 
   let kept: string | null = null;

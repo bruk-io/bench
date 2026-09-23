@@ -20,11 +20,33 @@
  * wrong tool: it collapses dot segments, so a check built on it never sees the traversal it
  * is meant to refuse. What a *symlink* resolves to is a question only the disk can answer,
  * and the edge asks it with `within` below.
+ *
+ * **Who may write** is the one thing the request alone cannot settle: a project's write lease
+ * (`lease.ts`) is held in the server's memory. So every operation that changes a project
+ * carries the holder id it was sent as, and the edge checks it against the leases before it
+ * touches the disk; the leases themselves are asked for under `LEASES`, decided here the same
+ * way - one plain name, the same host and origin rules.
  */
+
+import { ACTS, type Act, holderProblem } from "./lease";
 
 /** Where the route answers - beside `/__bench/generated-at`, and like it kept out of `base`,
  * since the page asks for it as an absolute path whatever sub-path it was served from. */
 export const PREFIX = "/__bench/projects";
+
+/** Where a project's write lease is asked about, taken and let go (`lease.ts`) - beside the
+ * projects rather than under them, because a lease is not a file in a project and is never on
+ * a disk: it is the server's memory of who may write, and nothing more. The same host and
+ * origin rules as the projects themselves. */
+export const LEASES = "/__bench/leases";
+
+/** The header a client names its lease holder id in - on every write, so the route can refuse
+ * one from a client that does not hold the project, and on every lease it asks about. */
+export const HOLDER = "x-bench-holder";
+
+/** The header a client says what it is in, for somebody else to be told who holds a project
+ * ("Chrome on a Mac"). Only ever shown, never trusted for anything. */
+export const CLIENT = "x-bench-client";
 
 /** The only kinds of file the route will write, rename or delete: a script, a values
  * document and a mesh. Compared without regard to case, because CAD tools write `.STL` at
@@ -62,6 +84,9 @@ export type Reason =
   | "moved"
   /** A write or delete that did not say which version it was made from. */
   | "precondition"
+  /** A write to a project another client holds the write lease on (`lease.ts`). The message
+   * says who. */
+  | "leased"
   /** A method this path does not take. */
   | "method"
   /** A body over `MAX_BODY`. */
@@ -101,6 +126,8 @@ const STATUS: Readonly<Record<Reason, number>> = {
   exists: 409,
   moved: 409,
   precondition: 428,
+  // Locked: WebDAV's word for exactly this - the thing is held, and by somebody else.
+  leased: 423,
   method: 405,
   "too-large": 413,
   failed: 500,
@@ -115,13 +142,31 @@ export type Operation =
   /** `GET /__bench/projects/<project>/<file>` - one file's bytes and version. */
   | { readonly op: "read"; readonly project: string; readonly file: string }
   /** `PUT` with `If-Match: "<version>"` - replace a file that is still at `base`. */
-  | { readonly op: "write"; readonly project: string; readonly file: string; readonly base: string }
+  | (Changing & { readonly op: "write"; readonly file: string; readonly base: string })
   /** `PUT` with `If-None-Match: *` - a new file, and the project directory if it is new too. */
-  | { readonly op: "create"; readonly project: string; readonly file: string }
+  | (Changing & { readonly op: "create"; readonly file: string })
   /** `POST …?to=<name>` - the file under another name in the same project. */
-  | { readonly op: "rename"; readonly project: string; readonly file: string; readonly to: string }
+  | (Changing & { readonly op: "rename"; readonly file: string; readonly to: string })
   /** `DELETE` with `If-Match: "<version>"` - the file, if it is still at `base`. */
-  | { readonly op: "delete"; readonly project: string; readonly file: string; readonly base: string };
+  | (Changing & { readonly op: "delete"; readonly file: string; readonly base: string })
+  /** `GET /__bench/leases/<project>` to be told, `POST …?act=take|take-over|release` to act on
+   * the project's write lease (`lease.ts`). `holder` is `null` only for a look from a client
+   * that holds nothing. */
+  | {
+      readonly op: "lease";
+      readonly project: string;
+      readonly act: Act;
+      readonly holder: string | null;
+      readonly label: string | undefined;
+    };
+
+/** What every operation that changes a project carries beside its own fields: the project, and
+ * the lease holder id the client sent - `null` from a client that sent none, which may change a
+ * project nobody holds and no other (`lease.ts`'s `heldAgainst`). */
+export interface Changing {
+  readonly project: string;
+  readonly holder: string | null;
+}
 
 /** The parts of a request the decision is made from. Header names lower case, as Node gives
  * them; a header that was not sent is `undefined`. */
@@ -134,6 +179,10 @@ export interface Asked {
   readonly fetchSite: string | undefined;
   readonly ifMatch: string | undefined;
   readonly ifNoneMatch: string | undefined;
+  /** `x-bench-holder`: the lease holder id the client asks as. */
+  readonly holder: string | undefined;
+  /** `x-bench-client`: what the client says it is. */
+  readonly client: string | undefined;
 }
 
 /** What the server was told it may be called: Vite's own `allowedHosts`, `true` for any. */
@@ -260,10 +309,21 @@ export function decided(asked: Asked, allowed: AllowedHosts): Operation | Refusa
   const cut = asked.url.search(/[?#]/);
   const path = cut === -1 ? asked.url : asked.url.slice(0, cut);
   const query = cut === -1 ? "" : asked.url.slice(cut + 1).split("#")[0] ?? "";
-  if (path !== PREFIX && !path.startsWith(`${PREFIX}/`)) return null;
+  const leasing = path === LEASES || path.startsWith(`${LEASES}/`);
+  if (!leasing && path !== PREFIX && !path.startsWith(`${PREFIX}/`)) return null;
 
   const refused = hostRefused(asked.host, allowed) ?? originRefused(asked);
   if (refused !== null) return refused;
+
+  // Sent or not, a holder id that is not one is refused rather than read as none: a client
+  // that thinks it holds a lease and is quietly treated as holding nothing would be told its
+  // writes went nowhere for a reason it cannot see.
+  const holder = asked.holder?.trim() ?? null;
+  if (holder !== null) {
+    const problem = holderProblem(holder);
+    if (problem !== null) return refusal("precondition", problem);
+  }
+  if (leasing) return leaseDecided(asked, path, query, holder);
 
   const rest = path.slice(PREFIX.length + 1);
   const raw = rest === "" ? [] : rest.split("/");
@@ -301,19 +361,41 @@ export function decided(asked: Asked, allowed: AllowedHosts): Operation | Refusa
     if (!writable(to)) {
       return refusal("type", `only ${WRITABLE.join(", ")} files can be changed here`, `${project}/${to}`);
     }
-    return { op: "rename", project, file, to };
+    return { op: "rename", project, holder, file, to };
   }
   const base = tag(asked.ifMatch);
   if (method === "DELETE") {
     return base === null
       ? refusal("precondition", "a delete says which version it saw, as If-Match", at)
-      : { op: "delete", project, file, base };
+      : { op: "delete", project, holder, file, base };
   }
-  if (base !== null) return { op: "write", project, file, base };
-  if (asked.ifNoneMatch?.trim() === "*") return { op: "create", project, file };
+  if (base !== null) return { op: "write", project, holder, file, base };
+  if (asked.ifNoneMatch?.trim() === "*") return { op: "create", project, holder, file };
   return refusal(
     "precondition",
     "a write says which version it was made from (If-Match) or that the file is new (If-None-Match: *)",
     at,
   );
+}
+
+/** A request under `LEASES`: one project, looked at with `GET`, or acted on with `POST` and
+ * `?act=` - which needs a holder to act as. A project that has no directory yet can be leased:
+ * a fresh host's first example, or a project just made, is open before its first file lands. */
+function leaseDecided(asked: Asked, path: string, query: string, holder: string | null): Operation | Refusal {
+  const rest = path.slice(LEASES.length + 1);
+  const raw = rest === "" ? [] : rest.split("/");
+  const [one] = raw;
+  if (one === undefined || raw.length > 1) return refusal("name", "a lease is asked for by one project's name");
+  const project = segment(one);
+  if (isRefusal(project)) return project;
+  const method = asked.method.toUpperCase();
+  const label = asked.client;
+  if (method === "GET") return { op: "lease", project, act: "look", holder, label };
+  if (method !== "POST") return refusal("method", `${method} a lease`);
+  const act = new URLSearchParams(query).get("act");
+  if (act === null || act === "look" || !ACTS.includes(act as Act)) {
+    return refusal("name", "a lease is acted on as ?act=take, ?act=take-over or ?act=release");
+  }
+  if (holder === null) return refusal("precondition", `a lease is taken or let go by a holder, named as ${HOLDER}`);
+  return { op: "lease", project, act: act as Act, holder, label };
 }

@@ -52,6 +52,10 @@ export interface Editor {
   /** Put the cursor on one line and scroll it into view - what a finding's line number does. */
   goTo(line: number): void;
   focus(): void;
+  /** Take typing, or do not: a project somebody else holds the write lease on is read here and
+   * not edited (task-47). The cursor and selection still move - a reader still reads - and
+   * `replace` still puts a script in; only a person's typing is refused. */
+  setReadOnly(on: boolean): void;
 }
 
 const setErrorLine = StateEffect.define<number | null>();
@@ -155,6 +159,7 @@ function cursorString(view: EditorView): string | null {
 
 export function mount(parent: HTMLElement, doc: string, hooks: EditorHooks): Editor {
   const appearance = new Compartment();
+  const locked = new Compartment();
   const dark = window.matchMedia("(prefers-color-scheme: dark)");
   let known = new Set<string>();
   let announced: string | null = null;
@@ -211,6 +216,7 @@ export function mount(parent: HTMLElement, doc: string, hooks: EditorHooks): Edi
         keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
         EditorView.lineWrapping,
         appearance.of(look(dark.matches)),
+        locked.of(EditorState.readOnly.of(false)),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) hooks.onChange();
           if (update.docChanged || update.selectionSet) announce(update.view);
@@ -256,5 +262,9 @@ export function mount(parent: HTMLElement, doc: string, hooks: EditorHooks): Edi
       view.focus();
     },
     focus: () => view.focus(),
+    setReadOnly(on) {
+      if (view.state.readOnly === on) return;
+      view.dispatch({ effects: locked.reconfigure(EditorState.readOnly.of(on)) });
+    },
   };
 }

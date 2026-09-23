@@ -162,6 +162,11 @@ export class BenchExplorer extends LitElement {
   /** The file that is open. */
   @property({ attribute: false }) current = "";
 
+  /** Whether the open project is only being read here - somebody else holds its write lease
+   * (task-47) - so renaming or deleting it is not on offer. New, Duplicate and Open… make a
+   * project of their own, and Download writes nothing, so they stay. */
+  @property({ attribute: false }) readOnly = false;
+
   @state() private mode: Mode = "list";
 
   /** The name being typed, while renaming. */
@@ -205,10 +210,24 @@ export class BenchExplorer extends LitElement {
         <button id="file-new" class="small ghost" type="button" @click=${this.create}>
           + New
         </button>
-        <button id="file-rename" class="small ghost" type="button" @click=${this.startRename}>
+        <button
+          id="file-rename"
+          class="small ghost"
+          type="button"
+          ?disabled=${this.readOnly}
+          title=${this.readOnly ? "Read-only here: somebody else is writing this project" : "Rename this project"}
+          @click=${this.startRename}
+        >
           Rename…
         </button>
-        <button id="file-delete" class="small ghost danger" type="button" @click=${this.startDelete}>
+        <button
+          id="file-delete"
+          class="small ghost danger"
+          type="button"
+          ?disabled=${this.readOnly}
+          title=${this.readOnly ? "Read-only here: somebody else is writing this project" : "Delete this project"}
+          @click=${this.startDelete}
+        >
           Delete
         </button>
         <button

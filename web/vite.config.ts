@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { type Plugin, defineConfig } from "vite";
 
-import { projectsRoute, rootFor } from "./server/projects";
+import { leaseExpiry, projectsRoute, rootFor } from "./server/projects";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PY = resolve(HERE, "..", "src", "bench");
@@ -115,7 +115,8 @@ function staleness(): Plugin {
   };
 }
 
-/** The host's projects, read and written over `/__bench/projects/…` - decision-9's route.
+/** The host's projects, read and written over `/__bench/projects/…` - decision-9's route - and
+ * who may write each, over `/__bench/leases/…`.
  *
  * Beside `staleness()` and registered the same way, in both hooks, so dev and preview (and
  * `tools/preview.py`, which spawns preview) answer it alike. The root is resolved when the
@@ -127,10 +128,14 @@ function projects(): Plugin {
   return {
     name: "bench:projects",
     configureServer(server) {
-      server.middlewares.use(projectsRoute(rootFor(process.env), server.config.server.allowedHosts));
+      server.middlewares.use(
+        projectsRoute(rootFor(process.env), server.config.server.allowedHosts, leaseExpiry(process.env)),
+      );
     },
     configurePreviewServer(server) {
-      server.middlewares.use(projectsRoute(rootFor(process.env), server.config.preview.allowedHosts));
+      server.middlewares.use(
+        projectsRoute(rootFor(process.env), server.config.preview.allowedHosts, leaseExpiry(process.env)),
+      );
     },
   };
 }

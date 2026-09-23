@@ -52,3 +52,45 @@ export function noBodiesReason(summary: SummaryView): string {
     " draw: the modeller did not load. Refs, parameters and cut sheets are unaffected."
   );
 }
+
+/** A span of time as a person says it roughly: "a moment", "40 seconds", "3 minutes",
+ * "2 hours". */
+export function roughly(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 5) return "a moment";
+  if (seconds < 90) return `${seconds} seconds`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} ${plural(minutes, "minute")}`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} ${plural(hours, "hour")}`;
+}
+
+/** Who holds a project's write lease, as a reader is shown it - `lease.ts`'s `Held`. */
+interface Holder {
+  readonly label: string;
+  readonly address: string;
+  readonly forMs: number;
+  readonly heardAgoMs: number;
+}
+
+/** What a tab that is only reading `project` says, and why: the notice's title and its text,
+ * and the status bar's short word. `lost` when this tab was the writer and somebody took it
+ * over - the one time the person has to be told something changed under them (task-47). */
+export function readOnlyWords(
+  project: string,
+  holder: Holder,
+  lost: boolean,
+): { readonly title: string; readonly text: string; readonly chip: string; readonly chipTitle: string } {
+  const who = `${holder.label} at ${holder.address}`;
+  const title = lost
+    ? `${who} took over writing ${project}. It is read-only here now.`
+    : `${project} is open for writing in ${who}, so it is read-only here.`;
+  const since = lost
+    ? `It took it ${roughly(holder.forMs)} ago`
+    : `It has held it for ${roughly(holder.forMs)}`;
+  const text =
+    `${since}, and was last heard from ${roughly(holder.heardAgoMs)} ago. Here you can open, run and ` +
+    "export it, and turn its knobs to see what they do - but nothing you change is kept: not the " +
+    "script, not a knob, not a placement. It becomes yours by itself once that one lets go.";
+  return { title, text, chip: "read-only", chipTitle: `${project} is being written by ${who}` };
+}

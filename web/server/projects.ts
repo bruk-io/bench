@@ -35,10 +35,13 @@ import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { TLSSocket } from "node:tls";
 import { fileURLToPath } from "node:url";
 
+import { EXPIRY_MS, type Leases, heldAgainst, labelled, leased } from "../src/lease";
 import {
   type AllowedHosts,
   type Operation,
   type Refusal,
+  CLIENT,
+  HOLDER,
   MAX_BODY,
   decided,
   refusal,
@@ -236,7 +239,11 @@ async function replaced(path: string, bytes: Uint8Array): Promise<void> {
 }
 
 /** Do `operation` against the root, and say how it went. */
-async function performed(root: string, operation: Operation, req: IncomingMessage): Promise<Answer> {
+async function performed(
+  root: string,
+  operation: Exclude<Operation, { readonly op: "lease" }>,
+  req: IncomingMessage,
+): Promise<Answer> {
   const rootReal = await realRoot(root);
   if (isRefusal(rootReal)) return refused(rootReal);
 
@@ -357,12 +364,65 @@ async function performed(root: string, operation: Operation, req: IncomingMessag
   return json(200, found, versionHeaders(found));
 }
 
-/** The middleware: `/__bench/projects/…` answered against `root`, everything else passed on.
- * `allowed` is the server's own `allowedHosts` - dev's or preview's, whichever this is. */
+/** The variable a server can be started with to set how long a lease lasts unheard, in
+ * milliseconds - `lease.ts`'s `EXPIRY_MS` when it is not set. The tests set it to seconds so a
+ * lease can be seen to lapse; a person can set it to try the number decision-9 leaves open. */
+export const LEASE_VARIABLE = "BENCH_LEASE_MS";
+
+/** How long a lease lasts on this server.
+ *
+ * Raises:
+ *     Error: if the variable is set to anything but a whole number of milliseconds, 1000 or
+ *         more - a lease that lapses faster than a page can renew it is no lease at all.
+ */
+export function leaseExpiry(env: Readonly<Record<string, string | undefined>>): number {
+  const said = env[LEASE_VARIABLE];
+  if (said === undefined || said === "") return EXPIRY_MS;
+  const ms = Number(said);
+  if (!Number.isInteger(ms) || ms < 1000) {
+    throw new Error(`${LEASE_VARIABLE} must be a whole number of milliseconds, 1000 or more, and is "${said}"`);
+  }
+  return ms;
+}
+
+/** The address a request came from, as a person would write it - an IPv4 client reaching a
+ * dual-stack socket arrives as `::ffff:192.168.1.20`, and nobody calls their tablet that, nor
+ * the machine they are sitting at `::1`. */
+function addressOf(req: IncomingMessage): string {
+  const said = (req.socket.remoteAddress ?? "an unknown address").replace(/^::ffff:/, "");
+  return said === "::1" || said.startsWith("127.") ? "localhost" : said;
+}
+
+/** Why a change to `operation.project` is refused because another client holds it, or `null`. */
+function leaseRefused(leases: Leases, operation: Operation, expiryMs: number): Refusal | null {
+  if (operation.op !== "write" && operation.op !== "create" && operation.op !== "rename" && operation.op !== "delete") {
+    return null;
+  }
+  const held = heldAgainst(leases, operation.project, operation.holder, Date.now(), expiryMs);
+  if (held === null) return null;
+  return refusal(
+    "leased",
+    `${operation.project} is open for writing in ${held.label} at ${held.address}, and only it can change ` +
+      "the project until it lets go or stops being heard from",
+    `${operation.project}/${operation.file}`,
+  );
+}
+
+/** The middleware: `/__bench/projects/…` answered against `root`, and `/__bench/leases/…` out
+ * of this server's own memory; everything else passed on. `allowed` is the server's own
+ * `allowedHosts` - dev's or preview's, whichever this is - and `expiryMs` how long a lease
+ * lasts unheard (`leaseExpiry`).
+ *
+ * **The leases are held here and nowhere else** (decision-9: "in the server, not in a file
+ * under the project"). A restart voids every one, which is right - no client holds anything
+ * across one - and there is no lock file for anybody to find and delete by hand. They are the
+ * first state this route keeps; everything else it answers is a pure function of the disk. */
 export function projectsRoute(
   root: string,
   allowed: AllowedHosts,
+  expiryMs: number = EXPIRY_MS,
 ): (req: IncomingMessage, res: ServerResponse, next: () => void) => void {
+  let leases: Leases = new Map();
   return (req, res, next) => {
     const header = (name: string): string | undefined => {
       const found = req.headers[name];
@@ -378,6 +438,8 @@ export function projectsRoute(
         fetchSite: header("sec-fetch-site"),
         ifMatch: header("if-match"),
         ifNoneMatch: header("if-none-match"),
+        holder: header(HOLDER),
+        client: header(CLIENT),
       },
       allowed,
     );
@@ -385,7 +447,20 @@ export function projectsRoute(
       next();
       return;
     }
-    const answered = isRefusal(operation) ? Promise.resolve(refused(operation)) : performed(root, operation, req);
+    let answered: Promise<Answer>;
+    if (isRefusal(operation)) {
+      answered = Promise.resolve(refused(operation));
+    } else if (operation.op === "lease") {
+      // Answered from memory, touching no disk: a lease is not a file, and a project that has
+      // no directory yet can still be held.
+      const asker = { id: operation.holder ?? "", label: labelled(operation.label), address: addressOf(req) };
+      const after = leased(leases, operation.project, operation.act, asker, Date.now(), expiryMs);
+      leases = after.leases;
+      answered = Promise.resolve(json(200, after.standing));
+    } else {
+      const held = leaseRefused(leases, operation, expiryMs);
+      answered = held === null ? performed(root, operation, req) : Promise.resolve(refused(held));
+    }
     answered
       .catch((error: unknown) => refused(refusal("failed", String(error))))
       .then((answer) => {
