@@ -32,6 +32,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import type {
+  FrameView,
   GridView,
   LetteringView,
   MarksView,
@@ -71,6 +72,12 @@ const AXIS_X_CSS = "#d6483c";
 const AXIS_Y_CSS = "#3c9d52";
 const AXIS_Z_CSS = "#3b78c9";
 
+/** A picked face's frame, task-61's own gizmo: `plane_of`'s X in the datum's own red, so the
+ * two read as the same kind of thing, and its normal in a colour neither axis nor selection
+ * already uses, so a normal is never mistaken for a stray X axis. */
+const FRAME_X = AXIS_X;
+const FRAME_NORMAL = 0x9b59d0;
+
 export interface Viewer3D {
   /** Draw these parts - the ones with a body; anything else is not ours to show - standing
    * where the stage says. `sheets` is only read to say which sheet a part is cut from, and
@@ -86,9 +93,16 @@ export interface Viewer3D {
   /** Dolly in or out about the middle - what the +/- buttons do. */
   zoom(factor: number): void;
   select(ref: string | null): void;
+  /** task-61's second pick: shift-click a face on another part. Highlights `ref` alongside
+   * whatever `select` last chose, and - when both faces answer to a frame - draws each
+   * face's frame as small axes, from the numbers `bench.views` computed. `null` turns the
+   * second highlight and both gizmos off without touching the first pick. */
+  selectSecond(ref: string | null): void;
   /** Highlight what the editor's cursor is pointing at. */
   point(ref: string | null): void;
   selected(): string | null;
+  /** The second pick's ref, or `null` when there is none. */
+  selectedSecond(): string | null;
   /** Whether there is anything drawn. */
   empty(): boolean;
   /** Write a line across the view - why there is nothing in it, when there is a part that
@@ -125,6 +139,11 @@ export interface DetectHit {
 
 export interface Viewer3DHooks {
   onSelect(ref: string | null): void;
+  /** A shift-click landed on a face of a part different from the one `onSelect`'s ref
+   * belongs to - task-61's second pick for *Insert fit*. `ref` is `null` for a shift-click
+   * that met nothing; a shift-click that does not qualify (nothing picked first, or the
+   * same part again) fires neither hook and leaves the selection exactly as it was. */
+  onSelectSecond(ref: string | null): void;
   /** The backdrop was clicked while `detect` was on: where, and which flat - or `null` for a
    * click that met the backdrop nowhere at all. Never fired while detection is off - the
    * backdrop is not listening then. */
@@ -277,8 +296,10 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       fit: () => {},
       zoom: () => {},
       select: () => {},
+      selectSecond: () => {},
       point: () => {},
       selected: () => null,
+      selectedSecond: () => null,
       empty: () => true,
       say: () => {},
       detect: () => {},
@@ -383,6 +404,97 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     container.dataset["datum"] = length.toFixed(1);
   }
 
+  /** task-61's own gizmo: a picked face's frame, drawn as two small arrows - `plane_of`'s
+   * `normal` and `x` - and a dot at its `origin`. Out here beside the datum, not in `parts`,
+   * so it is never what a click lands on and a click always reaches the face under it.
+   *
+   * decision-10's whole reason for drawing this: a face's origin is invisible to somebody
+   * clicking it, so what `offset`/`spin` would have to correct is shown at the moment it
+   * matters, before *Insert fit* writes anything. */
+  const faceFrames = new THREE.Group();
+  scene.add(faceFrames);
+
+  /** `ref`'s frame, read off whichever body's `PartView.frames` names it, or `null` for a
+   * ref with none - unpicked, no body drawn for it, or a face `plane_of` could not frame. */
+  function frameOf(ref: string | null): FrameView | null {
+    if (ref === null) return null;
+    for (const body of bodies) {
+      const found = body.part.frames[ref];
+      if (found !== undefined) return found;
+    }
+    return null;
+  }
+
+  /** The part ``ref`` belongs to, or `null` for a ref no body drawn now answers to - what a
+   * shift-click compares the first pick's ref against, to tell "a face on another part" from
+   * "the same part again". */
+  function partRefOf(ref: string): string | null {
+    const body = bodies.find((one) => one.part.ref === ref || one.refs.includes(ref));
+    return body?.part.ref ?? null;
+  }
+
+  function frameGizmo(at: FrameView, length: number): THREE.Group {
+    const group = new THREE.Group();
+    const origin = new THREE.Vector3(...at.origin);
+    const x = new THREE.ArrowHelper(
+      new THREE.Vector3(...at.x).normalize(),
+      origin,
+      length,
+      FRAME_X,
+      length * 0.28,
+      length * 0.16,
+    );
+    const normal = new THREE.ArrowHelper(
+      new THREE.Vector3(...at.normal).normalize(),
+      origin,
+      length,
+      FRAME_NORMAL,
+      length * 0.28,
+      length * 0.16,
+    );
+    const dot = new THREE.Mesh(
+      new THREE.SphereGeometry(Math.max(length * 0.06, 0.3), 10, 8),
+      new THREE.MeshBasicMaterial({ color: FRAME_NORMAL, depthTest: false, depthWrite: false }),
+    );
+    dot.position.copy(origin);
+    for (const one of [x, normal, dot]) one.renderOrder = 997;
+    group.add(x, normal, dot);
+    return group;
+  }
+
+  /** Redraw the gizmos for whatever `chosen` and `chosenSecond` currently answer to - never
+   * cached, since a new `show()` can bring a different frame for the same ref. */
+  function layFaceFrames(): void {
+    for (const child of [...faceFrames.children]) {
+      faceFrames.remove(child);
+      if (!(child instanceof THREE.Group)) continue;
+      for (const part of child.children) {
+        // `ArrowHelper`'s own line and cone geometry are shared across every instance three.js
+        // makes, so only its per-instance material is ever this gizmo's to dispose; the dot is
+        // a plain mesh and owns both.
+        if (part instanceof THREE.ArrowHelper) {
+          if (part.line.material instanceof THREE.Material) part.line.material.dispose();
+          if (part.cone.material instanceof THREE.Material) part.cone.material.dispose();
+        } else if (part instanceof THREE.Mesh) {
+          part.geometry.dispose();
+          if (part.material instanceof THREE.Material) part.material.dispose();
+        }
+      }
+    }
+    const diagonal = bounds.getSize(new THREE.Vector3()).length();
+    const length = Math.max(diagonal * 0.12, 8);
+    let drawn = 0;
+    for (const ref of [chosen, chosenSecond]) {
+      const found = frameOf(ref);
+      if (found === null) continue;
+      faceFrames.add(frameGizmo(found, length));
+      drawn += 1;
+    }
+    // For a test to read, the "for a test to read" convention `data-bodies` etc already use:
+    // how many of the up-to-two picked faces actually drew a frame.
+    container.dataset["frames"] = String(drawn);
+  }
+
   const controls = new OrbitControls(camera, view.domElement);
   controls.enableDamping = false;
   controls.addEventListener("change", () => {
@@ -407,6 +519,8 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
   /** Set while `fit` is moving the camera itself, so its own `change` is not a person's. */
   let fitting = false;
   let chosen: string | null = null;
+  /** task-61's second pick: a shift-click's ref, on a part `chosen` is not on, or `null`. */
+  let chosenSecond: string | null = null;
   let pointed: string | null = null;
   let hovered: string | null = null;
   let frame = 0;
@@ -436,6 +550,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
    * being typed. */
   function shade(ref: string, base: THREE.Color): THREE.Color {
     if (within(ref, chosen)) return SELECTED;
+    if (within(ref, chosenSecond)) return SELECTED;
     if (within(ref, pointed)) return CURSOR;
     if (within(ref, hovered)) return HOVER;
     return base;
@@ -464,8 +579,10 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     }
     for (const one of lettered) one.material.color.copy(shade(one.ref ?? one.part.ref, INK));
     container.dataset["selected"] = chosen ?? "";
+    container.dataset["second"] = chosenSecond ?? "";
     container.dataset["pointed"] = pointed ?? "";
     container.dataset["lit"] = String(lit);
+    layFaceFrames();
     draw();
   }
 
@@ -764,10 +881,13 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     // told, so the status bar does not keep offering a name nothing answers to.
     const lost = chosen !== null && !known(chosen);
     if (lost) chosen = null;
+    const lostSecond = chosenSecond !== null && !known(chosenSecond);
+    if (lostSecond) chosenSecond = null;
     if (pointed !== null && !known(pointed)) pointed = null;
     hovered = null;
     paint();
     if (lost) hooks.onSelect(null);
+    if (lostSecond) hooks.onSelectSecond(null);
     // A dropped body is worth framing even when the script made nothing to stand beside it,
     // which is exactly the case where somebody is measuring before they have written much.
     //
@@ -900,8 +1020,22 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       hooks.onDetectPick(detectedAt(event));
       return;
     }
+    if (event.shiftKey && found !== null && chosen !== null) {
+      // task-61's second pick: only counts when it lands on a part other than the first
+      // pick's - a shift-click on the same part, or with nothing picked yet, changes
+      // nothing, so a maker cannot lose the first pick by shift-clicking somewhere that
+      // does not qualify as a second face.
+      const firstPart = partRefOf(chosen);
+      if (firstPart !== null && found.part.ref !== firstPart) {
+        chosenSecond = found.ref;
+        paint();
+        hooks.onSelectSecond(found.ref);
+        return;
+      }
+    }
     const ref = found?.ref ?? null;
     chosen = ref;
+    chosenSecond = null;
     paint();
     hooks.onSelect(ref);
   });
@@ -960,6 +1094,11 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     },
     select(ref) {
       chosen = ref;
+      chosenSecond = null;
+      paint();
+    },
+    selectSecond(ref) {
+      chosenSecond = ref;
       paint();
     },
     point(ref) {
@@ -967,6 +1106,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       paint();
     },
     selected: () => chosen,
+    selectedSecond: () => chosenSecond,
     empty: () => bodies.length === 0,
     say(text) {
       note.textContent = text;

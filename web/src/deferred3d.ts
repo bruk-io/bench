@@ -17,6 +17,7 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
   let reference: MeshView | null = null;
   let note = "";
   let chosen: string | null = null;
+  let chosenSecond: string | null = null;
   let pointed: string | null = null;
   let detected: readonly (number | null)[] | null = null;
   let marked = false;
@@ -36,7 +37,10 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
         const made = module.mount(container, hooks);
         if (stage !== null) made.show(parts, stage, sheets, reference);
         made.say(note);
+        // `select` clears the real view's own second pick, so it goes first and `selectSecond`
+        // after - the same order a fresh shift-click pair would arrive in.
         made.select(chosen);
+        made.selectSecond(chosenSecond);
         made.point(pointed);
         made.detect(detected);
         made.markReference(marked);
@@ -66,13 +70,19 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
     zoom: (factor) => real?.zoom(factor),
     select(ref) {
       chosen = ref;
+      chosenSecond = null;
       real?.select(ref);
+    },
+    selectSecond(ref) {
+      chosenSecond = ref;
+      real?.selectSecond(ref);
     },
     point(ref) {
       pointed = ref;
       real?.point(ref);
     },
     selected: () => real?.selected() ?? null,
+    selectedSecond: () => real?.selectedSecond() ?? null,
     empty: () => real?.empty() ?? true,
     detect(flatIndex) {
       detected = flatIndex;
