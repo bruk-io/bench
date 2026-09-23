@@ -23,7 +23,9 @@
  * **What is not closed**: the check and the write are two steps. Between hashing the file and
  * renaming the new bytes over it, another program can still write it, and that write is
  * lost. The window is the time a rename takes; closing it needs a lock every writer honours,
- * and `vim` honours none.
+ * and `vim` honours none. A rename is one step (a hard link, which fails on a taken name)
+ * except on a disk with no hard links - FAT, exFAT, many SMB shares - where it is a check and
+ * then a move, with the same kind of window.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -73,7 +75,10 @@ export function projectsRoot(env: Readonly<Record<string, string | undefined>>):
   if (!isAbsolute(said)) {
     throw new Error(`${VARIABLE} must be an absolute path, and is "${said}"`);
   }
-  return { root: resolve(said), fallback: false };
+  // As said, not `resolve`d: `resolve` collapses `link/..` as text, before any symlink is
+  // followed, and so can name a different directory than the OS - and Python - do for the
+  // same string. `realpath`, at the first request, is what resolves it.
+  return { root: said, fallback: false };
 }
 
 /** The root for this server, made if it is the default and not there yet. A root somebody
@@ -210,6 +215,9 @@ async function body(req: IncomingMessage): Promise<Uint8Array | null> {
 const isRefusal = (found: unknown): found is Refusal =>
   typeof found === "object" && found !== null && "refused" in found;
 
+/** What `link` fails with on a filesystem that has no hard links. */
+const NO_LINKS: ReadonlySet<string> = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV"]);
+
 /** Write `bytes` beside `path` under a hidden name, then rename it over `path`, so nothing
  * reading the file - `tools.build`, the maker's editor - ever sees half of it. */
 async function replaced(path: string, bytes: Uint8Array): Promise<void> {
@@ -307,6 +315,15 @@ async function performed(root: string, operation: Operation, req: IncomingMessag
       // the check and the move in one step, and the old name goes only once the new one is.
       await link(path, target);
     } catch (error) {
+      if (NO_LINKS.has(code(error) ?? "")) {
+        // FAT, exFAT and many SMB shares have no hard links. There the check and the move are
+        // two steps, with the same kind of window a write has between hash and rename.
+        if ((await lstat(target).catch(() => null)) !== null) {
+          return refused(refusal("exists", `${to} is already there`, to));
+        }
+        await rename(path, target);
+        return json(200, await versioned(target));
+      }
       if (code(error) !== "EEXIST") throw error;
       // On a case-insensitive disk `Cabinet.py` is `cabinet.py`: the same file, not a clash.
       const [from, onto] = await Promise.all([stat(path), stat(target)]);

@@ -6,7 +6,7 @@ it: raw HTTP to ``vite`` (the dev server - the route is the same middleware in d
 and dev needs no build), pointed by ``BENCH_PROJECTS`` at a temporary root laid out with the
 traps in it - a sibling directory whose name starts with the root's, a file and a project
 that are symlinks out of the root, a symlink that stays inside it. The e2e layer checks the
-same route answers under ``vite preview`` (``tests/e2e/test_projects_route.py``).
+same route answers under ``vite preview`` (``tests/e2e/test_projects_preview.py``).
 
 Requests go through :mod:`http.client` with the path written exactly as given: ``urllib`` and
 anything built on WHATWG URL parsing collapse ``..`` before it is sent, and a traversal test
@@ -134,6 +134,26 @@ def test_the_route_and_the_command_line_agree_on_the_root(server: Server) -> Non
     said = answer.json()["root"]
     assert isinstance(said, str)
     assert Path(said) == projects_root({VARIABLE: str(server.root)}).resolve()
+
+
+def test_a_root_named_through_a_symlink_and_dot_dot_is_the_one_python_means(
+    tmp_path: Path,
+) -> None:
+    # ``link/..`` is the parent of where ``link`` *points*, to the OS and to Python; collapsing
+    # it as text first, as ``path.resolve`` in Node does, names a different directory.
+    (tmp_path / "real" / "sub").mkdir(parents=True)
+    (tmp_path / "real" / "projects").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path / "real" / "sub", target_is_directory=True)
+    said = f"{tmp_path}/link/../projects"
+    with preview.served(dev=True, env={VARIABLE: said}) as url:
+        port = urlsplit(url).port
+        assert port is not None
+        answer = ask(Server(port, tmp_path, tmp_path), "GET", ROUTE)
+    assert answer.status == 200, answer
+    root = answer.json()["root"]
+    assert isinstance(root, str)
+    assert Path(root) == projects_root({VARIABLE: said}).resolve()
+    assert Path(root) == (tmp_path / "real" / "projects").resolve()
 
 
 def test_a_root_that_is_not_there_is_reported_not_made(tmp_path: Path) -> None:
@@ -407,6 +427,14 @@ def test_creating_or_renaming_onto_a_file_that_is_there_is_a_conflict(server: Se
     assert renamed.status == 409
     assert renamed.json()["refused"] == "exists"
     assert (server.root / "cabinet" / "cabinet.toml").read_bytes() == VALUES
+
+
+def test_a_method_a_path_does_not_take_is_refused(server: Server) -> None:
+    for method, path in (("PATCH", f"{ROUTE}/cabinet/cabinet.py"), ("DELETE", ROUTE)):
+        answer = ask(server, method, path)
+        assert answer.status == 405
+        assert answer.json()["refused"] == "method"
+    assert (server.root / "cabinet").is_dir()
 
 
 def test_a_file_that_is_not_there_is_missing(server: Server) -> None:
