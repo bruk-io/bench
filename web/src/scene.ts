@@ -41,6 +41,15 @@ export interface MeshView {
   readonly refs: readonly string[];
 }
 
+/** One named face's frame, exactly what `bench.solids.plane_of` answers for it: `origin` and
+ * `normal` already stood where the stage put the body - `positions` are, `bbox` is not - and
+ * `x` the direction the face was authored with. Three numbers each. */
+export interface FrameView {
+  readonly origin: readonly [number, number, number];
+  readonly normal: readonly [number, number, number];
+  readonly x: readonly [number, number, number];
+}
+
 /** The wires engraved on a plate: `segments` is six numbers per line segment, both ends
  * already placed just clear of the top, and `ref_index` one number per segment, counted as a
  * mesh's are. */
@@ -97,6 +106,11 @@ export interface PartView {
   readonly mesh: MeshView | null;
   readonly marks: MarksView | null;
   readonly lettering: readonly LetteringView[];
+  /** Every named planar face's frame, under its own ref - one entry per face `plane_of` can
+   * answer for. Only a printed part's faces are ever in here: a laser part's plate has none,
+   * and neither does a round face with no `around=` to take a tangent at, which is what tells
+   * *Insert fit* a pick cannot be framed. */
+  readonly frames: Readonly<Record<string, FrameView>>;
 }
 
 /** What a run amounts to, counted in Python so the app only words it: what was made and
@@ -186,6 +200,25 @@ const isTextTable = (value: unknown): boolean =>
 const isNumbers = (value: unknown, count: number): boolean =>
   isList(value) && value.length === count && value.every(isNumber);
 
+/** The first thing wrong with one face's frame, or `null`. */
+function frameProblem(value: unknown, where: string): string | null {
+  if (!isObject(value)) return `${where} is not an object`;
+  for (const field of ["origin", "normal", "x"] as const) {
+    if (!isNumbers(value[field], 3)) return `${where}.${field} is not three numbers`;
+  }
+  return null;
+}
+
+/** The first thing wrong with a part's `frames` table, or `null`. */
+function framesProblem(value: unknown, where: string): string | null {
+  if (!isObject(value)) return `${where} is not an object`;
+  for (const [ref, frame] of Object.entries(value)) {
+    const problem = frameProblem(frame, `${where}[${JSON.stringify(ref)}]`);
+    if (problem !== null) return problem;
+  }
+  return null;
+}
+
 /** A buffer's number in the list that came with the JSON. */
 const isSlot = (value: unknown): value is number => Number.isInteger(value) && Number(value) >= 0;
 
@@ -262,7 +295,8 @@ function partProblem(value: unknown, at: number): string | null {
   }
   return (
     listsProblem(value["mesh"], `${where}.mesh`, "positions") ??
-    listsProblem(value["marks"], `${where}.marks`, "segments")
+    listsProblem(value["marks"], `${where}.marks`, "segments") ??
+    framesProblem(value["frames"], `${where}.frames`)
   );
 }
 
