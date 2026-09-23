@@ -2,9 +2,9 @@
  * and `server/projects.ts` serves.
  *
  * Plain `fetch` over data, the way `bridge.ts` is plain `postMessage` over data, so nothing
- * above this knows it is talking to a server. Not used by the app yet - task-52 puts the
- * project store over it - which is why it is a thin, typed mapping of the route and nothing
- * more: no retries, no outbox, no opinion about what a refusal should do on screen.
+ * above this knows it is talking to a server. The project store (`store-host.ts`) and the write
+ * lease (`leasing.ts`) are built over it, which is why it is a thin, typed mapping of the route
+ * and nothing more: no retries, no outbox, no opinion about what a refusal should do on screen.
  *
  * **A refusal is an answer, not an exception.** Every call resolves to `{ ok: true, … }` or
  * `{ ok: false, refusal }`, and a refusal carries the route's own reason - `moved`, `exists`,
@@ -12,7 +12,8 @@
  * is not being able to ask at all: the network is down, the page has no host behind it. The
  * two are different, and `store.ts` is explicit that a caller must be able to tell them apart.
  */
-import { PREFIX, type Refusal, refusal } from "./route";
+import type { Act, Standing } from "./lease";
+import { CLIENT, HOLDER, LEASES, PREFIX, type Refusal, refusal } from "./route";
 
 /** Which bytes a file held when it was read or written: what a later write or delete names
  * as its base, and the modification time a person is shown. */
@@ -61,6 +62,18 @@ export interface Host {
   /** Delete `file`, which must still be at `base`. For now this is gone from the disk;
    * task-48 makes it recoverable. */
   remove(project: string, file: string, base: string): Promise<Answer<null>>;
+  /** Ask about `project`'s write lease, or act on it, as this client's `Identity` (`lease.ts`).
+   * `keepalive` for the one asked as a page goes away - a release on `pagehide` - which the
+   * browser then finishes sending after the page has gone. */
+  lease(project: string, act: Act, keepalive?: boolean): Promise<Answer<Standing>>;
+}
+
+/** Who this client is to the leases: the id it holds them under - sent on every write, so the
+ * route can refuse one to a project somebody else holds - and what it calls itself, for another
+ * client to be told who holds a project. */
+export interface Identity {
+  readonly id: string;
+  readonly label: string;
 }
 
 const isRefusal = (body: unknown): body is Refusal =>
@@ -88,14 +101,18 @@ const path = (...names: string[]): string =>
   [PREFIX, ...names.map((name) => encodeURIComponent(name))].join("/");
 
 /** The route on the host at `origin` - the page's own when it is `""`, which is the only
- * one the route will take a write from; any other is for a caller outside a browser. */
-export function host(origin = "", fetchImpl: typeof fetch = fetch): Host {
+ * one the route will take a write from; any other is for a caller outside a browser. Every
+ * request goes as `identity` when there is one; with none, a write goes as a client holding no
+ * lease, which the route takes for a project nobody holds and refuses for one somebody does. */
+export function host(origin = "", fetchImpl: typeof fetch = fetch, identity: Identity | null = null): Host {
+  const who: Record<string, string> = identity === null ? {} : { [HOLDER]: identity.id, [CLIENT]: identity.label };
   const asked = async <T>(
     at: string,
     init: RequestInit,
     taken: (response: Response) => Promise<T>,
   ): Promise<Answer<T>> => {
-    const response = await fetchImpl(`${origin}${at}`, { cache: "no-store", ...init });
+    const headers = { ...who, ...(init.headers as Record<string, string> | undefined) };
+    const response = await fetchImpl(`${origin}${at}`, { cache: "no-store", ...init, headers });
     if (!response.ok) return { ok: false, refusal: await refused(response) };
     return { ok: true, value: await taken(response) };
   };
@@ -124,6 +141,14 @@ export function host(origin = "", fetchImpl: typeof fetch = fetch): Host {
     remove: (project, file, base) =>
       asked(path(project, file), { method: "DELETE", headers: { "if-match": `"${base}"` } }, () =>
         Promise.resolve(null),
+      ),
+    lease: (project, act, keepalive = false) =>
+      asked(
+        act === "look"
+          ? `${LEASES}/${encodeURIComponent(project)}`
+          : `${LEASES}/${encodeURIComponent(project)}?act=${act}`,
+        { method: act === "look" ? "GET" : "POST", keepalive },
+        (r) => r.json() as Promise<Standing>,
       ),
   };
 }

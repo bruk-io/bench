@@ -11,8 +11,13 @@ const asked = (method: string, url: string, headers: Partial<Asked> = {}): Asked
   fetchSite: undefined,
   ifMatch: undefined,
   ifNoneMatch: undefined,
+  holder: undefined,
+  client: undefined,
   ...headers,
 });
+
+/** A holder id of the shape `leasing.ts` makes. */
+const HOLDER_ID = "0123456789abcdef0123456789abcdef";
 
 const reason = (found: Operation | Refusal | null): string | null =>
   found === null ? null : "refused" in found ? found.refused : found.op;
@@ -86,6 +91,7 @@ describe("decided: writes", () => {
     expect(decided(asked("PUT", url, { ifMatch: '"abc"' }), [])).toEqual({
       op: "write",
       project: "p",
+      holder: null,
       file: "a.py",
       base: "abc",
     });
@@ -93,6 +99,20 @@ describe("decided: writes", () => {
     expect(reason(decided(asked("PUT", url, { ifMatch: 'W/"abc"' }), []))).toBe("precondition");
     expect(reason(decided(asked("DELETE", url), []))).toBe("precondition");
     expect(reason(decided(asked("DELETE", url, { ifMatch: '"abc"' }), []))).toBe("delete");
+  });
+
+  it("carries the lease holder a write was sent as, so the edge can check it against the lease", () => {
+    const url = "/__bench/projects/p/a.py";
+    const found = decided(asked("PUT", url, { ifNoneMatch: "*", holder: HOLDER_ID }), []);
+    expect(found).toEqual({ op: "create", project: "p", holder: HOLDER_ID, file: "a.py" });
+  });
+
+  it("refuses a holder id that is not one, rather than reading it as none", () => {
+    const url = "/__bench/projects/p/a.py";
+    expect(reason(decided(asked("PUT", url, { ifNoneMatch: "*", holder: "short" }), []))).toBe("precondition");
+    expect(reason(decided(asked("PUT", url, { ifNoneMatch: "*", holder: `${HOLDER_ID}/x` }), []))).toBe(
+      "precondition",
+    );
   });
 
   it("refuses methods a path does not take", () => {
@@ -168,5 +188,45 @@ describe("within", () => {
     expect(within("/r/projects", "/r/projects")).toBe(false);
     expect(within("/r/projects", "/r/projects/")).toBe(false);
     expect(within("/r/projects", "/etc/passwd")).toBe(false);
+  });
+});
+
+describe("decided: leases", () => {
+  it("looks at a project's lease with GET, whether or not the asker holds anything", () => {
+    expect(decided(asked("GET", "/__bench/leases/cabinet"), [])).toEqual({
+      op: "lease",
+      project: "cabinet",
+      act: "look",
+      holder: null,
+      label: undefined,
+    });
+    const mine = decided(asked("GET", "/__bench/leases/cabinet", { holder: HOLDER_ID, client: "Chrome on a Mac" }), []);
+    expect(mine).toEqual({ op: "lease", project: "cabinet", act: "look", holder: HOLDER_ID, label: "Chrome on a Mac" });
+  });
+
+  it("takes, takes over and lets go with POST ?act=, and only as a holder", () => {
+    for (const act of ["take", "take-over", "release"]) {
+      const found = decided(asked("POST", `/__bench/leases/cabinet?act=${act}`, { holder: HOLDER_ID }), []);
+      expect(found).toMatchObject({ op: "lease", project: "cabinet", act, holder: HOLDER_ID });
+      expect(reason(decided(asked("POST", `/__bench/leases/cabinet?act=${act}`), []))).toBe("precondition");
+    }
+    expect(reason(decided(asked("POST", "/__bench/leases/cabinet?act=look", { holder: HOLDER_ID }), []))).toBe("name");
+    expect(reason(decided(asked("POST", "/__bench/leases/cabinet?act=steal", { holder: HOLDER_ID }), []))).toBe(
+      "name",
+    );
+    expect(reason(decided(asked("PUT", "/__bench/leases/cabinet", { holder: HOLDER_ID }), []))).toBe("method");
+  });
+
+  it("holds a lease's project name to the same rule as a project's, and to one name", () => {
+    for (const url of ["/__bench/leases", "/__bench/leases/..", "/__bench/leases/%2e%2e", "/__bench/leases/a/b"]) {
+      expect(reason(decided(asked("POST", `${url}?act=take`, { holder: HOLDER_ID }), []))).toBe("name");
+    }
+  });
+
+  it("keeps a lease behind the same host and origin rules as the files", () => {
+    const url = "/__bench/leases/cabinet?act=take-over";
+    const other = { holder: HOLDER_ID, origin: "http://evil.example", fetchSite: "cross-site" };
+    expect(reason(decided(asked("POST", url, other), []))).toBe("origin");
+    expect(reason(decided(asked("POST", url, { holder: HOLDER_ID, host: "evil.example" }), []))).toBe("host");
   });
 });
