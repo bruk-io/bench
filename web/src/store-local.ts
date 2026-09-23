@@ -47,4 +47,8 @@ export const localStore = (): ProjectStore => ({
     }
     return Promise.resolve();
   },
+
+  // One document holds every project, so a move is whatever the next `save` writes.
+  renameProject: () => Promise.resolve({ ok: true, trashed: null }),
+  trashProject: () => Promise.resolve({ ok: true, trashed: null }),
 });

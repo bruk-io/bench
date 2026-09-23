@@ -48,6 +48,24 @@ export const HOLDER = "x-bench-holder";
  * ("Chrome on a Mac"). Only ever shown, never trusted for anything. */
 export const CLIENT = "x-bench-client";
 
+/** Where a delete puts what it deletes: a hidden directory under the projects root, never
+ * listed as a project and never reachable as a name through the route (a hidden name is not
+ * one), each thing deleted in a folder of its own named for when and from which project. A
+ * delete on somebody's disk is a move a person can undo with their own file manager, not an
+ * unlink (decision-9: "delete wants to be a move to a trash directory under the root"). */
+export const TRASH = ".trash";
+
+/** The folder in `TRASH` that something deleted from `project` at `when` goes into:
+ * `20260923-101503-cabinet`, sorted by time as a listing sorts it, in the host's own local time
+ * because that is the clock the person looking for it has, and with no colon in it, which FAT
+ * and SMB refuse. `attempt` past the first adds `-2`, `-3`, … for two deletes in one second. */
+export function trashFolder(when: Date, project: string, attempt = 1): string {
+  const two = (n: number): string => String(n).padStart(2, "0");
+  const day = `${when.getFullYear()}${two(when.getMonth() + 1)}${two(when.getDate())}`;
+  const time = `${two(when.getHours())}${two(when.getMinutes())}${two(when.getSeconds())}`;
+  return `${day}-${time}-${project}${attempt > 1 ? `-${attempt}` : ""}`;
+}
+
 /** The only kinds of file the route will write, rename or delete: a script, a values
  * document and a mesh. Compared without regard to case, because CAD tools write `.STL` at
  * least as often as `.stl` and it is the same kind of file either way. */
@@ -147,8 +165,13 @@ export type Operation =
   | (Changing & { readonly op: "create"; readonly file: string })
   /** `POST …?to=<name>` - the file under another name in the same project. */
   | (Changing & { readonly op: "rename"; readonly file: string; readonly to: string })
-  /** `DELETE` with `If-Match: "<version>"` - the file, if it is still at `base`. */
+  /** `DELETE` with `If-Match: "<version>"` - the file, if it is still at `base`, moved into the
+   * trash (`TRASH`): never unlinked. */
   | (Changing & { readonly op: "delete"; readonly file: string; readonly base: string })
+  /** `POST /__bench/projects/<project>?to=<name>` - the whole directory under another name. */
+  | (Changing & { readonly op: "rename-project"; readonly to: string })
+  /** `DELETE /__bench/projects/<project>` - the whole directory, moved into the trash. */
+  | (Changing & { readonly op: "trash-project" })
   /** `GET /__bench/leases/<project>` to be told, `POST …?act=take|take-over|release` to act on
    * the project's write lease (`lease.ts`). `holder` is `null` only for a look from a client
    * that holds nothing. */
@@ -343,7 +366,15 @@ export function decided(asked: Asked, allowed: AllowedHosts): Operation | Refusa
     return method === "GET" ? { op: "projects" } : refusal("method", `${method} the projects root`);
   }
   if (file === undefined) {
-    return method === "GET" ? { op: "files", project } : refusal("method", `${method} a project`);
+    if (method === "GET") return { op: "files", project };
+    if (method === "DELETE") return { op: "trash-project", project, holder };
+    if (method === "POST") {
+      const to = new URLSearchParams(query).get("to");
+      if (to === null) return refusal("name", "a project rename says what to call it, as ?to=", project);
+      const problem = nameProblem(to);
+      return problem === null ? { op: "rename-project", project, holder, to } : refusal("name", problem, project);
+    }
+    return refusal("method", `${method} a project`);
   }
   const at = `${project}/${file}`;
   if (method === "GET") return { op: "read", project, file };

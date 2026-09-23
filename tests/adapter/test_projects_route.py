@@ -228,8 +228,54 @@ def test_write_create_rename_and_delete_round_trip(server: Server) -> None:
 
     base = ask(server, "GET", f"{ROUTE}/shelf/rack.py").headers["etag"]
     gone = ask(server, "DELETE", f"{ROUTE}/shelf/rack.py", headers={"If-Match": base})
-    assert gone.status == 204
+    assert gone.status == 200
     assert not (project / "rack.py").exists()
+    # A delete is a move into the trash under the root, never an unlink (task-48).
+    trashed = gone.json()["trashed"]
+    assert isinstance(trashed, str)
+    assert trashed.startswith(".trash/")
+    assert trashed.endswith("-shelf/rack.py")
+    assert (server.root / trashed).read_bytes() == b"w = 2\n"
+    projects = ask(server, "GET", ROUTE).json()["projects"]
+    assert isinstance(projects, list)
+    assert ".trash" not in projects  # never listed as a project
+
+
+# ---- task-48: a whole project renamed or put in the trash --------------------------------
+
+
+def test_a_project_is_renamed_whole_with_what_the_store_does_not_carry(server: Server) -> None:
+    (server.root / "bracket").mkdir()
+    (server.root / "bracket" / "bracket.py").write_bytes(b"x = 1\n")
+    (server.root / "bracket" / "foot.stl").write_bytes(b"solid foot\n")
+    moved = ask(server, "POST", f"{ROUTE}/bracket?to=holder")
+    assert moved.status == 200
+    assert moved.json() == {"project": "holder"}
+    assert not (server.root / "bracket").exists()
+    assert (server.root / "holder" / "foot.stl").read_bytes() == b"solid foot\n"
+    taken = ask(server, "POST", f"{ROUTE}/holder?to=cabinet")
+    assert taken.json()["refused"] == "exists"
+    assert ask(server, "POST", f"{ROUTE}/holder?to=.git").json()["refused"] == "name"
+    assert ask(server, "POST", f"{ROUTE}/escape?to=elsewhere").json()["refused"] == "link"
+
+
+def test_a_project_is_deleted_whole_into_the_trash_meshes_and_all(server: Server) -> None:
+    (server.root / "doomed").mkdir()
+    (server.root / "doomed" / "doomed.py").write_bytes(b"x = 1\n")
+    (server.root / "doomed" / "foot.stl").write_bytes(b"solid foot\n")
+    gone = ask(server, "DELETE", f"{ROUTE}/doomed")
+    assert gone.status == 200
+    trashed = gone.json()["trashed"]
+    assert isinstance(trashed, str)
+    assert not (server.root / "doomed").exists()
+    assert (server.root / trashed / "foot.stl").read_bytes() == b"solid foot\n"
+    assert (server.root / trashed / "doomed.py").read_bytes() == b"x = 1\n"
+    # A second delete of the same name inside one second gets a folder of its own.
+    (server.root / "doomed").mkdir()
+    again = ask(server, "DELETE", f"{ROUTE}/doomed").json()["trashed"]
+    assert again != trashed
+    assert ask(server, "DELETE", f"{ROUTE}/doomed").json()["refused"] == "missing"
+    assert ask(server, "DELETE", f"{ROUTE}/escape").json()["refused"] == "link"
 
 
 # ---- AC#3: confined to the root ----------------------------------------------------------
@@ -507,5 +553,6 @@ def test_the_apps_client_speaks_the_route(server: Server, tmp_path: Path) -> Non
     assert said["stale"]["refusal"]["file"] == "client/part.py"
     assert said["type"]["refusal"]["refused"] == "type"
     assert said["renamed"]["ok"]
-    assert said["removed"] == {"ok": True, "value": None}
+    assert said["removed"]["ok"]
+    assert said["removed"]["value"]["trashed"].endswith("-client/piece.py")
     assert not (server.root / "client" / "piece.py").exists()

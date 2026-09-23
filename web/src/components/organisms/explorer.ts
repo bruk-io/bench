@@ -1,57 +1,135 @@
-/** The projects on the host, as the sidebar's own container - one row per project directory.
+/** The sidebar's Files container: a switcher naming the open project, and the open project's
+ * own files under it (decision-9, task-48).
  *
- * What was a menu behind a button is a list that is simply there, which is what the rail buys:
- * the container is only on screen when a person asked for it, so it does not have to fold
- * itself away. The names come down with the one that is open; everything a person asks for
- * goes up as an event - `file-new`, `file-open`, `file-rename`, `file-delete`,
- * `file-duplicate`, `file-download`, `file-import` - and changing the workspace, or touching
- * the file system, is the page's to do. `file-import` carries the files a person picked and
- * nothing read out of them: reading is I/O, and this only asks.
+ * VS Code's split, which the container used to have the wrong way round: which folder is open
+ * is a different control from what is in it, and used a hundred times less often. So the rare
+ * act - another project, a new one, one from disk, a download - is one line at the top, a menu
+ * behind the open project's name; the rest of the container is the project itself:
+ * `bench.toml`, its scripts, and the meshes dropped into it, each a row that opens in the editor
+ * group on a click. The actions that were a toolbar acting on "the current file" belong to the
+ * row they act on now, behind its own `⋯` - a button rather than a hover, because a tablet has
+ * no hover - since there is a row under the pointer that says which file is meant.
  *
- * A new name is checked here before it is sent, with the same `nameProblem` the page applies,
- * so the reason a name will not do is said beside the box it was typed in. Delete asks once,
- * in place: it removes the project's files from the host's disk, and nothing brings them back
- * until task-48 makes a delete a move to a trash - which is what Download is for.
+ * Everything a person asks for goes up as an event, and changing the workspace, the host or the
+ * file system is the page's to do: `project-open`, `project-new`, `project-import`,
+ * `project-download`, `project-rename`, `project-delete` and `project-duplicate` from the
+ * switcher; `file-open`, `file-rename`, `file-delete` and `file-duplicate` from the tree. A name
+ * is checked here before it is sent, with the same functions the page applies, so the reason
+ * one will not do is said beside the box it was typed in.
  *
- * Still a list of projects, as it was a list of scripts: decision-9's switcher and the tree of
- * a project's own files are task-48's. What a row names changed underneath it - a directory,
- * not a script.
+ * **A delete says where the files go, before and after.** Nothing is unlinked: a project's
+ * directory, or one of its files, moves into `.trash/` under the host's projects root
+ * (`server/projects.ts`), and the question names that directory before it is answered; the
+ * page says where it went once it has.
+ *
+ * **Read-only is a real mode** (task-47): a project somebody else is writing lists its files
+ * and opens them, and offers no action on a row that would write. Duplicating it is still on
+ * offer - that makes a project of one's own.
  */
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 
-import { nameProblem, normalized } from "../../files";
-import { base, buttons } from "../styles";
+import { nameProblem, normalized, scriptName, scriptNameProblem } from "../../files";
+import { DismissController } from "../controllers/dismiss";
+import { base, buttons, disclosure } from "../styles";
 
-/** The file a person asked to open, or to delete. */
-export interface FileNameDetail {
+/** A project, or a file in the open one, a person asked about by name. */
+export interface NameDetail {
   readonly name: string;
 }
 
-/** A file and the name it is to have, already read as a file name. */
-export interface FileRenameDetail {
+/** A project or a file and the name it is to have, already read as one. */
+export interface RenameDetail {
   readonly from: string;
   readonly to: string;
 }
 
 /** The files a person picked to open: scripts, and the values files beside them. */
-export interface FileImportDetail {
+export interface ImportDetail {
   readonly files: readonly File[];
 }
 
-type Mode = "list" | "rename" | "delete";
+/** What the open project holds, as the tree lists it. */
+export interface ProjectFiles {
+  /** Its scripts, in the order their tabs take: the entry first, the rest by name. */
+  readonly scripts: readonly string[];
+  /** The script a fresh open runs - `[project] entry`. */
+  readonly entry: string;
+  /** The meshes in its directory, by name. */
+  readonly meshes: readonly string[];
+}
+
+/** The values document every project has one of. */
+const DOCUMENT = "bench.toml";
+
+/** Which row's actions are showing, if any: a project in the switcher or a file in the tree. */
+type Target = { readonly kind: "project" | "file"; readonly name: string };
+
+type Mode =
+  | { readonly kind: "list" }
+  | { readonly kind: "rename"; readonly target: Target }
+  | { readonly kind: "delete"; readonly target: Target };
+
+const LIST: Mode = { kind: "list" };
+
+const same = (a: Target | null, b: Target): boolean => a !== null && a.kind === b.kind && a.name === b.name;
 
 @customElement("bench-explorer")
 export class BenchExplorer extends LitElement {
   static override styles = [
     base,
     buttons,
+    disclosure,
     css`
       :host {
+        position: relative;
         display: flex;
         flex-direction: column;
         min-height: 0;
         overflow: hidden;
+      }
+
+      .switcher {
+        flex: none;
+        padding: 4px 6px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      #project-switcher {
+        width: 100%;
+        justify-content: flex-start;
+        gap: 6px;
+        padding: 0 6px;
+        font-family: var(--mono);
+        font-weight: 600;
+      }
+
+      #project-switcher .name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-align: left;
+        text-overflow: ellipsis;
+      }
+
+      .menu {
+        position: absolute;
+        top: 36px;
+        right: 6px;
+        left: 6px;
+        z-index: 20;
+        display: flex;
+        flex-direction: column;
+        max-height: calc(100% - 44px);
+        padding: 4px;
+        background: var(--panel);
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        box-shadow: var(--shadow-pop);
+      }
+
+      .menu[hidden] {
+        display: none;
       }
 
       .list {
@@ -63,15 +141,24 @@ export class BenchExplorer extends LitElement {
         list-style: none;
       }
 
+      .line {
+        display: flex;
+        align-items: center;
+      }
+
       .row {
-        width: 100%;
+        flex: 1;
+        min-width: 0;
         height: 24px;
         justify-content: flex-start;
+        gap: 6px;
         padding: 0 8px;
         background: none;
         border: none;
         border-radius: 0;
         box-shadow: none;
+        font-family: var(--mono);
+        font-weight: 400;
       }
 
       .row:hover:not(:disabled) {
@@ -79,30 +166,61 @@ export class BenchExplorer extends LitElement {
         border-color: transparent;
       }
 
-      .file {
-        overflow: hidden;
-        font-family: var(--mono);
-        font-weight: 400;
-        text-overflow: ellipsis;
-      }
-
-      .file[aria-current="true"],
-      .file[aria-current="true"]:hover {
+      .row[aria-current="true"],
+      .row[aria-current="true"]:hover {
         color: var(--accent);
         background: var(--accent-soft);
       }
 
-      .actions {
+      .row .name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .tag {
+        color: var(--fg-faint);
+        font-family: var(--sans, inherit);
+        font-size: 10px;
+      }
+
+      .more {
         flex: none;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        color: var(--fg-dim);
+        background: none;
+        border: none;
+        box-shadow: none;
+      }
+
+      .acts {
         display: flex;
         flex-wrap: wrap;
         gap: 4px;
-        padding: 6px 8px;
+        padding: 2px 8px 6px 20px;
+      }
+
+      .group {
+        margin: 8px 0 2px;
+        padding: 0 8px;
+        color: var(--fg-dim);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .foot {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 6px 4px 2px;
         border-top: 1px solid var(--line);
       }
 
       /* The picker is a button here; the input the browser needs is not on screen. */
-      #file-pick {
+      #project-pick {
         display: none;
       }
 
@@ -113,10 +231,27 @@ export class BenchExplorer extends LitElement {
       }
 
       .ask p,
-      label {
+      label,
+      .said {
         margin: 0;
         font-size: 12px;
         overflow-wrap: anywhere;
+      }
+
+      .said {
+        flex: none;
+        padding: 6px 8px;
+        color: var(--fg-dim);
+        border-top: 1px solid var(--line);
+      }
+
+      .said[hidden] {
+        display: none;
+      }
+
+      code {
+        font-family: var(--mono);
+        font-size: 11px;
       }
 
       input {
@@ -156,18 +291,35 @@ export class BenchExplorer extends LitElement {
     `,
   ];
 
-  /** Every file kept, in the order to list them. */
-  @property({ attribute: false }) names: readonly string[] = [];
+  /** Every project under the root, in the order to list them. */
+  @property({ attribute: false }) projects: readonly string[] = [];
 
-  /** The file that is open. */
+  /** The project that is open. */
   @property({ attribute: false }) current = "";
 
-  /** Whether the open project is only being read here - somebody else holds its write lease
-   * (task-47) - so renaming or deleting it is not on offer. New, Duplicate and Open… make a
-   * project of their own, and Download writes nothing, so they stay. */
+  /** What the open project holds. */
+  @property({ attribute: false }) files: ProjectFiles = { scripts: [], entry: "", meshes: [] };
+
+  /** The file in front in the editor group - a script, or `bench.toml` - marked in the tree. */
+  @property({ attribute: false }) front = "";
+
+  /** Whether the open project is only being read here (task-47). */
   @property({ attribute: false }) readOnly = false;
 
-  @state() private mode: Mode = "list";
+  /** The host's projects root, which a delete names before it moves anything into its trash. */
+  @property({ attribute: false }) root = "";
+
+  /** A line the page has to say at the foot of the container - where a delete put what it
+   * moved - or `null` for nothing. */
+  @property({ attribute: false }) said: string | null = null;
+
+  @state() private mode: Mode = LIST;
+
+  /** Whether the switcher's menu is open. */
+  @state() private switching = false;
+
+  /** The row whose actions are showing. */
+  @state() private acting: Target | null = null;
 
   /** The name being typed, while renaming. */
   @state() private draft = "";
@@ -175,105 +327,220 @@ export class BenchExplorer extends LitElement {
   // No initializer: `@query` is a getter on the prototype, as in `param-field.ts`.
   @query("#file-name") private nameBox!: HTMLInputElement | null;
 
-  @query("#file-pick") private picker!: HTMLInputElement | null;
+  @query("#project-pick") private picker!: HTMLInputElement | null;
+
+  constructor() {
+    super();
+    new DismissController(this, () => {
+      this.switching = false;
+    });
+  }
 
   override render() {
-    switch (this.mode) {
+    switch (this.mode.kind) {
       case "rename":
-        return this.renaming();
+        return this.renaming(this.mode.target);
       case "delete":
-        return this.deleting();
+        return this.deleting(this.mode.target);
       case "list":
         return this.listing();
     }
   }
 
-  private listing() {
+  // ---- the switcher -----------------------------------------------------------------
+
+  private switcher() {
     return html`
-      <ul class="list" aria-label="Your projects">
-        ${this.names.map(
-          (name) => html`
-            <li>
-              <button
-                class="row file"
-                type="button"
-                aria-current=${name === this.current ? "true" : "false"}
-                @click=${() => this.choose(name)}
-              >
-                ${name}
-              </button>
-            </li>
-          `,
-        )}
-      </ul>
-      <div class="actions">
-        <button id="file-new" class="small ghost" type="button" @click=${this.create}>
-          + New
-        </button>
+      <div class="switcher">
         <button
-          id="file-rename"
-          class="small ghost"
+          id="project-switcher"
+          class="ghost disclosure"
           type="button"
-          ?disabled=${this.readOnly}
-          title=${this.readOnly ? "Read-only here: somebody else is writing this project" : "Rename this project"}
-          @click=${this.startRename}
+          aria-haspopup="true"
+          aria-expanded=${this.switching ? "true" : "false"}
+          title="The open project - switch to another, or make one"
+          @click=${this.toggle}
         >
-          Rename…
+          <span class="name">${this.current}</span>
         </button>
-        <button
-          id="file-delete"
-          class="small ghost danger"
-          type="button"
-          ?disabled=${this.readOnly}
-          title=${this.readOnly ? "Read-only here: somebody else is writing this project" : "Delete this project"}
-          @click=${this.startDelete}
-        >
-          Delete
-        </button>
-        <button
-          id="file-duplicate"
-          class="small ghost"
-          type="button"
-          title="A copy of this project, script and values both"
-          @click=${this.duplicate}
-        >
-          Duplicate
-        </button>
-        <button
-          id="file-download"
-          class="small ghost"
-          type="button"
-          title="Save this project as its files - its scripts and its values"
-          @click=${this.download}
-        >
-          Download
-        </button>
-        <button
-          id="file-open"
-          class="small ghost"
-          type="button"
-          title="Open a script from disk, with the .toml beside it if you pick that too"
-          @click=${this.pick}
-        >
-          Open…
-        </button>
-        <input
-          id="file-pick"
-          type="file"
-          accept=".py,.toml"
-          multiple
-          aria-label="Scripts and values files to open"
-          @change=${this.picked}
-        />
+      </div>
+      <div id="projects" class="menu" ?hidden=${!this.switching}>
+        <ul class="list" aria-label="Your projects">
+          ${this.projects.map((name) => this.projectRow(name))}
+        </ul>
+        <div class="foot">
+          <button id="project-new" class="small ghost" type="button" @click=${this.create}>+ New</button>
+          <button
+            id="project-import"
+            class="small ghost"
+            type="button"
+            title="Open a script from disk, with the .toml beside it if you pick that too"
+            @click=${this.pick}
+          >
+            Open…
+          </button>
+          <button
+            id="project-download"
+            class="small ghost"
+            type="button"
+            title="Save the open project as its files - its scripts and its values"
+            @click=${this.download}
+          >
+            Download
+          </button>
+          <input
+            id="project-pick"
+            type="file"
+            accept=".py,.toml"
+            multiple
+            aria-label="Scripts and values files to open"
+            @change=${this.picked}
+          />
+        </div>
       </div>
     `;
   }
 
-  private renaming() {
-    const problem = nameProblem(this.names, this.current, this.draft);
+  private projectRow(name: string) {
+    const target: Target = { kind: "project", name };
+    // Renaming or deleting the project somebody else is writing is theirs to do, not this
+    // tab's; duplicating it makes one of this tab's own.
+    const held = this.readOnly && name === this.current;
+    return html`
+      <li>
+        <div class="line">
+          <button
+            class="row project"
+            type="button"
+            aria-current=${name === this.current ? "true" : "false"}
+            @click=${() => this.choose(name)}
+          >
+            <span class="name">${name}</span>
+          </button>
+          ${this.more(target)}
+        </div>
+        ${same(this.acting, target)
+          ? html`<div class="acts">
+              ${held ? nothing : html`<button class="small ghost" type="button" @click=${() => this.startRename(target)}>Rename…</button>`}
+              <button class="small ghost" type="button" @click=${() => this.duplicate(target)}>Duplicate</button>
+              ${held ? nothing : html`<button class="small ghost danger" type="button" @click=${() => this.startDelete(target)}>Delete…</button>`}
+            </div>`
+          : nothing}
+      </li>
+    `;
+  }
+
+  // ---- the tree ---------------------------------------------------------------------
+
+  private listing() {
+    const { scripts, entry, meshes } = this.files;
+    return html`
+      ${this.switcher()}
+      <ul class="list" aria-label=${`Files in ${this.current}`}>
+        <li class="line">${this.fileRow(DOCUMENT, "the project's values, placement and entry")}</li>
+        ${scripts.map(
+          (name) => html`
+            <li>
+              <div class="line">
+                ${this.fileRow(name, name === entry ? "the script a fresh open runs" : "", name === entry ? "entry" : "")}
+                ${this.readOnly ? nothing : this.more({ kind: "file", name })}
+              </div>
+              ${this.scriptActions(name)}
+            </li>
+          `,
+        )}
+        ${meshes.length === 0
+          ? nothing
+          : html`
+              <li class="group" id="meshes-head">References</li>
+              ${meshes.map(
+                (name) => html`
+                  <li>
+                    <div class="line">
+                      ${this.fileRow(name, "a body dropped on the view")}
+                      ${this.readOnly ? nothing : this.more({ kind: "file", name })}
+                    </div>
+                    ${same(this.acting, { kind: "file", name }) && !this.readOnly
+                      ? html`<div class="acts">
+                          <button class="small ghost danger" type="button" @click=${() => this.startDelete({ kind: "file", name })}>
+                            Delete…
+                          </button>
+                        </div>`
+                      : nothing}
+                  </li>
+                `,
+              )}
+            `}
+      </ul>
+      <p class="said" role="status" ?hidden=${this.said === null}>${this.said ?? nothing}</p>
+    `;
+  }
+
+  private fileRow(name: string, title: string, tag = "") {
+    return html`
+      <button
+        class="row file"
+        type="button"
+        title=${title}
+        data-file=${name}
+        aria-current=${name === this.front ? "true" : "false"}
+        @click=${() => this.send<NameDetail>("file-open", { name })}
+      >
+        <span class="name">${name}</span>${tag === "" ? nothing : html`<span class="tag">${tag}</span>`}
+      </button>
+    `;
+  }
+
+  private scriptActions(name: string) {
+    const target: Target = { kind: "file", name };
+    if (this.readOnly || !same(this.acting, target)) return nothing;
+    const last = this.files.scripts.length <= 1;
+    return html`
+      <div class="acts">
+        <button class="small ghost" type="button" @click=${() => this.startRename(target)}>Rename…</button>
+        <button class="small ghost" type="button" @click=${() => this.duplicate(target)}>Duplicate</button>
+        <button
+          class="small ghost danger"
+          type="button"
+          ?disabled=${last}
+          title=${last ? "A project keeps at least one script - delete the project instead" : ""}
+          @click=${() => this.startDelete(target)}
+        >
+          Delete…
+        </button>
+      </div>
+    `;
+  }
+
+  /** The `⋯` that shows a row's actions, and hides them again. */
+  private more(target: Target) {
+    const open = same(this.acting, target);
+    return html`
+      <button
+        class="more"
+        type="button"
+        aria-label=${`Actions for ${target.name}`}
+        aria-expanded=${open ? "true" : "false"}
+        @click=${() => (this.acting = same(this.acting, target) ? null : target)}
+      >
+        ⋯
+      </button>
+    `;
+  }
+
+  // ---- asking -----------------------------------------------------------------------
+
+  private problem(target: Target): string | null {
+    return target.kind === "project"
+      ? nameProblem(this.projects, target.name, this.draft)
+      : scriptNameProblem(this.files.scripts, target.name, this.draft);
+  }
+
+  private renaming(target: Target) {
+    const problem = this.problem(target);
     return html`
       <form class="ask" @submit=${this.submitRename}>
-        <label for="file-name">Rename ${this.current} to</label>
+        <label for="file-name">Rename ${target.name} to</label>
         <input
           id="file-name"
           type="text"
@@ -288,12 +555,7 @@ export class BenchExplorer extends LitElement {
         <p id="file-problem" class="problem" ?hidden=${problem === null}>${problem ?? nothing}</p>
         <div class="footer">
           <button class="small ghost" type="button" @click=${this.back}>Cancel</button>
-          <button
-            id="file-rename-confirm"
-            class="small primary"
-            type="submit"
-            ?disabled=${problem !== null}
-          >
+          <button id="file-rename-confirm" class="small primary" type="submit" ?disabled=${problem !== null}>
             Rename
           </button>
         </div>
@@ -301,17 +563,22 @@ export class BenchExplorer extends LitElement {
     `;
   }
 
-  private deleting() {
+  private deleting(target: Target) {
+    const trash = this.root === "" ? html`<code>.trash/</code>` : html`<code>${this.root}/.trash/</code>`;
+    const what =
+      target.kind === "project"
+        ? html`Delete <strong>${target.name}</strong>? Its directory moves on the host into ${trash}, with
+            every file in it - its scripts, <code>bench.toml</code> and any meshes.`
+        : html`Delete <strong>${target.name}</strong> from ${this.current}? It moves on the host into ${trash},
+            in a folder named for the time and the project.`;
     return html`
       <div class="ask">
-        <p>
-          Delete <strong>${this.current}</strong>? Its files are deleted from the host's disk, and cannot be
-          brought back.
-        </p>
+        <p id="file-delete-what">${what}</p>
+        <p>Nothing is erased: move it back out of <code>.trash</code> to have it again.</p>
         <div class="footer">
           <button class="small ghost" type="button" @click=${this.back}>Cancel</button>
           <button id="file-delete-confirm" class="small danger" type="button" @click=${this.confirmDelete}>
-            Delete
+            Move to trash
           </button>
         </div>
       </div>
@@ -319,20 +586,29 @@ export class BenchExplorer extends LitElement {
   }
 
   private back(): void {
-    this.mode = "list";
+    this.mode = LIST;
   }
 
-  private startRename(): void {
-    this.draft = this.current;
-    this.mode = "rename";
+  private toggle(): void {
+    this.switching = !this.switching;
+    this.acting = null;
+  }
+
+  private startRename(target: Target): void {
+    this.draft = target.name;
+    this.acting = null;
+    this.switching = false;
+    this.mode = { kind: "rename", target };
     void this.updateComplete.then(() => {
       this.nameBox?.focus();
       this.nameBox?.select();
     });
   }
 
-  private startDelete(): void {
-    this.mode = "delete";
+  private startDelete(target: Target): void {
+    this.acting = null;
+    this.switching = false;
+    this.mode = { kind: "delete", target };
   }
 
   private typed(event: Event): void {
@@ -348,33 +624,40 @@ export class BenchExplorer extends LitElement {
 
   private submitRename(event: SubmitEvent): void {
     event.preventDefault();
-    if (nameProblem(this.names, this.current, this.draft) !== null) return;
-    const to = normalized(this.draft);
-    const from = this.current;
+    if (this.mode.kind !== "rename") return;
+    const { target } = this.mode;
+    if (this.problem(target) !== null) return;
+    const to = target.kind === "project" ? normalized(this.draft) : scriptName(this.draft);
     this.back();
-    if (to !== from) this.send<FileRenameDetail>("file-rename", { from, to });
-  }
-
-  private create(): void {
-    this.send<null>("file-new", null);
-  }
-
-  private choose(name: string): void {
-    if (name !== this.current) this.send<FileNameDetail>("file-open", { name });
+    if (to !== target.name) this.send<RenameDetail>(`${target.kind}-rename`, { from: target.name, to });
   }
 
   private confirmDelete(): void {
-    const name = this.current;
+    if (this.mode.kind !== "delete") return;
+    const { target } = this.mode;
     this.back();
-    this.send<FileNameDetail>("file-delete", { name });
+    this.send<NameDetail>(`${target.kind}-delete`, { name: target.name });
   }
 
-  private duplicate(): void {
-    this.send<FileNameDetail>("file-duplicate", { name: this.current });
+  private duplicate(target: Target): void {
+    this.acting = null;
+    this.switching = false;
+    this.send<NameDetail>(`${target.kind}-duplicate`, { name: target.name });
+  }
+
+  private create(): void {
+    this.switching = false;
+    this.send<null>("project-new", null);
+  }
+
+  private choose(name: string): void {
+    this.switching = false;
+    if (name !== this.current) this.send<NameDetail>("project-open", { name });
   }
 
   private download(): void {
-    this.send<FileNameDetail>("file-download", { name: this.current });
+    this.switching = false;
+    this.send<NameDetail>("project-download", { name: this.current });
   }
 
   private pick(): void {
@@ -387,7 +670,8 @@ export class BenchExplorer extends LitElement {
     if (!(input instanceof HTMLInputElement)) return;
     const files = Array.from(input.files ?? []);
     input.value = "";
-    if (files.length > 0) this.send<FileImportDetail>("file-import", { files });
+    this.switching = false;
+    if (files.length > 0) this.send<ImportDetail>("project-import", { files });
   }
 
   private send<T>(type: string, detail: T): void {
@@ -401,12 +685,16 @@ declare global {
   }
 
   interface HTMLElementEventMap {
-    "file-new": CustomEvent<null>;
-    "file-open": CustomEvent<FileNameDetail>;
-    "file-rename": CustomEvent<FileRenameDetail>;
-    "file-delete": CustomEvent<FileNameDetail>;
-    "file-duplicate": CustomEvent<FileNameDetail>;
-    "file-download": CustomEvent<FileNameDetail>;
-    "file-import": CustomEvent<FileImportDetail>;
+    "project-open": CustomEvent<NameDetail>;
+    "project-new": CustomEvent<null>;
+    "project-import": CustomEvent<ImportDetail>;
+    "project-download": CustomEvent<NameDetail>;
+    "project-rename": CustomEvent<RenameDetail>;
+    "project-delete": CustomEvent<NameDetail>;
+    "project-duplicate": CustomEvent<NameDetail>;
+    "file-open": CustomEvent<NameDetail>;
+    "file-rename": CustomEvent<RenameDetail>;
+    "file-delete": CustomEvent<NameDetail>;
+    "file-duplicate": CustomEvent<NameDetail>;
   }
 }

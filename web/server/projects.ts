@@ -43,8 +43,10 @@ import {
   CLIENT,
   HOLDER,
   MAX_BODY,
+  TRASH,
   decided,
   refusal,
+  trashFolder,
   within,
 } from "../src/route";
 
@@ -238,6 +240,84 @@ async function replaced(path: string, bytes: Uint8Array): Promise<void> {
   }
 }
 
+/** A project's directory as an entry to be moved whole: a real directory straight under the
+ * root, never a symlink - moving a link moves the link, not what the row said. */
+async function movable(rootReal: string, project: string): Promise<string | Refusal> {
+  const path = join(rootReal, project);
+  let info;
+  try {
+    info = await lstat(path);
+  } catch (error) {
+    if (code(error) === "ENOENT") return refusal("missing", `there is no project called ${project}`, project);
+    throw error;
+  }
+  if (info.isSymbolicLink()) {
+    return refusal("link", `${project} is a symbolic link, and the route does not move one`, project);
+  }
+  if (!info.isDirectory()) return refusal("missing", `${project} is not a project`, project);
+  return path;
+}
+
+/** The trash under the root, made the first time something goes into it - and refused as a
+ * place to put anything if it is not a plain directory, since a `.trash` that is a symlink
+ * would carry a person's files somewhere they never named. */
+async function trashRoot(rootReal: string): Promise<string> {
+  const path = join(rootReal, TRASH);
+  try {
+    await mkdir(path);
+  } catch (error) {
+    if (code(error) !== "EEXIST") throw error;
+  }
+  const info = await lstat(path);
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    throw new Error(`${TRASH} under the projects directory is not a plain directory`);
+  }
+  return path;
+}
+
+/** Move `path` - a project's whole directory, or one `file` of `project` - into a new folder
+ * of its own in the trash, and say where it went, relative to the root: `.trash/<when>-cabinet`
+ * for a project, `.trash/<when>-cabinet/parts.py` for a file. A rename within the root, so it
+ * is one step and crosses no filesystem. */
+async function trashed(rootReal: string, project: string, path: string, file?: string): Promise<string> {
+  const trash = await trashRoot(rootReal);
+  const when = new Date();
+  for (let attempt = 1; ; attempt += 1) {
+    const folder = trashFolder(when, project, attempt);
+    const into = join(trash, folder);
+    if (file === undefined) {
+      // A rename onto an empty directory replaces it, so the name is checked first; two
+      // deletes inside one second are the only way to meet one, and they take `-2`.
+      if ((await lstat(into).catch(() => null)) !== null) continue;
+      await rename(path, into);
+      return `${TRASH}/${folder}`;
+    }
+    try {
+      await mkdir(into);
+    } catch (error) {
+      if (code(error) === "EEXIST") continue;
+      throw error;
+    }
+    await rename(path, join(into, file));
+    return `${TRASH}/${folder}/${file}`;
+  }
+}
+
+/** A project's whole directory under another name - refused, as a file rename is, if the name
+ * is taken, unless it is the same directory on a case-insensitive disk. */
+async function renamedProject(rootReal: string, path: string, to: string): Promise<Answer> {
+  const target = join(rootReal, to);
+  const there = await lstat(target).catch(() => null);
+  if (there !== null) {
+    const here = await lstat(path);
+    if (here.ino !== there.ino || here.dev !== there.dev) {
+      return refused(refusal("exists", `there is already a project called ${to}`, to));
+    }
+  }
+  await rename(path, target);
+  return json(200, { project: to });
+}
+
 /** Do `operation` against the root, and say how it went. */
 async function performed(
   root: string,
@@ -256,6 +336,16 @@ async function performed(
       if ((await stat(found)).isDirectory()) projects.push(entry.name);
     }
     return json(200, { root: rootReal, projects: projects.sort() });
+  }
+
+  if (operation.op === "rename-project" || operation.op === "trash-project") {
+    const whole = await movable(rootReal, operation.project);
+    if (isRefusal(whole)) return refused(whole);
+    if (operation.op === "trash-project") {
+      const into = await trashed(rootReal, operation.project, whole);
+      return json(200, { trashed: into });
+    }
+    return renamedProject(rootReal, whole, operation.to);
   }
 
   const dir = await projectDir(rootReal, operation.project, operation.op === "create");
@@ -351,10 +441,10 @@ async function performed(
   }
 
   if (operation.op === "delete") {
-    // Plain unlink for now. task-48 makes a delete recoverable - a move to a trash directory
-    // under the root - at the level the person sees it.
-    await unlink(path);
-    return { status: 204, headers: {}, body: "" };
+    // Never an unlink: into a folder of its own in the trash, where the maker's own file
+    // manager can put it back.
+    const into = await trashed(rootReal, operation.project, path, operation.file);
+    return json(200, { trashed: into });
   }
 
   const bytes = await body(req);
@@ -393,19 +483,25 @@ function addressOf(req: IncomingMessage): string {
   return said === "::1" || said.startsWith("127.") ? "localhost" : said;
 }
 
-/** Why a change to `operation.project` is refused because another client holds it, or `null`. */
+/** Why a change to `operation.project` is refused because another client holds it, or `null` -
+ * and for a project renamed, the name it would take as well: moving a directory onto a name
+ * somebody else has open for writing would hand them a project they never opened. */
 function leaseRefused(leases: Leases, operation: Operation, expiryMs: number): Refusal | null {
-  if (operation.op !== "write" && operation.op !== "create" && operation.op !== "rename" && operation.op !== "delete") {
+  if (operation.op === "projects" || operation.op === "files" || operation.op === "read" || operation.op === "lease") {
     return null;
   }
-  const held = heldAgainst(leases, operation.project, operation.holder, Date.now(), expiryMs);
-  if (held === null) return null;
-  return refusal(
-    "leased",
-    `${operation.project} is open for writing in ${held.label} at ${held.address}, and only it can change ` +
-      "the project until it lets go or stops being heard from",
-    `${operation.project}/${operation.file}`,
-  );
+  const names = operation.op === "rename-project" ? [operation.project, operation.to] : [operation.project];
+  for (const project of names) {
+    const held = heldAgainst(leases, project, operation.holder, Date.now(), expiryMs);
+    if (held === null) continue;
+    return refusal(
+      "leased",
+      `${project} is open for writing in ${held.label} at ${held.address}, and only it can change ` +
+        "the project until it lets go or stops being heard from",
+      "file" in operation ? `${operation.project}/${operation.file}` : project,
+    );
+  }
+  return null;
 }
 
 /** The middleware: `/__bench/projects/…` answered against `root`, and `/__bench/leases/…` out

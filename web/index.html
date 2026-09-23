@@ -37,7 +37,7 @@
           type="button"
           data-container="files"
           aria-pressed="false"
-          title="Your projects"
+          title="The open project, its files, and the others to switch to"
         >
           <svg class="ic" viewBox="0 0 20 20" aria-hidden="true">
             <path d="M2.5 5.5h5l1.5 2h8.5v8.5h-15z" />
@@ -97,7 +97,7 @@
       <aside id="sidebar">
         <section id="container-files" class="container" aria-labelledby="head-files" hidden>
           <div class="container-head">
-            <span id="head-files" class="container-title">Projects</span>
+            <span id="head-files" class="container-title">Project</span>
           </div>
           <bench-explorer id="explorer"></bench-explorer>
         </section>
@@ -109,7 +109,8 @@
           </div>
           <bench-refs-tree id="refs-tree"></bench-refs-tree>
           <p class="container-foot">
-            Click a face to reveal it here; click a row to light it up in the view.
+            Click a face to reveal its ref here; click a row - a ref, or a body dropped on the
+            view - to light it up there.
           </p>
         </section>
 

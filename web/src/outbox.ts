@@ -104,6 +104,9 @@ export interface Outbox {
    * fair - and still safe, since each goes with the base it was made from, and a file somebody
    * else changed in the meantime is refused as `moved` rather than written over. */
   retryLeased(project: string): Promise<void>;
+  /** Drop every row this outbox holds for `project` - landed or not - because the directory
+   * they were about has moved as a whole: into the trash, or to another name. */
+  forget(project: string): Promise<void>;
 }
 
 const STORE = "pending";
@@ -258,8 +261,11 @@ export function outbox(client: Host, name = "bench-outbox"): Outbox {
       let answer: Answer<Version | null>;
       try {
         if (sent.op === "delete") {
-          answer =
-            sent.base === null ? { ok: true, value: null } : await client.remove(sent.project, sent.file, sent.base);
+          // Where the trash put it is the page's to say when it asked for the delete itself;
+          // a queued one only has to have landed.
+          const removed =
+            sent.base === null ? null : await client.remove(sent.project, sent.file, sent.base);
+          answer = removed === null || removed.ok ? { ok: true, value: null } : removed;
         } else {
           answer =
             sent.base === null
@@ -398,6 +404,12 @@ export function outbox(client: Host, name = "bench-outbox"): Outbox {
       });
       await recompute();
       schedule(0);
+    },
+    async forget(project) {
+      await locked(async () => {
+        for (const [key, row] of await all()) if (row.project === project) await drop(key);
+      });
+      await recompute();
     },
   };
 }

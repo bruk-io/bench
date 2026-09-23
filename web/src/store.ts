@@ -50,4 +50,21 @@ export interface ProjectStore {
    * to take this apart; nothing above it has an opinion.
    */
   save(text: string): Promise<void>;
+
+  /** Call the project `from` by the name `to`, as the one move a directory rename is - so what
+   * is in it that the document does not carry (a dropped mesh) goes with it - and remember that
+   * it did, so the next `save` of a workspace with the project renamed writes only what else
+   * changed. What went wrong, in words, when it did not. */
+  renameProject(from: string, to: string): Promise<Moved>;
+
+  /** Put the project `name` away whole - a host moves its directory into the trash under the
+   * root - and remember that it did, so the next `save` does not remove it file by file. Where it
+   * went, when a store can say. */
+  trashProject(name: string): Promise<Moved>;
 }
+
+/** What a move of a whole project came to: done, with where the trash put it when that is a
+ * place (`null` for a rename, or a store with no trash), or not done and why. */
+export type Moved =
+  | { readonly ok: true; readonly trashed: string | null }
+  | { readonly ok: false; readonly message: string };

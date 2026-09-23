@@ -865,20 +865,37 @@ CABINET_FIRST_LINE = (ROOT / "examples" / "gridfinity_cabinet.py").read_text().s
 
 
 def _files(page: Page) -> None:
-    """Put the scripts container in the sidebar."""
+    """Put the open project's container in the sidebar."""
     _container(page, "files")
 
 
-def _file_names(page: Page) -> list[str]:
-    """Every script the explorer lists, in its order."""
+def _switcher(page: Page) -> None:
+    """Open the explorer's switcher - the one control that lists the other projects."""
     _files(page)
-    return [one.strip() for one in page.locator("bench-explorer .file").all_inner_texts()]
+    if page.locator("#project-switcher").get_attribute("aria-expanded") != "true":
+        page.click("#project-switcher")
+
+
+def _file_names(page: Page) -> list[str]:
+    """Every project the switcher lists, in its order - and the switcher shut again."""
+    _switcher(page)
+    names = [one.strip() for one in page.locator("bench-explorer .project").all_inner_texts()]
+    page.click("#project-switcher")
+    return names
 
 
 def _open_file(page: Page, name: str, settle: Callable[[Page], None]) -> None:
-    _files(page)
-    page.locator("bench-explorer .file", has_text=name).click()
+    """Switch to the project ``name`` and wait for its run."""
+    _switcher(page)
+    page.locator("bench-explorer .project", has_text=name).click()
     _ran(page, settle)
+
+
+def _row_action(page: Page, row: str, action: str) -> None:
+    """Take ``action`` on the explorer's row ``row`` - a project in the switcher or a file in
+    the tree - through its own ``⋯``, the way a person picks the row they mean."""
+    page.locator(f'bench-explorer [aria-label="Actions for {row}"]').click()
+    page.locator("bench-explorer .acts button", has_text=action).click()
 
 
 def _open_name(page: Page) -> str:
@@ -891,8 +908,8 @@ def test_a_new_file_starts_from_the_template_and_draws_it(
     files_page: Page, settle: Callable[[Page], None], screenshots: Path
 ) -> None:
     page = files_page
-    _files(page)
-    page.click("#file-new")
+    _switcher(page)
+    page.click("#project-new")
     page.wait_for_function(f"() => ({BODIES})() === 1", timeout=BOOT_MS)
     settle(page)
     assert _state(page) == "ok", _status(page)
@@ -934,25 +951,35 @@ def test_an_example_opens_as_a_file_of_its_own(
 
 @pytest.mark.e2e
 def test_a_rename_and_a_delete_outlast_a_reload(
-    files_page: Page, settle: Callable[[Page], None]
+    files_page: Page, files_host: Hosted, settle: Callable[[Page], None]
 ) -> None:
     page = files_page
-    _files(page)
-    page.click("#file-rename")
+    _switcher(page)
+    _row_action(page, "untitled", "Rename…")
     page.fill("#file-name", "shelf")
     page.click("#file-rename-confirm")
-    assert _open_name(page) == "shelf"
+    # The directory is moved on the host first, and only then is the project called by it.
+    page.wait_for_function(
+        "() => document.querySelector('#open-name')?.textContent === 'shelf'", timeout=15_000
+    )
     # The script was named for the project, so it is renamed with it; the values are the
     # project's one bench.toml, whatever it is called.
     assert page.locator("#tab-script").inner_text().strip() == "shelf.py"
     assert page.locator("#tab-values").inner_text().strip() == "bench.toml"
 
     _open_file(page, "box_with_hole", settle)
-    _files(page)
-    page.click("#file-delete")
+    _switcher(page)
+    _row_action(page, "box_with_hole", "Delete…")
+    # It says what happens on the host before it happens: a move into the root's trash.
+    assert ".trash/" in page.locator("bench-explorer #file-delete-what").inner_text()
     page.click("#file-delete-confirm")
     _ran(page, settle)
     assert _open_name(page) == "shelf", "deleting the open project opens its neighbour"
+    # And it was a move, not an unlink: the whole directory is in the trash, script and all.
+    trashed = list((files_host.root / ".trash").glob("*-box_with_hole/box_with_hole.py"))
+    assert len(trashed) == 1, list((files_host.root / ".trash").rglob("*"))
+    assert not (files_host.root / "box_with_hole").exists()
+    assert "moved to" in page.locator("bench-explorer .said").inner_text()
 
     page.reload()
     page.wait_for_selector(DRAWN, timeout=BOOT_MS)
@@ -977,7 +1004,7 @@ STARTER_TEXT = (ROOT / "templates" / "untitled.py").read_text()
 def _pick(page: Page, *paths: Path) -> None:
     """Open the files at ``paths`` through the explorer's picker, the way Open… does."""
     _files(page)
-    page.locator("bench-explorer #file-pick").set_input_files([str(one) for one in paths])
+    page.locator("bench-explorer #project-pick").set_input_files([str(one) for one in paths])
 
 
 @pytest.mark.e2e
@@ -1012,8 +1039,8 @@ def test_duplicating_a_project_copies_its_values_with_it(
     files_page: Page, files_host: Hosted, settle: Callable[[Page], None]
 ) -> None:
     page = files_page
-    _files(page)
-    page.click("#file-duplicate")
+    _switcher(page)
+    _row_action(page, "shelf", "Duplicate")
     _ran(page, settle)
     assert _open_name(page) == "shelf-2"
     assert _file_names(page) == ["gridfinity_cabinet", "shelf", "shelf-2"]
@@ -1031,9 +1058,9 @@ def test_a_downloaded_project_runs_outside_the_browser(
     beside it by ``tools/build.py`` - the same values the panel edited, used by a run that
     never saw the browser."""
     page = files_page
-    _files(page)
+    _switcher(page)
     with page.expect_download() as caught:
-        page.click("#file-download")
+        page.click("#project-download")
     archive = caught.value
     assert archive.suggested_filename == "shelf-2.zip"
     saved = screenshots / "shelf-2.zip"
