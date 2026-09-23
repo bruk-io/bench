@@ -78,10 +78,42 @@ plate = part("plate", extrude(profile, 5.0), pla)
 pin = part("pin", {pin}, pla)
 fitted = mated(plate, "plate/bore", pin, "pin/{face}", fit=Fit.SLIDE, along={along})
 print(fitted)
+{seat}
 show(assembly("pinned", (Placed(plate, XY), Placed(fitted.part, XY)), posed=True))
 """
 """A pin of radius 2 put into a bore drawn in a 5 mm plate, at a slide: ``bore`` is the
-bore's radius, as a script would write it, and ``pin`` the pin's body."""
+bore's radius, as a script would write it, and ``pin`` the pin's body. ``seat`` is the line
+after the mate's sentence - nothing, or a second pair checked where the first put the pin."""
+
+_SEATED = "print(check_fit(fitted.part.shape, plate.shape, CONTACT))"
+"""The head's seat on the plate, declared as the contact it is: a flat pair beside the round
+one, only checked, never solved - decision-10's second pair."""
+
+HOLED = """\
+from bench import *
+from bench.library.print import PLA, clearance
+
+pla = Printed(PLA)
+plate = part(
+    "plate",
+    hole(
+        cuboid(20, 20, 5),
+        Point(10, 10),
+        on=raised(XY, 5.0),
+        diameter=2 * (2.0 + clearance(Fit.SLIDE, PLA, concave=True)),
+        printed=pla,
+        label="bore",
+    ),
+    pla,
+)
+pin = part("pin", {pin}, pla)
+fitted = mated(plate, "plate/bore/side-0", pin, "pin/shank/side-0", fit=Fit.SLIDE)
+print(fitted)
+show(assembly("holed", (Placed(plate, XY), Placed(fitted.part, XY)), posed=True))
+"""
+"""The headed pin put into a bore :func:`bench.features.hole` drilled down from the plate's
+top - whose cutter runs a hundredth proud of the plate, so how long the bore is is only on
+the mesh."""
 
 _PIN = "cylinder(2.0, 12.0)"
 
@@ -93,8 +125,15 @@ _HEADED = (
 first and, at ``along=0``, the head sits on the plate's bottom."""
 
 
-def _pinned(bore: str, *, pin: str = _PIN, face: str = "side-0", along: float = -3.0) -> str:
-    return PINNED.format(bore=bore, pin=pin, face=face, along=along)
+def _pinned(
+    bore: str, *, pin: str = _PIN, face: str = "side-0", along: float = -3.0, seat: str = ""
+) -> str:
+    return PINNED.format(bore=bore, pin=pin, face=face, along=along, seat=seat)
+
+
+def _headed(bore: str, *, along: float = 0.0) -> str:
+    """The headed pin in a bore of radius ``bore``, its head's seat checked beside it."""
+    return _pinned(bore, pin=_HEADED, face="shank/side-0", along=along, seat=_SEATED)
 
 
 def _vent(source: str) -> Mapping[str, object]:
@@ -211,13 +250,13 @@ def measured(kernel: Kernel, vent: str) -> dict[str, object]:
         "pin_concave": run(_pinned("2.0 + clearance(Fit.SLIDE, PLA, concave=True)"), kernel=kernel),
         "pin_plain": run(_pinned("2.0 + clearance(Fit.SLIDE, PLA)"), kernel=kernel),
         "pin_fat": run(_pinned("1.9"), kernel=kernel),
-        "pin_headed": run(
-            _pinned(
-                "2.0 + clearance(Fit.SLIDE, PLA, concave=True)",
-                pin=_HEADED,
-                face="shank/side-0",
-                along=0.0,
-            ),
-            kernel=kernel,
+        "pin_headed": run(_headed("2.0 + clearance(Fit.SLIDE, PLA, concave=True)"), kernel=kernel),
+        "pin_headed_fat": run(_headed("1.9"), kernel=kernel),
+        "pin_headed_sunk": run(
+            _headed("2.0 + clearance(Fit.SLIDE, PLA, concave=True)", along=0.5), kernel=kernel
         ),
+        "pin_headed_out": run(
+            _headed("2.0 + clearance(Fit.SLIDE, PLA, concave=True)", along=-20.0), kernel=kernel
+        ),
+        "pin_holed": run(HOLED.format(pin=_HEADED), kernel=kernel),
     }
