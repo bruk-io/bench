@@ -20,6 +20,7 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
   let pointed: string | null = null;
   let detected: readonly (number | null)[] | null = null;
   let section: SectionState | null = null;
+  let colouring = false;
   let marked = false;
 
   function wake(): void {
@@ -41,6 +42,7 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
         made.point(pointed);
         made.detect(detected);
         made.section(section);
+        made.colourFaces(colouring);
         made.markReference(marked);
         real = made;
       },
@@ -83,6 +85,10 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
     section(state) {
       section = state;
       real?.section(state);
+    },
+    colourFaces(on) {
+      colouring = on;
+      real?.colourFaces(on);
     },
     markReference(lit) {
       marked = lit;

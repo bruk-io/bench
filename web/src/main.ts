@@ -200,6 +200,7 @@ const ui = {
   fit: need<HTMLButtonElement>("fit"),
   zoomIn: need<HTMLButtonElement>("zoom-in"),
   zoomOut: need<HTMLButtonElement>("zoom-out"),
+  colourFacesToggle: need<HTMLButtonElement>("colour-faces-toggle"),
   sectionToggle: need<HTMLButtonElement>("section-toggle"),
   sectionAxis: need<HTMLSelectElement>("section-axis"),
   sectionPosition: need<HTMLInputElement>("section-position"),
@@ -1948,6 +1949,11 @@ ui.stop.addEventListener("click", () => {
 ui.insert.addEventListener("click", insertSelected);
 ui.fit.addEventListener("click", () => {
   space.fit();
+});
+ui.colourFacesToggle.addEventListener("click", () => {
+  const on = ui.colourFacesToggle.getAttribute("aria-pressed") !== "true";
+  ui.colourFacesToggle.setAttribute("aria-pressed", String(on));
+  space.colourFaces(on);
 });
 ui.sectionToggle.addEventListener("click", () => {
   sectioning = !sectioning;
