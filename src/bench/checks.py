@@ -30,7 +30,7 @@ import math
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .facets import Triangle, normal, thinnest, triangles
+from .facets import Triangle, area, normal, thinnest, triangles
 from .geometry import TOL, Point, Vector, unit
 from .kernel import Kernel
 from .model import Material, Orient, Ref, Volume
@@ -154,20 +154,54 @@ def clearance_between(
 
 _SHARED_SLACK = 1e-6
 """How much material two bodies declared to be in contact may share and still read as a
-touch, in cubic millimetres.
+touch outright, in cubic millimetres, whatever the size of the faces that meet.
 
 Measured rather than chosen, on the modeller the app ships. Two bodies whose faces are
 exactly coincident share **exactly** zero: a 10 mm cube against a 10 mm cube reads 0.0, and
 so does a 8 mm disc with a 4 mm boss seated flat on it, which is the curved case a shaft
-head on a ring actually is. The smallest overlap that was tried - the same boss sunk one
-micron into the same disc - reads 0.0494 mm3, four orders of magnitude above this figure. So
-the gap in the data is enormous and this constant sits in the empty middle of it rather than
-on either edge: it is not a fudge for a reading that came out slightly wrong, because no
-reading came out slightly wrong.
+head on a ring actually is. The smallest overlap that was tried at that size - the same boss
+sunk one micron into the same disc - reads 0.0494 mm3, four orders of magnitude above this
+figure. So the gap in the data is enormous and this constant sits in the empty middle of it
+rather than on either edge: it is not a fudge for a reading that came out slightly wrong,
+because no reading came out slightly wrong.
 
 It is not zero only because a volume is the sum of a mesh's signed tetrahedra and summing to
 a hard zero is a promise no floating-point boolean makes in general - not because anything
 measured here needed the room.
+
+This is the whole check at the sizes it was measured on. It stops being enough once a face
+gets large: task-57 found two 317.5 mm rounded-square plates with a 266.7 mm window and four
+holes, stacked face to face on the plane where one ends and the other begins, reading
+0.0005 mm3 of shared material - five hundred times this figure - on faces that only ever
+touched. :data:`_DEPTH_SLACK` is what a face that large is checked against instead.
+"""
+
+_DEPTH_SLACK = 1e-6
+"""How far into each other, on average across the area they share, two bodies declared to be
+in contact may sit and still read as a touch, in millimetres - the mean penetration depth a
+shared volume above :data:`_SHARED_SLACK` is turned into before it is judged.
+
+A fixed volume cannot be the whole check: the same rounding that reads a genuinely coincident
+pair of 10 mm faces as exactly 0.0 mm3 does not stay at 0.0 mm3 once the faces are large. Two
+317.5 mm rounded-square plates - a 266.7 mm rounded-square window, four holes, corners
+rounded to 6.35 mm, the geometry task-57 was found on - stacked exactly on the plane where one
+ends and the other begins read 0.0005 mm3 shared on the modeller the app ships: five hundred
+times :data:`_SHARED_SLACK`, on a pair of faces that only ever touched. A fixed volume slack
+big enough to pass that would have to be bigger than the 0.0494 mm3 a one-micron sink of the
+small disc and boss reads, which is exactly the collision :data:`_SHARED_SLACK` exists to
+catch - so no fixed volume separates a large coincident face from a small real overlap.
+
+Area does. Divide the shared volume by half the surface area of the shape the two bodies
+share - see :func:`_contact_area` for why that reads a real overlap's footprint almost
+exactly, wherever on the pair it sits - and rounding noise on a coincident plane reads as a
+depth of 2.8e-8 mm on the large plates above, still the same vanishing figure the small cube
+and disc read at 0.0 mm3 outright. A one-micron sink of the same large plates reads 29.6 mm3
+shared, which is 0.0010 mm deep by the same division - the sink itself, recovered almost to
+the last digit; the small disc and boss sunk the same one micron read 0.0494 mm3 shared and
+the same 0.0010 mm deep. Both are actual overlaps and both have to fail, so
+:data:`_DEPTH_SLACK` sits at 1e-6 mm - a decade and a half above the noise floor and three
+orders of magnitude below either real sink, in the same empty middle :data:`_SHARED_SLACK`
+sits in.
 """
 
 
@@ -193,6 +227,13 @@ def contact_between(a: Solid, b: Solid, *, kernel: Kernel | None) -> Violation |
     indistinguishable to it, and no amount of care with a distance threshold separates them.
     How much material the two share separates them exactly.
 
+    A shared volume under :data:`_SHARED_SLACK` passes outright. Above it, the volume alone
+    is not asked to carry the answer: it is turned into a mean penetration depth - shared
+    volume over the area the bodies could meet over - and that depth is what is judged
+    against :data:`_DEPTH_SLACK`, because the same rounding a small coincident face reads as
+    zero a large one does not, and no fixed volume separates that from a real overlap at
+    every size faces come in.
+
     Two things this deliberately does not promise, because nothing here can measure them:
 
     * **It does not check that the two actually meet.** Two bodies a mile apart share no
@@ -207,8 +248,13 @@ def contact_between(a: Solid, b: Solid, *, kernel: Kernel | None) -> Violation |
     """
     if kernel is None:
         return unchecked("contact")
-    shared = kernel.volume(Solid(Intersection(a, b)))
+    overlap = Solid(Intersection(a, b))
+    shared = kernel.volume(overlap)
     if shared <= _SHARED_SLACK:
+        return None
+    met_over = _contact_area(kernel, overlap)
+    depth = shared / met_over if met_over > 0.0 else math.inf
+    if depth <= _DEPTH_SLACK:
         return None
     return Violation(
         check="contact",
@@ -218,6 +264,35 @@ def contact_between(a: Solid, b: Solid, *, kernel: Kernel | None) -> Violation |
         ),
         severity=Severity.ERROR,
     )
+
+
+def _contact_area(kernel: Kernel, overlap: Solid) -> float:
+    """The area two bodies could meet over, read off the shape they actually share.
+
+    ``overlap`` is meshed rather than measured on ``a`` or ``b`` themselves, because the
+    kernel cannot be asked about one face against another (see :func:`contact_between`'s
+    second caveat) and the shared volume's own extent is what is available instead: half its
+    total surface area. A genuine overlap is a thin slab wherever it sits - the depth two
+    bodies sink into each other, not the size of either one - and a thin slab's surface is
+    almost entirely its two flat faces, top and bottom, each one the contact patch itself;
+    the sliver of side wall around its edge is what makes this an overestimate of the area,
+    which is an underestimate of the depth the caller divides by - the safer direction to err
+    in, since the alternative is failing a touch, but a small one: on a slab thin enough to be
+    rounding noise in the first place, the side wall is negligible next to the two faces it
+    stands between.
+
+    An axis-aligned bounding box was tried first and rejected: it reads the extent of
+    whatever the shared shape spans, not of the shape itself, so two overlaps far apart on
+    the same pair of bodies - a boss sunk a micron into each of two opposite corners of one
+    plate, say - inflate it to the box that contains both islands, which can be most of the
+    plate. That is not a small error the way the side wall above is: it can put a real
+    one-micron interference at the same depth as genuine rounding noise on a face the size of
+    the whole plate, which is exactly the false pass :data:`_DEPTH_SLACK` exists to prevent.
+    A mesh's own surface area does not have this failure: two islands contribute their own
+    two faces each, wherever they are, and nothing about being apart inflates it.
+    """
+    mesh = kernel.mesh(overlap)
+    return sum(area(t) for t in triangles(mesh)) / 2.0
 
 
 # ---- a motion, which is poses and not a sweep ----------------------------------------
