@@ -46,7 +46,7 @@ import io
 import linecache
 import logging
 import traceback
-from collections.abc import Callable, Container, Mapping, Sequence
+from collections.abc import Callable, Container, Iterable, Mapping, Sequence
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field, is_dataclass, replace
 from types import FrameType, ModuleType
@@ -67,6 +67,7 @@ from .checks import (
 )
 from .geometry import XY
 from .kernel import Kernel, Mesh
+from .missing import explained
 from .model import (
     Assembly,
     Build,
@@ -366,6 +367,7 @@ def run(
     reference: Mesh | None = None,
     kernel: Kernel | None = None,
     tracer: Tracer = SILENT,
+    modules: Iterable[str] | None = None,
 ) -> Scene:
     """Run ``source`` as a script and return what it made, or why it failed.
 
@@ -397,13 +399,24 @@ def run(
     ``tracer`` is handed a span for the run and each stretch of it; the default keeps
     nothing. One log record says how each run ended.
 
+    ``modules`` are the project's own other files, as their stems - what the caller mounted
+    beside this one, if anything, the same list :func:`bench.shadow.shadowed` already checked
+    them against. ``None`` is a caller with no project to speak of - a test of this function
+    alone, say - and a plain ``ModuleNotFoundError`` reads exactly as Python left it. An
+    empty sequence is a real answer, not a default standing in for one: a project that
+    genuinely has no other files. Either way it says nothing about running the script -
+    nothing here imports one for the script - and everything about failing to: with a project
+    to ask, a ``ModuleNotFoundError`` also gets what :func:`bench.missing.explained` can say
+    about it in the project's terms, so a maker sees "there is no sidekick.py" rather than
+    only "No module named 'sidekick'".
+
     Nothing the script can do comes back as an exception: a syntax error, an exception it
     raised, a ``sys.exit()``, a ``show`` it never called or called twice all come back
     as an error scene. Only a bug in :mod:`bench` itself, or an interrupt from outside the
     script, can raise out of here.
     """
     with timed(tracer, "bench.run") as attributes:
-        answer = _ran(source, overrides, bed, extras, reference, kernel, tracer)
+        answer = _ran(source, overrides, bed, extras, reference, kernel, tracer, modules)
         attributes["bench.run.ok"] = answer["ok"]
     if answer["ok"]:
         _log.info(
@@ -431,6 +444,7 @@ def _ran(
     reference: Mesh | None,
     kernel: Kernel | None,
     tracer: Tracer,
+    modules: Iterable[str] | None,
 ) -> Scene:
     """What :func:`run` does, each stretch of it a span of its own."""
     try:
@@ -475,7 +489,11 @@ def _ran(
         # SystemExit is not an Exception, but sys.exit() is something a script can say. The
         # `with` above has exited by now, so the buffers hold everything up to the raise.
         return views.failed(
-            _message(exc), _line(exc), _traceback(exc), captured.getvalue(), complained.getvalue()
+            _message(exc, modules),
+            _line(exc),
+            _traceback(exc),
+            captured.getvalue(),
+            complained.getvalue(),
         )
     finally:
         linecache.cache.pop(_FILENAME, None)
@@ -803,12 +821,20 @@ def _assembled(parts: tuple[Part, ...]) -> Assembly:
 # ---- failure -------------------------------------------------------------------------
 
 
-def _message(exc: BaseException) -> str:
+def _message(exc: BaseException, modules: Iterable[str] | None = None) -> str:
     """The one line a status bar shows. A syntax error says its own complaint rather than
-    ``str(exc)``, which would name the pseudo file the script was compiled under."""
+    ``str(exc)``, which would name the pseudo file the script was compiled under. A
+    ``ModuleNotFoundError`` gets Python's own message plus what :func:`bench.missing.explained`
+    can say about it in the project's terms, when there is a project to ask (``modules`` is
+    not ``None``) and anything more honest to add."""
     if isinstance(exc, SyntaxError) and exc.msg:
         return f"{type(exc).__name__}: {exc.msg}"
-    return f"{type(exc).__name__}: {exc}"
+    plain = f"{type(exc).__name__}: {exc}"
+    if isinstance(exc, ModuleNotFoundError) and modules is not None:
+        extra = explained(exc.name, modules)
+        if extra is not None:
+            return f"{plain} - {extra}"
+    return plain
 
 
 def _line(exc: BaseException) -> int | None:

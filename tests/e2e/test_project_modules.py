@@ -1,12 +1,14 @@
 """End to end: task-50 - a script in the browser can import another module beside it, and an
-import naming a module that is not in the project fails saying so.
+import naming a module that is not in the project fails saying so in the project's own terms
+(task-56).
 
 Follows ``tests/e2e/test_project_directory.py``'s own pattern: the built app served over a
 projects root of its own, seeded with real files on disk, driven with a real browser. What the
 worker does with a project's other scripts is unit-tested in
 ``tests/functional/test_worker.py``; what only a real browser against the real route and the
-real Pyodide runtime can show is here - a two-file project running (AC#3), and the message a
-missing import fails with, on screen rather than only in a console (AC#5).
+real Pyodide runtime can show is here - a two-file project running (task-50 AC#3), and the
+message a missing import fails with, on screen rather than only in a console (task-50 AC#5,
+task-56 AC#1).
 """
 
 import shutil
@@ -129,9 +131,14 @@ def test_a_two_file_projects_entry_imports_its_sibling_module(
 def test_an_import_naming_a_module_not_in_the_project_fails_saying_so(
     tmp_path: Path, browser: Browser, built_app: Path
 ) -> None:
-    """AC#5: not a raw ``ModuleNotFoundError`` buried in the console - the run catches it the
-    way any other exception a script raises is caught, and the Problems panel names the
-    module that was not there."""
+    """task-50 AC#5 / task-56 AC#1: not a raw ``ModuleNotFoundError`` buried in the console -
+    the run catches it the way any other exception a script raises is caught, and the Problems
+    panel names the project's own missing file and says the project has none - Python's own
+    message is still there too, for anyone debugging.
+
+    Rewritten from task-50's own version of this test, which only asserted the bare
+    ``ModuleNotFoundError`` text: true, but silent about the one thing a maker needs, which is
+    what task-56 adds."""
     root = tmp_path / "projects"
     _seed(root, "widget", {"entry.py": MISSING})
     with _hosted(root) as url:
@@ -142,6 +149,8 @@ def test_an_import_naming_a_module_not_in_the_project_fails_saying_so(
         page.wait_for_selector('#state[data-state="error"]', timeout=BOOT_MS)
         error = page.locator("#error")
         error.first.wait_for(timeout=BOOT_MS)
-        assert "No module named 'sidekick'" in error.inner_text()
-        _shot(page, "task50-missing-module.png")
+        text = error.inner_text()
+        assert "No module named 'sidekick'" in text, "the original exception is still readable"
+        assert "there is no sidekick.py (it has none)" in text
+        _shot(page, "task56-missing-module.png")
         context.close()
