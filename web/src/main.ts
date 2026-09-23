@@ -227,6 +227,10 @@ let store: ProjectStore | null = null;
 let client: Host | null = null;
 let reach: ReturnType<typeof outbox> | null = null;
 
+/** Whether this page found no host to keep projects on (`showNoHost`) - and so has nothing to
+ * run and nothing else to say. */
+let hostless = false;
+
 /** How long to wait before asking the host again, while this browser has host work that must
  * not be lost to a store choice made too early - the same shape as the outbox's own backoff. */
 const PROBE_START_MS = 1000;
@@ -301,10 +305,13 @@ async function chosenStore(): Promise<Chosen> {
  * reach - an editor that took typing and a Run that ran it would be a bench appearing to work
  * with nowhere to put the work (task-46 AC#5). */
 function showNoHost(why: string): void {
+  hostless = true;
   log("warn", "bench.store", "there is no host behind this page", { "bench.store.problem": why });
   ui.noHost.hidden = false;
   ui.noHostWhy.textContent = why;
   setState("error", "no host - nothing here can be opened or kept", true);
+  // The panel says it too, rather than "the run is clean" about a run that never happened.
+  ui.panel.error = `There is no host behind this page. ${why}`;
   ui.reach.hidden = false;
   ui.reach.textContent = "no host";
   ui.reach.title = why;
@@ -1150,6 +1157,9 @@ const code = editor.mount(ui.editor, "", {
 const bridge = connect(
   {
     onStatus(text) {
+      // A page with no host has said so on this line, and Python coming up behind it is not
+      // news worth painting over that with.
+      if (hostless) return;
       if (text === "ready") {
         booting = false;
         repaint();
