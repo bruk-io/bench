@@ -20,6 +20,7 @@ nothing wrapped round the worker to fetch it.
 
 import sys
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tools import preview
@@ -79,12 +80,32 @@ def _line(kind: str, text: str) -> str:
     return f"[{time.strftime('%H:%M:%S')}] {kind:<14} {text}"
 
 
+def _reset(out: Path) -> None:
+    """Clear what an earlier look round left, before this one writes anything of its own.
+
+    A walk that raises - the browser hangs, a locator does not resolve - never reaches the
+    line that (re)writes :data:`LOG`, so without this its predecessor's log stays behind. The
+    screenshots this walk does take still land, one crash later they sit next to a log an
+    unrelated, earlier walk wrote, which reads as one run and is not - the mismatch this
+    module's own bug (`task-53`) turned out to be.
+    """
+    if not out.exists():
+        return
+    for one in out.iterdir():
+        if one.is_file():
+            one.unlink()
+
+
 def _said(spoken: list[str], kind: str, text: str) -> None:
     """Write one thing down, and say it as it happens - a look round is watched, not
-    awaited."""
+    awaited.
+
+    Flushed to :data:`LOG` immediately rather than once at the end, so a walk that raises
+    partway through still leaves a log of what happened before it did, not the last walk's."""
     line = _line(kind, " ".join(text.split())[:500])
     spoken.append(line)
     print(line, flush=True)
+    (OUT / LOG).write_text("\n".join(spoken) + "\n")
 
 
 def _watch(page: Page, spoken: list[str]) -> None:
@@ -129,7 +150,7 @@ def _stops(named: tuple[str, ...]) -> tuple[str, ...]:
 def _visited(page: Page, stop: str, spoken: list[str], number: int) -> None:
     """Load one example, wait for it, shoot it and read it."""
     page.click("#examples-button")
-    page.locator("#examples button", has_text=stop).click()
+    page.locator("#examples").get_by_role("button", name=stop, exact=True).click()
     _settled(page)
     page.wait_for_timeout(SETTLE_MS)
     shot = OUT / f"qa-{number:02d}-{stop.removesuffix('.py')}.png"
@@ -194,14 +215,14 @@ def main(argv: tuple[str, ...] | None = None) -> int:
     """
     stops = _stops(tuple(sys.argv[1:] if argv is None else argv))
     OUT.mkdir(parents=True, exist_ok=True)
+    _reset(OUT)
+    written = OUT / LOG
     spoken: list[str] = []
     _said(spoken, "build", "building the app if anything it is made from has changed")
     preview.built()
     with preview.served() as url:
         _said(spoken, "server", f"vite preview at {url}")
         _walk(url, stops, spoken)
-    written = OUT / LOG
-    written.write_text("\n".join(spoken) + "\n")
     shots = sum(1 for line in spoken if " screenshot " in line)
     print(f"\n{shots} screenshots and {written} - have a look", flush=True)
     return 0

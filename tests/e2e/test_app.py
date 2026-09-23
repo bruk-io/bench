@@ -1230,6 +1230,10 @@ rows live in; ``document.querySelector`` would not, which is why this is a locat
 
 UNCHECKED_ROW = 'bench-violation[severity="unchecked"]'
 
+TOTE = "systainer_tote.py"
+"""The printed example whose `check_overhangs(tub, ...)` leaves one warning standing on
+purpose - its own docstring says why - which is what `task-53`'s status bar counted."""
+
 
 def _canvas3d(page: Page) -> FloatRect:
     """Where the 3D canvas is on screen; it fails the test that asked if it is not there."""
@@ -1470,6 +1474,40 @@ def test_a_findings_line_number_takes_you_to_it(
     page.wait_for_timeout(200)
     assert page.locator("#editor").is_visible(), "the script did not come forward"
     assert int(page.evaluate(CURSOR_LINE)) == wanted, "the cursor did not land on the line"
+
+
+@pytest.mark.e2e
+def test_an_example_whose_name_is_another_examples_prefix_still_picks_cleanly(
+    printed_page: Page, example: Callable[[Page, str], None]
+) -> None:
+    """`hinge.py` is a prefix of `fulcrum_hinge.py`'s own name, so a locator matching the
+    examples menu by substring resolves both and Playwright refuses the click as a strict
+    mode violation - the crash `tools.qa`'s default walk hit on its third stop. The shared
+    `example` fixture has to pick the button named exactly `hinge.py`, not one that merely
+    contains it."""
+    page = printed_page
+    example(page, "hinge.py")
+    assert _open_name(page) == "hinge.py", _open_name(page)
+
+
+@pytest.mark.e2e
+def test_a_warning_the_status_bar_counts_is_in_the_problems_panel(
+    printed_page: Page, example: Callable[[Page, str], None]
+) -> None:
+    """`task-53`: a run whose status bar says "1 warning" has to show that warning in the
+    Problems panel too, not only in the count - `systainer_tote.py`'s own `check_overhangs`
+    finding, read off the tab a person actually opens."""
+    page = printed_page
+    example(page, TOTE)
+    assert "1 warning" in _status(page), _status(page)
+    _panel(page, "problems")
+    # `check` is a host attribute for anything that needs to find a row by it, not text a
+    # person reads - the visible head says the severity, and the message is where "socket-1"
+    # is put in words, so the row is found by the attribute rather than its own text.
+    found = page.locator('bench-violation[severity="warning"][check="overhangs"]').first
+    found.wait_for(timeout=BOOT_MS)
+    where = found.locator(".where").inner_text()
+    assert "socket-1" in where, where
 
 
 @pytest.mark.e2e

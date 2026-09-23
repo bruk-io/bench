@@ -197,7 +197,7 @@ def no_modeller_page(browser: Browser, app_url: str) -> Iterator[Page]:
 def _example(page: Page, name: str) -> None:
     """Pick one of the shipped examples and wait for the run it starts."""
     page.click("#examples-button")
-    page.locator("#examples button", has_text=name).click()
+    page.locator("#examples").get_by_role("button", name=name, exact=True).click()
     _settled(page)
 
 
