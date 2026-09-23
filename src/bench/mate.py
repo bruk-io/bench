@@ -40,8 +40,24 @@ authored to, its bed face still on the bed and its overhangs still what they wer
 its place in the assembly has changed. The exported mesh is still the posed one, and laying
 it along ``up`` for the slicer is the maker's, as it is for a lid that prints upside down.
 
-Round faces - a bore and its shaft - are the other kind of pair, and are not here yet: a
-face with no single plane is refused where :func:`~bench.solids.plane_of` refuses it.
+**Round faces - a bore and its pin - are the other kind of pair.** A round face has no one
+plane to lay another on, but it has an axis, and :func:`~bench.solids.axis_of` answers it as
+a frame the same way ``plane_of`` answers a flat face's: origin where the axis crosses the
+plane the profile was drawn on, normal the way the sweep ran, X at the face's zero. A round
+pair puts the moving axis on the fixed one - :func:`coaxial` - running the same way, so a
+pin swept up from its foot goes into a bore from the end the bore was drawn from. A round
+pair leaves two things free that a flat pair does not, and neither is guessed: ``along``
+slides the moving frame up the fixed axis, and ``spin`` turns it about that axis, from the
+fixed face's zero. ``offset`` has nothing to slide across and is refused, as ``along`` is on
+a flat pair. A pin wanted in from the other end is a pin swept the other way.
+
+The radial gap of a round pair is not placed - two coaxial faces are as far apart as their
+radii say - so it is only *measured*, against the fit's own figure: the table's gap, what a
+bore drawn with ``clearance(fit, material, concave=True)`` measures as once its wall is
+meshed into chords that stand inside the circle. A pin too fat for the fit comes in tight,
+or overlaps its bore, and that is the finding. The measurement is of whole bodies, as every
+check's is, so a pin whose shoulder sits on the bore's plate reads the shoulder's zero; a
+shoulder is a second pair, and a second pair is a check.
 
 Pure: a mate is geometry and a record, and the measuring - which needs a kernel - is
 :mod:`bench.script`'s, which fills :attr:`Mate.fitted` in at the edge.
@@ -54,7 +70,7 @@ from .checks import Fitted
 from .fasteners import CONTACT, Contact, Fit
 from .geometry import ORIGIN, TOL, Axis, Plane, Transform, Vector, rotation, to_local, to_world
 from .model import Material, Orient, Part, Printed, Ref, Stock, Stocked, moved_part
-from .solids import plane_of
+from .solids import axis_of, face_of, plane_of
 from .topology import SEP, Label, Solid
 
 _TURNED_OVER = Transform(((1.0, 0.0, 0.0, 0.0), (0.0, -1.0, 0.0, 0.0), (0.0, 0.0, -1.0, 0.0)))
@@ -71,8 +87,10 @@ class Mate:
 
     ``part`` is the moving part, moved - its shape is the body a script shows and a check
     measures, and its orientation is turned with it. ``on`` is the body it was put on, the
-    very object the fixed part holds. ``gap`` is how far apart the two faces were put, in
-    millimetres: nothing for :data:`~bench.fasteners.CONTACT`, the fit's figure otherwise.
+    very object the fixed part holds. ``gap`` is how far apart the fit asks the two faces to
+    stand, in millimetres: nothing for :data:`~bench.fasteners.CONTACT`, the fit's figure
+    otherwise - the gap a flat pair was put at, and the one a round pair is measured
+    against.
     ``faces`` names the moving face and then the fixed one, the way the scene names them.
 
     ``fitted`` is what a kernel measured of the pair, and is ``None`` until the edge measures
@@ -126,6 +144,28 @@ def placing(
     return to_world(Plane(at, fixed.normal, along)) @ _TURNED_OVER @ to_local(moving)
 
 
+def coaxial(
+    fixed: Plane,
+    moving: Plane,
+    *,
+    along: float = 0.0,
+    spin: float = 0.0,
+) -> Transform:
+    """The rigid move that puts the axis ``moving`` on the axis ``fixed``, running the same
+    way - the frames :func:`~bench.solids.axis_of` answers, normal along each axis.
+
+    After it, ``moving``'s origin is ``fixed``'s moved ``along`` millimetres up ``fixed``'s
+    axis, the two normals are the same, and ``moving``'s X runs along ``fixed``'s X turned
+    ``spin`` radians about the axis, counter-clockwise seen from the end the axis points to.
+    Not turned over, which is where it parts from :func:`placing`: a flat face goes on
+    another facing it, and a pin goes into its bore the way the bore runs.
+    """
+    turned = rotation(Axis(ORIGIN, fixed.normal), spin) @ fixed.x_dir
+    return to_world(Plane(fixed.origin + fixed.normal * along, fixed.normal, turned)) @ to_local(
+        moving
+    )
+
+
 def gap_of(fit: Fit | Contact, material: Material | None) -> float:
     """How far apart two faces put together at ``fit`` stand, in millimetres.
 
@@ -136,7 +176,8 @@ def gap_of(fit: Fit | Contact, material: Material | None) -> float:
     Raises:
         ValueError: if a fit is asked for with no material to read its gap from, or if the
             fit's gap in that material is not a gap at all - an interference is not something
-            two flat faces can be put at.
+            two flat faces can be put at, nor a gap round a pin a measurement can read, since
+            bodies that share material measure zero apart however deep they share it.
     """
     match fit:
         case Contact():
@@ -151,8 +192,8 @@ def gap_of(fit: Fit | Contact, material: Material | None) -> float:
             gap = material.clearances[fit]
             if gap <= TOL:
                 msg = (
-                    f"a {fit} fit in {material.name} is {gap:.3f} mm, which two faces cannot"
-                    " stand apart at; put them together at CONTACT"
+                    f"a {fit} fit in {material.name} is {gap:.3f} mm, which no two faces stand"
+                    " apart at and no measurement can read; put them together at CONTACT"
                 )
                 raise ValueError(msg)
             return gap
@@ -187,9 +228,16 @@ def mating(
     fit: Fit | Contact = CONTACT,
     offset: Vector = UNMOVED,
     spin: float = 0.0,
+    along: float = 0.0,
 ) -> Mate:
     """``moving`` put on ``fixed``: its face ``onto`` laid on ``fixed``'s face ``at``, normals
     opposed, at ``fit`` - see :func:`placing` for ``offset`` and ``spin``.
+
+    Or, where both faces are round, ``moving``'s axis put on ``fixed``'s - see
+    :func:`coaxial` for ``along`` and ``spin`` - with the fit's gap the one the pair is
+    measured against rather than one it is put at. Which kind of pair it is is read off the
+    two faces, never asked: a round face has an axis and no plane, a flat one the other way
+    round.
 
     ``at`` and ``onto`` are refs the way the scene writes them - ``frame/flange/top``, what a
     click inserts - or the same paths without the part's label. ``fixed`` may be a part or a
@@ -197,13 +245,14 @@ def mating(
     :class:`~bench.fasteners.Fit` means) and its way up (which turns with it). The mate is
     not measured here - :attr:`Mate.fitted` is ``None`` - because measuring needs a kernel.
 
-    A name either part has no face by is the :class:`LookupError`, and a face that is not
-    flat the :class:`ValueError`, that :func:`~bench.solids.plane_of` raises - a round face
-    has no one plane to lay another on.
+    A name either part has no face by is the :class:`LookupError`, and a flat pair's face
+    with no plane the :class:`ValueError`, that :func:`~bench.solids.plane_of` raises.
 
     Raises:
         ValueError: if either part is not a body, if a fit is asked of a part with no
-            filament, if the fit is no gap, or if ``offset`` has a Z.
+            filament, if the fit is no gap, if ``offset`` has a Z, if one face is round and
+            the other is not, or if a round pair is given an ``offset`` or a flat one an
+            ``along``.
     """
     body, label = _held(fixed)
     shape = moving.shape
@@ -212,9 +261,24 @@ def mating(
         raise ValueError(msg)
     material = moving.stock.material if isinstance(moving.stock, Printed) else None
     gap = gap_of(fit, material)
-    seat, seat_ref = _face(body, label, at)
-    face, face_ref = _face(shape, moving.label, onto)
-    t = placing(seat, face, gap=gap, offset=offset, spin=spin)
+    seat, seat_ref = _path(label, at)
+    face, face_ref = _path(moving.label, onto)
+    if _round(body, seat, seat_ref, shape, face, face_ref):
+        if abs(offset) > TOL:
+            msg = (
+                f"a pin goes into its bore on the bore's axis, so there is nothing to offset=;"
+                f" along= slides {face_ref} up {seat_ref}'s axis and spin= turns it about it"
+            )
+            raise ValueError(msg)
+        t = coaxial(axis_of(body, seat), axis_of(shape, face), along=along, spin=spin)
+    else:
+        if abs(along) > TOL:
+            msg = (
+                f"along= slides a round face up the axis of the one it goes in; {seat_ref} and"
+                f" {face_ref} are flat, and offset= is how one slides across the other"
+            )
+            raise ValueError(msg)
+        t = placing(plane_of(body, seat), plane_of(shape, face), gap=gap, offset=offset, spin=spin)
     part = replace(moved_part(moving, t), stock=oriented(moving.stock, t))
     return Mate(part, body, fit, gap, (face_ref, seat_ref))
 
@@ -237,14 +301,32 @@ def _held(fixed: Solid | Part) -> tuple[Solid, Label | None]:
             assert_never(fixed)
 
 
-def _face(body: Solid, label: Label | None, ref: str | Ref) -> tuple[Plane, str]:
-    """The plane of the face ``ref`` names on ``body``, and the ref the scene names it by.
+def _path(label: Label | None, ref: str | Ref) -> tuple[str, str]:
+    """The path a face is looked up by on its body, and the ref the scene names it by.
 
     A scene's ref starts with the part's label and a body's own does not, so the label is
-    taken off before :func:`~bench.solids.plane_of` looks the rest up, and put back for the
-    sentence.
+    taken off before the body is asked for the rest, and put back for the sentence.
     """
     path = str(ref)
     if label is not None:
         path = path.removeprefix(f"{label}{SEP}")
-    return plane_of(body, path), path if label is None else f"{label}{SEP}{path}"
+    return path, path if label is None else f"{label}{SEP}{path}"
+
+
+def _round(fixed: Solid, at: str, seat_ref: str, moving: Solid, onto: str, face_ref: str) -> bool:
+    """Whether the two faces are a round pair - an axis each - rather than a flat one. A
+    name either body has no face by is :func:`~bench.solids.face_of`'s :class:`LookupError`.
+
+    Raises:
+        ValueError: if one face is round and the other is not: a pin goes in a bore and a
+            face on a face, and a round face has no plane to lay a flat one on.
+    """
+    seat, face = face_of(fixed, at), face_of(moving, onto)
+    if (seat.curved is None) == (face.curved is None):
+        return seat.curved is not None
+    one, other = (seat_ref, face_ref) if seat.curved is not None else (face_ref, seat_ref)
+    msg = (
+        f"{one} is round and {other} is not: a round face goes on the axis of a round one,"
+        " and a flat face on a flat one"
+    )
+    raise ValueError(msg)

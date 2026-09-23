@@ -113,7 +113,7 @@ from .joints import (
     partition,
 )
 from .kernel import Kernel, Mesh
-from .mate import UNMOVED, Mate, gap_of, mating, oriented, placing
+from .mate import UNMOVED, Mate, coaxial, gap_of, mating, oriented, placing
 from .model import (
     Assembly,
     Build,
@@ -178,12 +178,14 @@ from .scene import (
 from .script import run
 from .solids import (
     Turn,
+    axis_of,
     boss,
     common,
     cuboid,
     cut,
     cylinder,
     extrude,
+    face_of,
     grid,
     hull,
     loft,
@@ -354,6 +356,7 @@ __all__ = [
     "angle",
     "area",
     "assembly",
+    "axis_of",
     "bbox",
     "binary",
     "bore",
@@ -365,6 +368,7 @@ __all__ = [
     "chord_step",
     "circle",
     "clearance_between",
+    "coaxial",
     "common",
     "configured",
     "contact_between",
@@ -383,6 +387,7 @@ __all__ = [
     "edges",
     "extrude",
     "face",
+    "face_of",
     "face_paths",
     "faces_of",
     "female_intervals",
