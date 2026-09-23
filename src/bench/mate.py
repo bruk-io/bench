@@ -55,9 +55,13 @@ The radial gap of a round pair is not placed - two coaxial faces are as far apar
 radii say - so it is only *measured*, against the fit's own figure: the table's gap, what a
 bore drawn with ``clearance(fit, material, concave=True)`` measures as once its wall is
 meshed into chords that stand inside the circle. A pin too fat for the fit comes in tight,
-or overlaps its bore, and that is the finding. The measurement is of whole bodies, as every
-check's is, so a pin whose shoulder sits on the bore's plate reads the shoulder's zero; a
-shoulder is a second pair, and a second pair is a check.
+or overlaps its bore, and that is the finding. The gap is measured over the length the two
+round faces share and nowhere else - :class:`~bench.checks.RoundPair` is what a round mate
+hands the measurement to say so - because a pin or a screw whose head or shoulder sits on
+the bore's plate comes within nothing of it there, and that zero is the head's seat, not the
+gap round the shank. The seat is a second pair, a flat one, and a second pair is a check:
+``check_fit`` of the two at :data:`~bench.fasteners.CONTACT`, beside the mate, reports it as
+the contact it is, and the mate never infers one.
 
 Pure: a mate is geometry and a record, and the measuring - which needs a kernel - is
 :mod:`bench.script`'s, which fills :attr:`Mate.fitted` in at the edge.
@@ -66,10 +70,10 @@ Pure: a mate is geometry and a record, and the measuring - which needs a kernel 
 from dataclasses import dataclass, replace
 from typing import assert_never
 
-from .checks import Fitted
+from .checks import Fitted, RoundPair
 from .fasteners import CONTACT, Contact, Fit
 from .geometry import ORIGIN, TOL, Axis, Plane, Transform, Vector, rotation, to_local, to_world
-from .model import Material, Orient, Part, Printed, Ref, Stock, Stocked, moved_part
+from .model import Material, Orient, Part, Printed, Ref, Stock, Stocked, index, moved_part
 from .solids import axis_of, face_of, plane_of
 from .topology import SEP, Label, Solid
 
@@ -97,6 +101,10 @@ class Mate:
     it - the same way a :class:`~bench.checks.Violation`'s ``line`` is filled in there -
     because this module is pure and a measurement is not. :meth:`__str__` is the sentence:
     ``attachment/base/bottom on frame/flange/top: touch, asked contact``.
+
+    ``pair`` is the round faces and the axis they share, for a pin put in a bore - what the
+    measurement reads the gap round the pin along, rather than across the whole two bodies -
+    and ``None`` for a flat pair, whose gap is the nearest the two bodies come.
     """
 
     part: Part
@@ -105,6 +113,7 @@ class Mate:
     gap: float
     faces: tuple[str, str]
     fitted: Fitted | None = None
+    pair: RoundPair | None = None
 
     def __str__(self) -> str:
         moving, fixed = self.faces
@@ -270,7 +279,9 @@ def mating(
                 f" along= slides {face_ref} up {seat_ref}'s axis and spin= turns it about it"
             )
             raise ValueError(msg)
-        t = coaxial(axis_of(body, seat), axis_of(shape, face), along=along, spin=spin)
+        axis = axis_of(body, seat)
+        t = coaxial(axis, axis_of(shape, face), along=along, spin=spin)
+        pair = RoundPair(axis, (_tagged(shape, face), _tagged(body, seat)))
     else:
         if abs(along) > TOL:
             msg = (
@@ -279,8 +290,9 @@ def mating(
             )
             raise ValueError(msg)
         t = placing(plane_of(body, seat), plane_of(shape, face), gap=gap, offset=offset, spin=spin)
+        pair = None
     part = replace(moved_part(moving, t), stock=oriented(moving.stock, t))
-    return Mate(part, body, fit, gap, (face_ref, seat_ref))
+    return Mate(part, body, fit, gap, (face_ref, seat_ref), pair=pair)
 
 
 def _held(fixed: Solid | Part) -> tuple[Solid, Label | None]:
@@ -311,6 +323,17 @@ def _path(label: Label | None, ref: str | Ref) -> tuple[str, str]:
     if label is not None:
         path = path.removeprefix(f"{label}{SEP}")
     return path, path if label is None else f"{label}{SEP}{path}"
+
+
+def _tagged(solid: Solid, at: str) -> Ref:
+    """The ref ``solid``'s own mesh tags the face ``at`` with: ``at`` itself where the body
+    names a face so, or ``at`` without the body's own label in front - the two ways
+    :func:`~bench.solids.face_of` finds a face, tried in the same order. A move renames
+    nothing, so it is the same ref once the body has moved."""
+    asked = Ref(at)
+    if asked in index(solid) or solid.label is None:
+        return asked
+    return Ref(at.removeprefix(f"{solid.label}{SEP}"))
 
 
 def _round(fixed: Solid, at: str, seat_ref: str, moving: Solid, onto: str, face_ref: str) -> bool:

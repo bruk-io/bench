@@ -51,6 +51,7 @@ from bench import (
     plane_of,
     raised,
     rect,
+    refs,
     rotate,
     rotation,
     translation,
@@ -262,6 +263,32 @@ def test_a_hole_bores_axis_starts_at_its_mouth_just_outside_the_material() -> No
     mate = mating(part("plate", plate, PRINTED), "plate/bore/side-0", _pin(), "pin/side-0")
     low = bounds(_body(mate.part))
     assert (low.z0, low.z1) == pytest.approx((5.01 - 12.0, 5.01))
+
+
+def test_a_round_mate_hands_the_measurement_its_faces_and_the_bores_axis() -> None:
+    """What the gap round a pin is measured along: the bore's own axis, and the two round
+    faces by the refs each body's mesh tags them with - the pin's first - so the shared
+    length is read off the triangles of those faces and nothing else. A flat pair has no
+    such thing, and its gap is the nearest the two bodies come."""
+    plate = _bored()
+    mate = mating(plate, "plate/bore", _pin(), "pin/side-0", fit=Fit.SLIDE)
+    assert mate.pair is not None
+    assert _same(mate.pair.axis, axis_of(_body(plate), "bore"))
+    assert mate.pair.faces == (Ref("side-0"), Ref("bore"))
+    assert set(mate.pair.faces) <= set(refs(_body(mate.part))) | set(refs(_body(plate)))
+    assert mating(BASE, "top", _plate(), "plate/bottom").pair is None
+
+
+def test_a_round_mates_faces_are_named_without_a_bodys_own_label() -> None:
+    """A body with a label of its own is asked for a face with or without it in front, as
+    ``plane_of`` is; its mesh names the face without it either way."""
+    profile = cut(fill(rect(20, 20)), circle(2.25, Point(10, 10)), label="bore")
+    slab = extrude(profile, 5.0, label="slab")
+    mate = mating(
+        slab, "slab/bore", part("pin", cylinder(2.0, 12.0, label="rod"), PRINTED), "rod/side-0"
+    )
+    assert mate.pair is not None
+    assert mate.pair.faces == (Ref("side-0"), Ref("bore"))
 
 
 def test_coaxial_is_the_frame_arithmetic_on_its_own() -> None:

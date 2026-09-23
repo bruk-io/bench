@@ -12,6 +12,7 @@ handed to :func:`bench.script.run`."""
 
 from .checks import (
     Fitted,
+    RoundPair,
     Sampled,
     Severity,
     Violation,
@@ -326,6 +327,7 @@ __all__ = [
     "Repeat",
     "Ring",
     "Round",
+    "RoundPair",
     "Sampled",
     "Scene",
     "Screw",
