@@ -237,6 +237,19 @@ def test_a_released_lease_is_free_at_once_and_only_its_holder_can_release_it(
     assert take(server.port, "cabinet", TABLET)["yours"] is True
 
 
+def test_a_renewal_that_arrives_after_its_holders_release_does_not_take_the_lease_back(
+    server: Server,
+) -> None:
+    """task-55: a renewal already on the wire when a tab closes must never re-create the lease
+    it just let go of - it is answered that the project is free, and changes nothing."""
+    take(server.port, "cabinet", DESK)
+    take(server.port, "cabinet", DESK, "release")
+    renewed = take(server.port, "cabinet", DESK, "renew")
+    assert renewed["yours"] is False
+    assert renewed["holder"] is None
+    assert take(server.port, "cabinet", TABLET)["yours"] is True
+
+
 # ---- AC#6: a lease can be taken over ------------------------------------------------------
 
 

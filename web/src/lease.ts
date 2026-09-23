@@ -85,16 +85,25 @@ export type Leases = ReadonlyMap<string, Lease>;
 
 /** What a client may ask of a lease. */
 export type Act =
-  /** Take it if it is free or already yours (which renews it); otherwise be told whose it is. */
+  /** Take it if it is free or already yours (which renews it, same as `renew`); otherwise be
+   * told whose it is. What opening a project asks, and what a reader keeps asking on the same
+   * cadence a holder renews, so a lease that comes free - lapsed, or let go - is picked up
+   * without anyone pressing anything. */
   | "take"
   /** Take it whoever holds it - decision-9's "a person can take it", after being told whose. */
   | "take-over"
+  /** Extend a lease this client currently holds, and nothing else: a renewal of a lease it
+   * does not hold changes nothing and answers with the standing instead of taking it, so a
+   * renewal already on the wire when its holder's tab closes can never re-create the lease for
+   * a tab that is gone (task-55). What a holder asks, on the same cadence a reader asks `take`,
+   * to keep what it has. */
+  | "renew"
   /** Let it go, if it is yours. */
   | "release"
   /** Only be told. */
   | "look";
 
-export const ACTS: readonly Act[] = ["take", "take-over", "release", "look"];
+export const ACTS: readonly Act[] = ["take", "take-over", "renew", "release", "look"];
 
 /** Whether `lease` is still alive at `now`. */
 export const live = (lease: Lease, now: number, expiryMs: number): boolean => now - lease.heardMs < expiryMs;
@@ -128,8 +137,9 @@ export function pruned(leases: Leases, now: number, expiryMs: number): Leases {
 }
 
 /** `act`, asked by `client` of `project`'s lease at `now`: the leases afterwards, and what the
- * client is told. Nothing here refuses - a take of a lease somebody else holds is answered with
- * whose it is, which is the answer the asker needs, not an error. */
+ * client is told. Nothing here refuses - a take of a lease somebody else holds, or a renewal of
+ * one it does not hold, is answered with whose it is (or that it is free), which is the answer
+ * the asker needs, not an error. */
 export function leased(
   leases: Leases,
   project: string,
@@ -144,16 +154,18 @@ export function leased(
   let next: Map<string, Lease> | null = null;
   const change = (): Map<string, Lease> => (next ??= new Map(current));
 
-  if (act === "take-over" || (act === "take" && (held === undefined || mine))) {
+  if (act === "take-over" || (act === "take" && (held === undefined || mine)) || (act === "renew" && mine)) {
     change().set(project, {
       ...client,
       // A renewal keeps the time it was taken: "held for twenty minutes" is about the holder.
-      sinceMs: mine && act === "take" ? held.sinceMs : now,
+      sinceMs: mine && (act === "take" || act === "renew") ? held.sinceMs : now,
       heardMs: now,
     });
   } else if (act === "release" && mine) {
     change().delete(project);
   }
+  // `renew` of a lease this client does not hold - free, lapsed, or somebody else's - changes
+  // nothing: it is never how a lease is created, only how one is kept (task-55).
 
   const after = next ?? current;
   const holding = after.get(project);

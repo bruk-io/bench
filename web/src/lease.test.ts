@@ -73,6 +73,45 @@ describe("leased", () => {
     expect(renewEvery(EXPIRY_MS)).toBe(15_000);
     expect(renewEvery(4000)).toBe(1000);
   });
+
+  it("extends a lease its holder renews, keeping when it was first taken", () => {
+    const first = leased(NONE, "cabinet", "take", DESK, 1000, EXPIRY_MS).leases;
+    const again = leased(first, "cabinet", "renew", DESK, 16_000, EXPIRY_MS);
+    expect(again.leases.get("cabinet")).toMatchObject({ sinceMs: 1000, heardMs: 16_000 });
+    expect(again.standing.yours).toBe(true);
+  });
+
+  it("never creates a lease with a renew - task-55: a release then a renew leaves it free", () => {
+    const first = leased(NONE, "cabinet", "take", DESK, 1000, EXPIRY_MS).leases;
+    const released = leased(first, "cabinet", "release", DESK, 2000, EXPIRY_MS).leases;
+    expect(released.size).toBe(0);
+    const { leases, standing } = leased(released, "cabinet", "renew", DESK, 2100, EXPIRY_MS);
+    expect(leases.size).toBe(0);
+    expect(standing).toEqual({
+      project: "cabinet",
+      yours: false,
+      holder: null,
+      expiryMs: EXPIRY_MS,
+      renewMs: renewEvery(EXPIRY_MS),
+    });
+    expect(leased(leases, "cabinet", "take", TABLET, 2200, EXPIRY_MS).standing.yours).toBe(true);
+  });
+
+  it("tells a renewal from a client that never held it whose the lease is, and changes nothing", () => {
+    const first = leased(NONE, "cabinet", "take", DESK, 1000, EXPIRY_MS).leases;
+    const { leases, standing } = leased(first, "cabinet", "renew", TABLET, 2000, EXPIRY_MS);
+    expect(leases).toBe(first);
+    expect(standing.yours).toBe(false);
+    expect(standing.holder?.label).toBe(DESK.label);
+  });
+
+  it("does not renew a lease that has already lapsed - it is free, not extended", () => {
+    const first = leased(NONE, "cabinet", "take", DESK, 1000, EXPIRY_MS).leases;
+    const late = 1000 + EXPIRY_MS;
+    const { leases, standing } = leased(first, "cabinet", "renew", DESK, late, EXPIRY_MS);
+    expect(leases.size).toBe(0);
+    expect(standing).toMatchObject({ yours: false, holder: null });
+  });
 });
 
 describe("heldAgainst", () => {

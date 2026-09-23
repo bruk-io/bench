@@ -172,7 +172,7 @@ export type Operation =
   | (Changing & { readonly op: "rename-project"; readonly to: string })
   /** `DELETE /__bench/projects/<project>` - the whole directory, moved into the trash. */
   | (Changing & { readonly op: "trash-project" })
-  /** `GET /__bench/leases/<project>` to be told, `POST …?act=take|take-over|release` to act on
+  /** `GET /__bench/leases/<project>` to be told, `POST …?act=take|take-over|renew|release` to act on
    * the project's write lease (`lease.ts`). `holder` is `null` only for a look from a client
    * that holds nothing. */
   | {
@@ -425,7 +425,7 @@ function leaseDecided(asked: Asked, path: string, query: string, holder: string 
   if (method !== "POST") return refusal("method", `${method} a lease`);
   const act = new URLSearchParams(query).get("act");
   if (act === null || act === "look" || !ACTS.includes(act as Act)) {
-    return refusal("name", "a lease is acted on as ?act=take, ?act=take-over or ?act=release");
+    return refusal("name", "a lease is acted on as ?act=take, ?act=take-over, ?act=renew or ?act=release");
   }
   if (holder === null) return refusal("precondition", `a lease is taken or let go by a holder, named as ${HOLDER}`);
   return { op: "lease", project, act: act as Act, holder, label };
