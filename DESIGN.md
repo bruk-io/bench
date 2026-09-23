@@ -241,6 +241,14 @@ wire that is one circle is round the other way round: its normal points *at* its
 because that is out of the material. Asking a flat face for a turn, or a round one for a
 plane, is a `ValueError` that says which.
 
+`axis_of(solid, at)` is a round face's other answer: its axis, as the frame it was authored
+in - origin where the axis crosses the profile's plane, normal the way the sweep ran, X at the
+face's zero, the one `around` is measured from. A frame rather than a bare `Axis` because a turn
+about an axis needs a zero to be measured from, and a perpendicular made up for the purpose
+would move whenever the axis did. It is what a round mate - a pin in its bore - lays one part
+on another by. `face_of(solid, at)` is the lookup both read: the `SolidFace` itself, which says
+whether a face has a plane or a `Curved`.
+
 Modifiers (topology in, topology out; labels preserved):
 `offset(wire_or_face, d)` - outward for positive `d` on outlines, inward on
 holes; lines become shifted lines, arcs change radius, corners between lines

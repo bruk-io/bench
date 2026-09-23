@@ -14,6 +14,7 @@ import pytest
 from bench import (
     CONTACT,
     ORIGIN,
+    XY,
     Axis,
     Fit,
     Mate,
@@ -29,11 +30,18 @@ from bench import (
     X,
     Y,
     Z,
+    axis_of,
+    bounds,
+    circle,
+    coaxial,
     cuboid,
+    cut,
     cylinder,
     extrude,
     face,
+    fill,
     gap_of,
+    hole,
     mating,
     move,
     near,
@@ -41,10 +49,12 @@ from bench import (
     part,
     placing,
     plane_of,
+    raised,
     rect,
     rotate,
     rotation,
     translation,
+    union,
 )
 from bench.library.print import PLA, clearance
 
@@ -155,6 +165,142 @@ def test_placing_is_the_frame_arithmetic_on_its_own() -> None:
     assert near(t @ face_.origin, Point(1, 2.5, 3))
     assert near(t @ face_.normal, -Y)
     assert near(t @ face_.x_dir, X)
+
+
+# ---- a pin in its bore ------------------------------------------------------------------
+
+
+def _bored(r: float = 2.25) -> Part:
+    """A 20 x 20 x 5 plate with a round hole drawn in its profile, labelled ``bore``: its
+    axis runs up +Z from the plate's own bottom, at (10, 10)."""
+    profile = cut(fill(rect(20, 20)), circle(r, Point(10, 10)), label="bore")
+    return part("plate", extrude(profile, 5.0), PRINTED)
+
+
+def _pin(r: float = 2.0, h: float = 12.0) -> Part:
+    return part("pin", cylinder(r, h), PRINTED)
+
+
+def _axis(mate: Mate, at: str) -> Plane:
+    shape = mate.part.shape
+    assert isinstance(shape, Solid)
+    return axis_of(shape, at)
+
+
+def test_a_pin_goes_on_the_bores_axis_running_the_way_the_bore_does() -> None:
+    """Two round faces are a round pair: the pin's axis is the bore's own frame, origin,
+    direction and zero, so its foot is on the plane the hole was drawn on and it stands up
+    through the plate. Nothing about the gap round it was placed - the radii say it."""
+    plate = _bored()
+    mate = mating(plate, "plate/bore", _pin(), "pin/side-0", fit=Fit.SLIDE)
+    assert _same(_axis(mate, "side-0"), axis_of(_body(plate), "bore"))
+    low = bounds(_body(mate.part))
+    assert (low.x0, low.y0, low.z0, low.z1) == pytest.approx((8.0, 8.0, 0.0, 12.0))
+    assert mate.gap == clearance(Fit.SLIDE, PLA)
+    assert mate.faces == ("pin/side-0", "plate/bore")
+
+
+def test_along_slides_the_pin_up_the_bores_axis_and_spin_turns_it_about_it() -> None:
+    """Both explicit: a pin has no one place along its bore or one way round in it, so the
+    script says. Spin is counter-clockwise seen from the end the axis points to."""
+    bore = axis_of(_body(_bored()), "bore")
+    mate = mating(_bored(), "plate/bore", _pin(), "pin/side-0", along=-3.0, spin=math.pi / 2)
+    axis = _axis(mate, "side-0")
+    assert near(axis.origin, bore.origin + bore.normal * -3.0)
+    assert near(axis.normal, bore.normal)
+    assert near(axis.x_dir, Y)
+    assert bounds(_body(mate.part)).z0 == pytest.approx(-3.0)
+
+
+def test_a_pin_that_wandered_off_goes_back_in_the_same_way() -> None:
+    """The mate reads the pin's own axis, not where the pin was: turned about a skew axis
+    and shifted first, it lands face for face where an unmoved one does."""
+    wandered = part(
+        "pin",
+        move(rotate(cylinder(2.0, 12.0), 1.1, about=Axis(Point(3, -7, 2), Vector(1, 2, 3))), Y),
+        PRINTED,
+    )
+    home = mating(_bored(), "plate/bore", _pin(), "pin/side-0", along=1.0, spin=0.4)
+    back = mating(_bored(), "plate/bore", wandered, "pin/side-0", along=1.0, spin=0.4)
+    assert _same(_axis(back, "side-0"), _axis(home, "side-0"))
+    for name in ("top", "bottom"):
+        assert _same(_face_of(back, name), _face_of(home, name)), name
+
+
+def test_the_end_a_pin_was_swept_from_is_the_end_that_goes_in_first() -> None:
+    """A headed pin swept up from its head goes in shank first with the head left at the
+    bore's mouth; the same pin swept down from its tip goes in tip first, and the head ends
+    up past the far side. Which end leads is how the pin was drawn - never guessed."""
+    head = cylinder(4.0, 2.0, label="head")
+    up = union(head, extrude(fill(circle(2.0), on=raised(XY, 2.0)), 10.0, label="shank"))
+    down = union(head, extrude(fill(circle(2.0), on=raised(XY, 12.0)), -10.0, label="shank"))
+    headfirst = mating(_bored(), "plate/bore", part("pin", up, PRINTED), "pin/shank/side-0")
+    tipfirst = mating(_bored(), "plate/bore", part("pin", down, PRINTED), "pin/shank/side-0")
+    assert _face_of(headfirst, "head/top").origin.z == pytest.approx(0.0)
+    assert bounds(_body(headfirst.part)).z0 == pytest.approx(-2.0)
+    assert _face_of(tipfirst, "head/top").origin.z == pytest.approx(10.0)
+    assert bounds(_body(tipfirst.part)).z1 == pytest.approx(12.0)
+
+
+def test_a_hole_bores_axis_starts_at_its_mouth_just_outside_the_material() -> None:
+    """``hole`` draws its tool from a hair above the face it is drilled from and sweeps it
+    down, so a pin at ``along=0`` stands that hair proud of the plate and runs down into it:
+    the authored frame is the rule, and ``along`` is how it is corrected."""
+    plate = cuboid(20, 20, 5)
+    plate = hole(
+        plate,
+        Point(10, 10),
+        on=plane_of(plate, "top"),
+        diameter=4.4,
+        fit=Fit.SLIDE,
+        printed=PRINTED,
+        label="bore",
+    )
+    axis = axis_of(plate, "bore/side-0")
+    assert near(axis.normal, -Z)
+    assert axis.origin.z == pytest.approx(5.01)
+    mate = mating(part("plate", plate, PRINTED), "plate/bore/side-0", _pin(), "pin/side-0")
+    low = bounds(_body(mate.part))
+    assert (low.z0, low.z1) == pytest.approx((5.01 - 12.0, 5.01))
+
+
+def test_coaxial_is_the_frame_arithmetic_on_its_own() -> None:
+    seat = Plane(Point(1, 2, 3), Y, Z)
+    axis = Plane(Point(-4, 0, 6), X, Y)
+    t = coaxial(seat, axis, along=2.0, spin=math.pi / 2)
+    assert near(t @ axis.origin, Point(1, 4, 3))
+    assert near(t @ axis.normal, Y)
+    assert near(t @ axis.x_dir, X)
+
+
+def test_a_round_face_goes_in_a_round_one_and_a_flat_one_on_a_flat_one() -> None:
+    with pytest.raises(ValueError, match=r"pin/side-0 is round and plate/top is not"):
+        mating(_bored(), "plate/top", _pin(), "pin/side-0")
+    with pytest.raises(ValueError, match=r"plate/bore is round and pin/bottom is not"):
+        mating(_bored(), "plate/bore", _pin(), "pin/bottom")
+
+
+def test_a_round_pair_has_nothing_to_offset_and_a_flat_one_nothing_to_slide_along() -> None:
+    with pytest.raises(ValueError, match="nothing to offset="):
+        mating(_bored(), "plate/bore", _pin(), "pin/side-0", offset=Vector(1, 0))
+    with pytest.raises(ValueError, match="are flat"):
+        mating(BASE, "top", _plate(), "plate/bottom", along=2.0)
+
+
+def test_a_round_pairs_way_up_turns_with_it_like_a_flat_ones() -> None:
+    """A pin put into a bore that runs along X is lying down, and prints the way it was
+    drawn - standing on its foot - because its way up turned with it."""
+    lying = part("plate", rotate(_body(_bored()), math.pi / 2, about=Axis(ORIGIN, Y)), PRINTED)
+    mate = mating(lying, "plate/bore", _pin(), "pin/side-0")
+    stock = mate.part.stock
+    assert isinstance(stock, Printed)
+    assert near(stock.orient.up, X)
+
+
+def _body(one: Part) -> Solid:
+    shape = one.shape
+    assert isinstance(shape, Solid)
+    return shape
 
 
 # ---- what a mate is handed ---------------------------------------------------------------
