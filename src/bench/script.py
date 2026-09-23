@@ -727,12 +727,15 @@ def _namespace(
         fit: Fit | Contact = CONTACT,
         offset: Vector = UNMOVED,
         spin: float = 0.0,
+        along: float = 0.0,
     ) -> Mate:
         """Put ``moving``'s face ``onto`` on ``fixed``'s face ``at`` at ``fit``, measure the
         pair at the fit it was asked for, and record what it finds.
 
         The placing is :func:`bench.mate.mating` - read it for ``offset``, ``spin`` and why
-        the part's way up turns with it. The measuring is
+        the part's way up turns with it, and for a round pair, a pin in its bore, which goes
+        on the bore's axis ``along`` it and turned ``spin`` about it, its gap round the pin
+        measured against the fit's. The measuring is
         :func:`bench.checks.fit_between`, so the call that puts the two together is the one
         that checks them: a contact that turns out to overlap, or a fit that comes in
         tighter than it was asked, is recorded as a finding on the moved part - whose shape
@@ -741,7 +744,7 @@ def _namespace(
         printed it is the sentence - what was measured against what was asked.
         """
         with timed(tracer, "bench.check.mate"):
-            mate = mating(fixed, at, moving, onto, fit=fit, offset=offset, spin=spin)
+            mate = mating(fixed, at, moving, onto, fit=fit, offset=offset, spin=spin, along=along)
             body = mate.part.shape
             assert isinstance(body, Solid)  # mating refuses a part that is not a body
             fitted = fit_between(body, mate.on, fit, mate.gap, kernel=kernel)

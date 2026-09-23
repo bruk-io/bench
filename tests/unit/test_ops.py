@@ -26,6 +26,7 @@ from bench import (
     Y,
     Z,
     area,
+    axis_of,
     bbox,
     boss,
     bounds,
@@ -41,6 +42,7 @@ from bench import (
     edge,
     edges,
     extrude,
+    face_of,
     faces_of,
     fill,
     foot_chamfer,
@@ -1040,3 +1042,60 @@ def test_plane_of_refuses_a_turn_on_a_flat_face_and_a_height_with_no_turn() -> N
         plane_of(plate, "top", along=3.0)
     with pytest.raises(ValueError, match="give around="):
         plane_of(cylinder(4, 10), "side-0")
+
+
+# ---- the axis of a round face ------------------------------------------------------------
+
+
+def test_a_round_side_answers_with_its_axis_as_the_frame_it_was_drawn_in() -> None:
+    """The centre the circle was drawn about, the way the sweep ran, and the profile's own X -
+    the X ``around`` counts from, so the tangent plane at ``around=0`` lies along it."""
+    collar = cylinder(8.0, 12.0, at=Point(3.0, 4.0, 1.0))
+    axis = axis_of(collar, "side-0")
+    assert near(axis.origin, Point(3.0, 4.0, 1.0))
+    assert near(axis.normal, Z)
+    assert near(axis.x_dir, X)
+    seat = plane_of(collar, "side-0", around=0.0, along=6.0)
+    assert near(seat.origin, axis.origin + axis.x_dir * 8.0 + axis.normal * 6.0)
+
+
+def test_a_bores_axis_is_the_same_kind_of_line_as_a_pins() -> None:
+    """Which side the material is on is the tangent plane's business, not the axis's: a bore
+    runs the way its plate was swept, from the plane its hole was drawn on."""
+    plate = extrude(cut(fill(rect(40, 40)), circle(5, Point(20, 20)), label="bore"), 10.0)
+    axis = axis_of(plate, "bore")
+    assert near(axis.origin, Point(20.0, 20.0, 0.0))
+    assert near(axis.normal, Z)
+    assert near(axis.x_dir, X)
+
+
+def test_a_sweep_the_other_way_runs_the_axis_the_other_way() -> None:
+    down = extrude(fill(circle(2.0), on=raised(XY, 10.0)), -10.0)
+    axis = axis_of(down, "side-0")
+    assert near(axis.origin, Point(0.0, 0.0, 10.0))
+    assert near(axis.normal, -Z)
+
+
+def test_a_moved_round_face_carries_its_axis_with_it() -> None:
+    turned = move(rotate(cylinder(2.0, 5.0), math.pi / 2, about=Axis(ORIGIN, Y)), Vector(1, 2, 3))
+    axis = axis_of(turned, "side-0")
+    assert near(axis.origin, Point(1.0, 2.0, 3.0))
+    assert near(axis.normal, X)
+    assert near(axis.x_dir, -Z)
+
+
+def test_axis_of_refuses_a_flat_face_and_a_name_nothing_answers_to() -> None:
+    with pytest.raises(ValueError, match="is flat"):
+        axis_of(cuboid(10, 10, 10), "top")
+    with pytest.raises(LookupError, match="no face named"):
+        axis_of(cylinder(2.0, 5.0), "side-1")
+
+
+def test_face_of_says_whether_a_face_has_a_plane_or_a_round_surface() -> None:
+    pin = cylinder(2.0, 5.0, label="pin")
+    assert face_of(pin, "pin/top").curved is None
+    assert face_of(pin, "top").plane is not None
+    side = face_of(pin, "side-0")
+    assert side.plane is None
+    assert side.curved is not None
+    assert side.curved.radius == pytest.approx(2.0)

@@ -26,8 +26,9 @@
  * the container: `data-bodies` and `data-triangles` for what was drawn, `data-bounds` for the
  * box it fills, `data-selected` and `data-pointed` for the refs lit, `data-lit` for how many
  * triangles are painted as selected, `data-distance` for how far the camera stands from what
- * it looks at, `data-datum` for how long the origin's own X/Y/Z arms are drawn and
- * `data-section` for the axis and position a section is clipping at (empty when off).
+ * it looks at, `data-datum` for how long the origin's own X/Y/Z arms are drawn,
+ * `data-section` for the axis and position a section is clipping at (empty when off) and
+ * `data-colour-faces` for whether every named face is painted its own colour (empty when off).
  */
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -122,6 +123,12 @@ export interface Viewer3D {
    * `show()` - it stays exactly as set across a re-run or a knob change, which is what lets
    * dragging a pose knob sweep the section through the geometry. Off by default. */
   section(state: SectionState | null): void;
+  /** Colour every named face of every built part in its own pastel from the same palette
+   * `detect` uses - one index run across every part in the scene, so two faces never share a
+   * hue even across a seam between parts. `on` toggles it; off restores the plain base
+   * colour. Untouched by `show()` - it survives a re-run exactly the way `chosen` and
+   * `pointed` do. Off by default. */
+  colourFaces(on: boolean): void;
   /** Light the dropped body up, or put it back to its plain ghost.
    *
    * The backdrop is still never *clickable* outside detection - it answers no raycast, so a
@@ -311,6 +318,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       say: () => {},
       detect: () => {},
       section: () => {},
+      colourFaces: () => {},
       markReference: () => {},
     };
   }
@@ -477,6 +485,16 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     draw();
   }
 
+  // ---- colour faces -----------------------------------------------------------------
+  //
+  // Which pastel each named face is painted, one index run across every body in the scene so
+  // two faces never land on the same hue even across a seam between parts - the same
+  // `pastels()` `detect` already uses below, kept in step by `show()` rebuilding it from the
+  // refs each body actually carries. `colouring` is the toggle; it is not reset by `clear()`,
+  // so it survives a re-run exactly the way `chosen` and `pointed` do.
+  let colouring = false;
+  let faceColour: ReadonlyMap<string, THREE.Color> = new Map();
+
   /** Draw once, on the next frame; several changes in one tick cost one picture. */
   function draw(): void {
     container.dataset["distance"] = camera.position.distanceTo(controls.target).toFixed(1);
@@ -507,12 +525,17 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     return base;
   }
 
-  /** Put every colour back from what is selected, pointed at and hovered. */
+  /** Put every colour back from what is selected, pointed at and hovered - and, while
+   * `colouring` is on, from which named face a triangle is under, so a click or a hover still
+   * outranks its own face colour exactly as it outranks the plain `BASE` it usually stands
+   * on. */
   function paint(): void {
     let lit = 0;
     for (const body of bodies) {
       for (let triangle = 0; triangle < body.index.length; triangle += 1) {
-        const colour = shade(refIn(body.refs, body.index, triangle) ?? body.part.ref, BASE);
+        const ref = refIn(body.refs, body.index, triangle);
+        const base = colouring && ref !== null ? (faceColour.get(ref) ?? BASE) : BASE;
+        const colour = shade(ref ?? body.part.ref, base);
         if (colour === SELECTED) lit += 1;
         for (let corner = 0; corner < 3; corner += 1) {
           body.colors.setXYZ(3 * triangle + corner, colour.r, colour.g, colour.b);
@@ -532,6 +555,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     container.dataset["selected"] = chosen ?? "";
     container.dataset["pointed"] = pointed ?? "";
     container.dataset["lit"] = String(lit);
+    container.dataset["colourFaces"] = colouring ? "on" : "";
     draw();
   }
 
@@ -825,6 +849,24 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       for (const one of part.lettering) lettered.push(letteredOf(part, one));
     }
 
+    // One palette index across the whole scene, in the order its faces are met - a part's own
+    // faces stay together in that order, which is exactly where two faces are most likely to
+    // be neighbours, so `pastels`' golden-angle step keeps them apart the same way `detect`
+    // already relies on it to.
+    const named: string[] = [];
+    const seen = new Set<string>();
+    for (const body of bodies) {
+      for (let triangle = 0; triangle < body.index.length; triangle += 1) {
+        const ref = refIn(body.refs, body.index, triangle);
+        if (ref !== null && !seen.has(ref)) {
+          seen.add(ref);
+          named.push(ref);
+        }
+      }
+    }
+    const facePalette = pastels(Math.max(named.length, 1));
+    faceColour = new Map(named.map((ref, at) => [ref, facePalette[at] ?? BASE]));
+
     const [x0 = -50, y0 = -50, z0 = 0, x1 = 50, y1 = 50, z1 = 50] = stage.bounds;
     bounds = new THREE.Box3(new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1));
     // The stage measures the work, and a dropped body is not part of it - but if somebody
@@ -1064,6 +1106,10 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     },
     detect,
     section: applySection,
+    colourFaces(on) {
+      colouring = on;
+      paint();
+    },
     markReference,
   };
 }

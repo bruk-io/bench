@@ -133,7 +133,8 @@ and says in its own text what it could not do and why.
   on=plane_of(plate, "top"))` reads the rectangle in that plane's own frame and lifts it onto
   the plate's top face at the plate's own numbers. `raised(XY, 5)` is the flat plane five
   millimetres up, and `plane_of(collar, "side-0", around=0.0, along=6.0)` is the plane tangent
-  to a cylinder's side, which is where a set screw goes. `hull(*shapes)` wraps faces and
+  to a cylinder's side, which is where a set screw goes; `axis_of(pin, "side-0")` is that
+  side's axis, as a frame whose X is where `around` counts from. `hull(*shapes)` wraps faces and
   bodies alike - a stack of flat slices with a hull round it is how a chamfered sweep is
   written on a kernel that cannot sweep - and `pattern(shape, count, step)` takes a `Turn` as
   readily as a vector, while `grid` numbers a rectangular array in one flat run.
@@ -156,13 +157,17 @@ and says in its own text what it could not do and why.
   how many poses were measured and how far apart, because a check made at twenty-one poses
   has not proved anything about the travel between two of them.
 - `mate.py` - one part's face put on another's. `mating(fixed, at, moving, onto, *, fit=CONTACT,
-  offset, spin)` lays the moving part's face on the fixed one's, normals opposed, in the frame
+  offset, spin, along)` lays the moving part's face on the fixed one's, normals opposed, in the frame
   each face was *authored* in - `plane_of`'s - so two parts drawn from the same corner go
   together with nothing more said, and `offset`/`spin` are the written correction when they
   were not. The gap along the normal is nothing for `CONTACT` and the fit's own per-side figure
   in the moving part's filament otherwise. The moved part keeps its print orientation: its
   `Orient.up` turns with the body, so a part mated upside down still prints the way it was
-  drawn to. Planar faces only; a round face is refused. The measuring is the script's `mated`.
+  drawn to. Two round faces - a pin and its bore - are a round pair instead: the moving axis
+  goes on the fixed one (`axis_of`'s frames), running the same way, `along` it and turned `spin`
+  about it, both explicit and never guessed; the gap round the pin is what the radii make it,
+  and is measured against the fit's figure rather than placed. A round face against a flat one
+  is refused. The measuring is the script's `mated`.
 - `joints.py` - how panels hold together. A `partition` of an edge into an odd
   number of fingers, the `female_intervals` / `male_intervals` either side of
   it, `jagged_edge` to walk one side of a panel, and `open_box` for the `Box` of
@@ -293,7 +298,7 @@ and says in its own text what it could not do and why.
   unmeasured. It **samples**; the `Sampled` it answers with says so and at what spacing, so
   "clear at 21 poses, one every 0.05" is never read as "clear throughout", and nothing about
   it is a claim about force, friction or binding.
-  `mated(fixed, at, moving, onto, *, fit=CONTACT, offset, spin)` is `bench.mate.mating` and its
+  `mated(fixed, at, moving, onto, *, fit=CONTACT, offset, spin, along)` is `bench.mate.mating` and its
   check in one call: it puts the part in place, measures the pair at the fit it was asked for,
   records a finding on the moved part when the pair overlaps or comes in tight, and hands back
   a `Mate` whose `part` is what the assembly shows and whose sentence - "attachment/base/bottom
