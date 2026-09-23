@@ -29,12 +29,13 @@ intentional would pass the one thing a clearance check exists to catch.
 import math
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import assert_never
 
 from .facets import Triangle, normal, thinnest, triangles
 from .geometry import TOL, Point, Vector, unit
 from .kernel import Kernel
-from .model import Material, Orient, Ref, Volume
-from .topology import Intersection, Shape, Solid, bounds
+from .model import Material, Orient, Printed, Process, Ref, Stock, Stocked, Volume
+from .topology import Face, Intersection, Shape, Solid, bounds
 
 _ORIGIN = Point(0.0, 0.0, 0.0)
 """Where a point is measured from when it has to become a vector to be projected."""
@@ -115,6 +116,53 @@ def fits(shape: Shape, volume: Volume) -> Violation | None:
         message=f"the part is bigger than the build volume: {', '.join(over)}",
         severity=Severity.ERROR,
     )
+
+
+def exportable(shape: Shape, stock: Stocked, process: Process) -> Violation | None:
+    """Whether a part's shape, stock and process combine into something the cut sheets and
+    the print files can actually be drawn from, or ``None`` when they do.
+
+    Needs no kernel, the same as :func:`fits`: a sheet part is a flat :class:`~bench.topology.Face`
+    that :mod:`bench.export` cuts a path from, and a :class:`~bench.topology.Solid` on sheet
+    :class:`~bench.model.Stock` is not one - it needs :class:`~bench.model.Printed` stock
+    instead, or, once it exists, stock that is milled. A :class:`~bench.topology.Solid` marked
+    :data:`~bench.model.Process.CNC` asks to mill a billet, which nothing here builds yet,
+    whatever its stock: that is refused the same way rather than quietly dropped.
+
+    A :class:`~bench.topology.Face` marked :data:`Process.CNC` is left alone - a flat part
+    routed on a CNC is still a 2D profile, cut the same way a laser cuts one, and draws
+    exactly like one.
+    """
+    match shape:
+        case Face():
+            return None
+        case Solid():
+            if process is Process.CNC:
+                return Violation(
+                    check="exportable",
+                    message=(
+                        "Process.CNC on a solid asks to mill a billet, and milling is not"
+                        " modelled yet - nothing is exported for this part"
+                    ),
+                    severity=Severity.ERROR,
+                )
+            match stock:
+                case Stock():
+                    return Violation(
+                        check="exportable",
+                        message=(
+                            "a solid cannot be cut from sheet stock: a sheet part is a flat"
+                            " Face that is cut out, and a solid needs Printed stock instead -"
+                            " or, once it exists, stock that is milled"
+                        ),
+                        severity=Severity.ERROR,
+                    )
+                case Printed():
+                    return None
+                case _:
+                    assert_never(stock)
+        case _:
+            assert_never(shape)
 
 
 # ---- what only a built body can answer -----------------------------------------------

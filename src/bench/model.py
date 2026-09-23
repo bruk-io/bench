@@ -254,8 +254,12 @@ def process_of(stock: Stocked) -> Process:
 
     The halfway house the proposal asks for: the process is a fact about the material, not
     a fourth field beside it, and this is where that becomes true. A sheet is cut on the
-    laser - a billet to be milled is the arm of :data:`Stocked` that does not exist yet, and
-    until it does a script that mills says so with ``Process.CNC`` itself.
+    laser by default - a billet to be milled is the arm of :data:`Stocked` that does not
+    exist yet, so a script that means to mill one says so with ``Process.CNC`` itself, over a
+    :class:`~bench.topology.Solid`, and :func:`bench.checks.exportable` refuses it rather
+    than exporting nothing: milling is not modelled yet. ``Process.CNC`` over a
+    :class:`~bench.topology.Face` is a different part of the same machine - a flat profile
+    routed rather than lasered - and is exported exactly like one.
     """
     match stock:
         case Stock():

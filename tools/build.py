@@ -344,7 +344,10 @@ def _said(scene: Scene) -> list[str]:
         f" - {summary['errors']} errors, {summary['warnings']} warnings"
     ]
     lines += [
-        f"  {one['severity']} {one['check']}: {one['message']}" for one in scene["violations"]
+        f"  {one['severity']} {one['check']} ({', '.join(one['refs'])}): {one['message']}"
+        if one["refs"]
+        else f"  {one['severity']} {one['check']}: {one['message']}"
+        for one in scene["violations"]
     ]
     return lines
 

@@ -151,7 +151,12 @@ and says in its own text what it could not do and why.
   `Severity.UNCHECKED` instead of passing. `Sampled` and `sampling(over, samples)` are what a
   question asked of a whole motion answers with and where its poses are - a record that says
   how many poses were measured and how far apart, because a check made at twenty-one poses
-  has not proved anything about the travel between two of them.
+  has not proved anything about the travel between two of them. `exportable(shape, stock,
+  process)` needs no kernel either: a sheet part is a flat `Face` cut out of `Stock`, a
+  `Solid` needs `Printed` stock instead (or, once it exists, stock that is milled), and a
+  `Solid` marked `Process.CNC` is refused the same way - milling is not modelled yet - rather
+  than silently exporting nothing; `Process.CNC` over a `Face` is still a flat profile,
+  routed rather than lasered, and is left alone.
 - `joints.py` - how panels hold together. A `partition` of an edge into an odd
   number of fingers, the `female_intervals` / `male_intervals` either side of
   it, `jagged_edge` to walk one side of a panel, and `open_box` for the `Box` of

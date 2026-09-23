@@ -163,6 +163,33 @@ def test_a_written_sheet_is_the_svg_the_run_made(tmp_path: Path) -> None:
     assert svg.read_text().lstrip().startswith("<?xml") or "<svg" in svg.read_text()
 
 
+_SOLID_ON_SHEET = """\
+from bench import *
+
+box = extrude(fill(rect(50, 50)), 10)
+show(part("frame", box, Stock(19.05, "ply"), Process.CNC))
+"""
+
+
+def test_a_solid_on_stock_is_reported_and_nothing_is_written(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The bug report's own case: what used to be an empty ``part-frame.svg`` and 0 errors
+    is now an error naming the part, printed on the command line, and nothing written for
+    it - task-58's own rule."""
+    script = tmp_path / "frame.py"
+    script.write_text(_SOLID_ON_SHEET)
+    out = tmp_path / "out"
+
+    assert build.main((str(script), "--out", str(out))) == 0
+    printed = capsys.readouterr().out
+    assert "1 errors" in printed
+    assert "exportable" in printed
+    assert "frame" in printed
+    assert "milling is not modelled yet" in printed
+    assert not out.is_dir() or not any(out.iterdir())
+
+
 def test_the_toml_shape_is_the_one_the_decision_describes(tmp_path: Path) -> None:
     """Guards the file format itself: `[values]`, flat, scalars - what a panel edit would
     write back and what a person would type by hand."""
