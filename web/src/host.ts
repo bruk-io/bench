@@ -69,7 +69,7 @@ export interface Host {
   /** Ask about `project`'s write lease, or act on it, as this client's `Identity` (`lease.ts`).
    * `keepalive` for the one asked as a page goes away - a release on `pagehide` - which the
    * browser then finishes sending after the page has gone. */
-  lease(project: string, act: Act, keepalive?: boolean): Promise<Answer<Standing>>;
+  lease(project: string, act: Act, keepalive?: boolean, signal?: AbortSignal): Promise<Answer<Standing>>;
 }
 
 /** Where a delete put what it deleted, relative to the projects root - `.trash/20260923-101503-
@@ -157,12 +157,12 @@ export function host(origin = "", fetchImpl: typeof fetch = fetch, identity: Ide
         r.json() as Promise<{ readonly project: string }>,
       ),
     trashProject: (project) => asked(path(project), { method: "DELETE" }, (r) => r.json() as Promise<Trashed>),
-    lease: (project, act, keepalive = false) =>
+    lease: (project, act, keepalive = false, signal) =>
       asked(
         act === "look"
           ? `${LEASES}/${encodeURIComponent(project)}`
           : `${LEASES}/${encodeURIComponent(project)}?act=${act}`,
-        { method: act === "look" ? "GET" : "POST", keepalive },
+        { method: act === "look" ? "GET" : "POST", keepalive, ...(signal === undefined ? {} : { signal }) },
         (r) => r.json() as Promise<Standing>,
       ),
   };

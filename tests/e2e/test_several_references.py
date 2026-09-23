@@ -152,13 +152,16 @@ def test_two_drops_are_two_references_one_active_chosen_by_its_row_and_kept_over
     with _hosted(root) as url:
         page = _opened(browser, url)
         page.click("#rail-refs")
+        bracket, foot = root / "plates" / "bracket.stl", root / "plates" / "foot.stl"
         _drop(page, "bracket.stl", first)
         _rows_are(page, ["bracket.stl"], "bracket.stl")
+        # The row is there as soon as the body is on the view; the file, once it has landed.
+        assert _eventually(lambda: bracket.is_file() and bracket.read_bytes(), first) == first
         _drop(page, "foot.stl", second)
         # AC#2: added, not replaced - both files, both rows, the new one active.
         _rows_are(page, ["bracket.stl", "foot.stl"], "foot.stl")
-        assert (root / "plates" / "bracket.stl").read_bytes() == first
-        assert (root / "plates" / "foot.stl").read_bytes() == second
+        assert _eventually(lambda: foot.is_file() and foot.read_bytes(), second) == second
+        assert bracket.read_bytes() == first
         assert _eventually(lambda: _reference(root), {"file": "foot.stl"}) == {"file": "foot.stl"}
         assert _chip(page).startswith("foot.stl")
 
