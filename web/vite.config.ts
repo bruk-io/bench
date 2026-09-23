@@ -6,6 +6,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { type Plugin, defineConfig } from "vite";
 
+import { projectsRoute, rootFor } from "./server/projects";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PY = resolve(HERE, "..", "src", "bench");
 const EXAMPLES = resolve(HERE, "..", "examples");
@@ -113,11 +115,31 @@ function staleness(): Plugin {
   };
 }
 
+/** The host's projects, read and written over `/__bench/projects/…` - decision-9's route.
+ *
+ * Beside `staleness()` and registered the same way, in both hooks, so dev and preview (and
+ * `tools/preview.py`, which spawns preview) answer it alike. The root is resolved when the
+ * server is configured, not when this file is loaded: `vite build` loads it too, and has no
+ * business making a directory. What the route does and refuses is `server/projects.ts` and
+ * `src/route.ts`.
+ */
+function projects(): Plugin {
+  return {
+    name: "bench:projects",
+    configureServer(server) {
+      server.middlewares.use(projectsRoute(rootFor(process.env), server.config.server.allowedHosts));
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(projectsRoute(rootFor(process.env), server.config.preview.allowedHosts));
+    },
+  };
+}
+
 // `base: "./"` so the built app works from any sub-path; the worker is an ES module
 // because it dynamically imports the self-hosted pyodide.mjs.
 export default defineConfig({
   base: "./",
   build: { target: "es2022" },
   worker: { format: "es" },
-  plugins: [regeneratePython(), staleness()],
+  plugins: [regeneratePython(), staleness(), projects()],
 });

@@ -9,3 +9,7 @@ __pycache__/
 # settings beside it are the project's and are tracked; a working copy of the project inside
 # the project is not.
 .claude/worktrees/
+
+# The projects root when BENCH_PROJECTS is unset (tools/projects.py, web/server/projects.ts):
+# the maker's own work, not the repository's.
+/projects/

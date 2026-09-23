@@ -21,7 +21,7 @@ import subprocess
 import threading
 import time
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import IO
 
@@ -183,8 +183,13 @@ def _stopped(server: subprocess.Popen[bytes]) -> None:
 
 
 @contextlib.contextmanager
-def served() -> Iterator[str]:
+def served(*, dev: bool = False, env: Mapping[str, str] | None = None) -> Iterator[str]:
     """The built app, up for as long as the block runs, at the URL this yields.
+
+    ``dev`` serves the sources with ``vite`` instead of the build with ``vite preview`` - for
+    a check of what the server itself answers, which is the same in both and needs no build.
+    ``env`` is laid over this process's environment, which is how a check points the projects
+    route at a root of its own (``BENCH_PROJECTS``, :mod:`tools.projects`).
 
     No ``--port`` is given, so vite is free to fall back to the next free one when its
     default is taken - the port this run gets is read back off its own announcement rather
@@ -197,9 +202,9 @@ def served() -> Iterator[str]:
     # codes that no URL pattern sees through. NO_COLOR wins over FORCE_COLOR in vite's colours.
     plain = {name: value for name, value in os.environ.items() if name != "FORCE_COLOR"}
     server = subprocess.Popen(
-        ("npx", "vite", "preview"),
+        ("npx", "vite") if dev else ("npx", "vite", "preview"),
         cwd=WEB,
-        env={**plain, "NO_COLOR": "1"},
+        env={**plain, **(env or {}), "NO_COLOR": "1"},
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         start_new_session=True,
