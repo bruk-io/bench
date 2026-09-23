@@ -3,10 +3,10 @@ id: task-52
 title: >-
   Reach the projects over the host route, with an outbox for writes that have
   not landed
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-22 20:21'
-updated_date: '2026-09-22 20:21'
+updated_date: '2026-09-23 01:56'
 labels: []
 milestone: m-4
 dependencies:
