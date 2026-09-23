@@ -202,7 +202,13 @@ worker = [
     "kernel",
     "placement",
     "report",
+    "shadow",
 ]
+# shadow says which of a project's own file names would silently replace the standard library
+# or bench itself, once mounted onto the import path - tools/build.py and worker.py's shared
+# rule (task-50). It reads sys.stdlib_module_names and nothing of bench's, which is what lets
+# both a plain Python process and a script's own worker check it the same way.
+shadow = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
