@@ -2,10 +2,17 @@
 id: decision-10
 title: A fit is a face on each part and a Fit
 date: '2026-09-23 16:00'
-status: proposed
+status: accepted
 ---
 
 # Proposal - a fit is a face on each part and a `Fit`
+
+Status (2026-09-23): accepted by the owner, with the recommendations below taken as the
+answers - the authored frame is the rule, corrected by `offset`/`spin`, with the frames drawn
+when picking; one pair per `mated`, any second pair a check and never solved; and a part's
+print orientation kept apart from where it sits in an assembly. Built as milestone m-8, Fits:
+task-57 first, then task-59 (planar mates), task-60 (round mates), task-61 (picking two faces
+in the app), task-62 (section view) and task-63 (colouring a built part's faces).
 
 Asked for while modelling a wall vent (projects/frame, 2026-09-23): "select two faces, pass
 them to a fit function, which arranges the objects and shows if there are any fit issues."
