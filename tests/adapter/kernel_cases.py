@@ -21,6 +21,7 @@ from bench import (
     Solid,
     Top,
     Vector,
+    Wire,
     X,
     boss,
     checks,
@@ -30,6 +31,7 @@ from bench import (
     cut,
     cylinder,
     extrude,
+    face,
     fill,
     hole,
     hull,
@@ -43,6 +45,7 @@ from bench import (
     rect,
     revolve,
     rotate,
+    rounded_rect,
     run,
     union,
 )
@@ -216,6 +219,91 @@ def _extra() -> dict[str, Solid]:
     }
 
 
+FLANGE_SIDE = 317.5
+"""The frame flange task-57 was found on, in millimetres: a 12.5 inch square, read off
+``projects/frame/frame.py`` and multiplied out by hand rather than kept in inches, so a plate
+built here is a plate anyone can check against the sketch without a conversion."""
+
+FLANGE_CORNER = 6.35
+"""The flange's corner radius: a quarter inch."""
+
+FLANGE_WINDOW = 266.7
+"""The flange's own window, a rounded square 10.5 inches on a side, centred in it."""
+
+FLANGE_T = 11.1125
+"""The flange's own thickness, a lower plate stands to: 0.4375 inch."""
+
+ATTACHMENT_T = 6.35
+"""The upper plate's thickness, standing off wherever the lower plate's top face is: a
+quarter inch, the attachment's own base."""
+
+_FLANGE_WINDOW_INSET = (FLANGE_SIDE - FLANGE_WINDOW) / 2
+FLANGE_HOLE_D = 4.5
+"""An M4 clearance hole's diameter - the four screw holes the flange is checked with."""
+_FLANGE_HOLE_INSET = 9.525
+_FLANGE_HOLE_ALONG = 28.575
+
+
+def large_outline() -> Wire:
+    """The flange's own outline: a rounded square :data:`FLANGE_SIDE` across."""
+    return rounded_rect(FLANGE_SIDE, FLANGE_SIDE, FLANGE_CORNER)
+
+
+def large_window() -> Wire:
+    """The flange's own window: a rounded square :data:`FLANGE_WINDOW` across, centred."""
+    at = Point(_FLANGE_WINDOW_INSET, _FLANGE_WINDOW_INSET)
+    return rounded_rect(FLANGE_WINDOW, FLANGE_WINDOW, FLANGE_CORNER, at)
+
+
+def _large_holes() -> tuple[Point, ...]:
+    near, far = _FLANGE_HOLE_INSET, FLANGE_SIDE - _FLANGE_HOLE_INSET
+    along, back = _FLANGE_HOLE_ALONG, FLANGE_SIDE - _FLANGE_HOLE_ALONG
+    return (Point(near, along), Point(far, along), Point(near, back), Point(far, back))
+
+
+def _large_plate(z0: float, height: float, label: str) -> Solid:
+    """A large rounded-square plate with a rounded-square window and four corner clearance
+    holes, standing from ``z0`` to ``z0 + height`` - the shape :func:`large_plates` stacks."""
+    body = extrude(
+        face(large_outline(), holes=(large_window(),), on=raised(XY, z0)), height, label=label
+    )
+    for i, at in enumerate(_large_holes()):
+        body = cut(
+            body,
+            cylinder(FLANGE_HOLE_D / 2, height, at=Point(at.x, at.y, z0)),
+            label=f"{label}-hole-{i + 1}",
+        )
+    return body
+
+
+def large_plates(sink: float = 0.0) -> tuple[Solid, Solid]:
+    """Two large rounded-square plates task-57 was found on: a lower plate from z=0 to
+    :data:`FLANGE_T`, and an upper one extruded from the exact plane the lower's top face is
+    on - or ``sink`` millimetres into it, for the overlap a declared contact still has to
+    catch."""
+    lower = _large_plate(0.0, FLANGE_T, "lower")
+    upper = _large_plate(FLANGE_T - sink, ATTACHMENT_T, "upper")
+    return lower, upper
+
+
+def scattered_bosses(sink: float = 0.0) -> tuple[Solid, Solid]:
+    """The same large flange, and two small bosses - the disc-and-boss's own 8 mm across -
+    seated at opposite corners of it rather than one shared face in the middle, or sunk
+    ``sink`` millimetres into it.
+
+    What an area read off a bounding box gets wrong: two overlaps this small are real
+    material a declared contact has to catch, but they sit 260-odd millimetres apart on a
+    317.5 mm plate, so a box around both of them is most of the plate rather than either
+    boss's own footprint. A contact area measured off the shared shape's own surface does not
+    have this failure, and this is the pair that tells the two apart.
+    """
+    plate = _large_plate(0.0, FLANGE_T, "base")
+    at = FLANGE_SIDE - 20.0
+    corner_a = move(cylinder(4.0, 3.0, label="boss-a"), Vector(20.0, 20.0, FLANGE_T - sink))
+    corner_b = move(cylinder(4.0, 3.0, label="boss-b"), Vector(at, at, FLANGE_T - sink))
+    return plate, union(corner_a, corner_b, label="bosses")
+
+
 def _checked(kernel: Kernel) -> dict[str, Violation | None]:
     """Every check a test reads, answered with ``kernel``."""
     thick = cuboid(40, 40, 4)
@@ -246,7 +334,16 @@ def _checked(kernel: Kernel) -> dict[str, Violation | None]:
     disc = cylinder(8.0, 6.0, label="disc")
     seated = move(cylinder(4.0, 3.0, label="head"), Vector(0.0, 0.0, 6.0))
     driven = move(cylinder(4.0, 3.0, label="head"), Vector(0.0, 0.0, 5.8))
+    sunk_one_micron = move(cylinder(4.0, 3.0, label="head"), Vector(0.0, 0.0, 6.0 - 0.001))
     standing_clear = move(cylinder(4.0, 3.0, label="head"), Vector(0.0, 0.0, 11.0))
+    # The large faces task-57 was found on: a lower and an upper plate extruded from the
+    # exact plane where the first's top face is, and the same pair sunk a micron into each
+    # other - which is what a declared contact still has to fail, at this size as much as at
+    # the disc and boss's.
+    large_lower, large_upper = large_plates()
+    _, large_upper_sunk = large_plates(sink=0.001)
+    scattered_plate, scattered_seated = scattered_bosses()
+    _, scattered_sunk = scattered_bosses(sink=0.001)
     return {
         "wall-thick": checks.wall(thick, 1.2, kernel=kernel),
         "wall-thin": checks.wall(thick, 6.0, kernel=kernel),
@@ -262,7 +359,18 @@ def _checked(kernel: Kernel) -> dict[str, Violation | None]:
         "contact-seated-undeclared": checks.clearance_between(disc, seated, 0.2, kernel=kernel),
         "contact-driven": checks.contact_between(disc, driven, kernel=kernel),
         "contact-driven-undeclared": checks.clearance_between(disc, driven, 0.2, kernel=kernel),
+        "contact-sunk-one-micron": checks.contact_between(disc, sunk_one_micron, kernel=kernel),
         "contact-apart": checks.contact_between(disc, standing_clear, kernel=kernel),
+        "contact-large-plates": checks.contact_between(large_lower, large_upper, kernel=kernel),
+        "contact-large-plates-sunk-one-micron": checks.contact_between(
+            large_lower, large_upper_sunk, kernel=kernel
+        ),
+        "contact-scattered": checks.contact_between(
+            scattered_plate, scattered_seated, kernel=kernel
+        ),
+        "contact-scattered-sunk-one-micron": checks.contact_between(
+            scattered_plate, scattered_sunk, kernel=kernel
+        ),
         # The same two questions asked of a dropped mesh, which is the point of the leaf:
         # a check takes an import exactly as it takes anything else, and neither function
         # was touched to make that true.

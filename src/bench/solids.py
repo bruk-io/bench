@@ -269,7 +269,9 @@ def pocket(base: Solid, profile: Face, depth: float, *, label: str | Label) -> S
     the tool is ``profile`` dropped ``depth`` down its own normal and swept back up to it,
     so the pocket's floor is that tool's own ``bottom`` - ``plate/pocket/bottom`` - and its
     opening the tool's ``top``. Calling the floor ``floor`` would take a kernel, which
-    would have to say which face of the tool survived the cut.
+    would have to say which face of the tool survived the cut. Its frame is the tool's
+    turned over, as every face a cut leaves is (see :func:`plane_of`): it faces up out of
+    the base into the pocket, with X and Y the profile's own.
 
     Raises:
         ValueError: if ``depth`` is not positive; a pocket goes in.
@@ -306,6 +308,14 @@ def plane_of(
     that frame turned over - X still runs the profile's way and Y runs backwards, which is
     what keeps a wire drawn counter-clockwise on it counter-clockwise seen from outside.
 
+    **A face a cut leaves is its tool's, turned over.** A pocket's floor is the tool's
+    ``bottom``, whose own normal points out of the tool - into the base. What is left after
+    the cut is the base, so the floor answers that frame turned over the way ``bottom`` is
+    ``top`` turned over: normal up out of the base into the pocket, X still the profile's.
+    The same goes for every face of a cut's tool - a groove's ceiling faces down into the
+    groove, and a drilled bore's wall faces its axis - so a normal always points out of the
+    material that remains, and a part mated onto a face a cut left sits in the cavity.
+
     **A round face has a plane at every point of it, and ``around`` is how you ask for one.**
     The side of a cylinder is where a set screw goes, and it has no single plane, so
     ``plane_of(collar, "side-0", around=0.0, along=6.0)`` is the plane tangent to it a turn
@@ -315,10 +325,10 @@ def plane_of(
     The radius is read off the body, so the seat follows the part when the part changes.
 
     ``at`` is a path under the solid and may start with the solid's own label, which is
-    what the editor inserts when a face is clicked.
+    what the editor inserts when a face is clicked; a name no face answers to is
+    :func:`face_of`'s :class:`LookupError`.
 
     Raises:
-        LookupError: if no face of ``solid`` answers to ``at``.
         ValueError: if ``along`` is given without ``around``, if ``around`` is given for a
             face that is not round, or if the face has no plane and no turn to take a
             tangent at - a revolve's side, the wall of a hole with corners in it.
@@ -326,15 +336,61 @@ def plane_of(
     if around is None and abs(along) > TOL:
         msg = "along= places a sketch up a round face; give around= as well to say where"
         raise ValueError(msg)
+    return _face_plane(face_of(solid, at), str(at), around, along)
+
+
+def face_of(solid: Solid, at: str | Ref) -> SolidFace:
+    """The named face of ``solid`` itself, as the tree knows it before anything is built:
+    what it is for, and the plane - or, for a round face, the :class:`~bench.topology.Curved`
+    surface - it lies in.
+
+    What :func:`plane_of` and :func:`axis_of` both read, and what a caller asks when it has to
+    know which of the two a face has: a flat face has a ``plane``, a round one a ``curved``.
+    ``at`` may start with the solid's own label, as it may for :func:`plane_of`.
+
+    Raises:
+        LookupError: if no face of ``solid`` answers to ``at``.
+    """
     table = index(solid)
     asked = Ref(str(at))
     under = Ref(asked.removeprefix(f"{solid.label}{SEP}")) if solid.label is not None else asked
     for key in (asked, under):
         found = table.get(key)
         if isinstance(found, SolidFace):
-            return _face_plane(found, str(at), around, along)
+            return found
     msg = f"no face named {str(at)!r}"
     raise LookupError(msg)
+
+
+def axis_of(solid: Solid, at: str | Ref) -> Plane:
+    """The axis of one named round face of ``solid``, as a frame: its normal is the axis.
+
+    The frame is the one the face was authored in, exactly as :func:`plane_of`'s is. Its
+    origin is where the axis crosses the plane the profile was drawn on - the centre the arc
+    or circle was drawn about - its normal runs the way the sweep did, into the body, and its
+    X points at the face's zero, the profile's own X, from which :func:`plane_of`'s
+    ``around`` is measured. So ``plane_of(pin, "side-0", around=a, along=d)`` is the plane
+    tangent to the face ``a`` radians round this frame's X and ``d`` up its normal, and the
+    radius between the two is read off the body.
+
+    That X is what makes the frame more than an :class:`~bench.geometry.Axis`: a turn about
+    an axis needs somewhere to be measured from, and inventing a perpendicular would move
+    whenever the axis did. Nothing about which side the material is on is said here - a
+    bore's axis and its pin's are the same kind of line. A name no face answers to is
+    :func:`face_of`'s :class:`LookupError`.
+
+    Raises:
+        ValueError: if the face is not round - a flat face has :func:`plane_of`'s plane, and
+            a revolve's side or the wall of a hole with corners in it has no one axis.
+    """
+    found = face_of(solid, at)
+    if found.curved is None:
+        told = "is flat; plane_of is its plane" if found.plane is not None else "has no one axis"
+        msg = f"face {str(at)!r} {told}, and only a round face has an axis"
+        raise ValueError(msg)
+    curved = found.curved
+    run = unit(curved.axis.direction)
+    return plane(curved.axis.origin, run, curved.zero - run * (curved.zero @ run))
 
 
 def _face_plane(found: SolidFace, at: str, around: float | None, along: float) -> Plane:

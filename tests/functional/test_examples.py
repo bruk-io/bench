@@ -55,6 +55,7 @@ _PARTS = {
         "pin-2",
         "pin-3",
     ),
+    "wall_vent.py": ("frame", "attachment"),
 }
 """What each example must show. Not every part of the cabinet - it has one front per drawer
 - but every part whose name a reader of the script would expect to find."""

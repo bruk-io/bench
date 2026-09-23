@@ -3,9 +3,10 @@ id: task-58
 title: >-
   A solid on sheet Stock, or marked CNC, says it cannot be exported rather than
   exporting nothing
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-23 14:35'
+updated_date: '2026-09-23 17:22'
 labels: []
 milestone: m-7
 dependencies: []

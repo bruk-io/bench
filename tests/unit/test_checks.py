@@ -1,6 +1,6 @@
 """Unit: :mod:`bench.checks` alone - what a check answers with nothing to measure with.
 
-Four of the six checks need a solid modeller, and this layer has none: what is asserted here
+Five of the seven checks need a solid modeller, and this layer has none: what is asserted here
 is that they say so, in a record, rather than raising or quietly passing. The other two -
 ``fits`` and ``exportable`` - read the tree's own bounds and shape, and are answered in full.
 The measurements themselves are the adapter layer's, against a real kernel.
@@ -9,6 +9,9 @@ The measurements themselves are the adapter layer's, against a real kernel.
 import pytest
 
 from bench import (
+    CONTACT,
+    Fit,
+    Fitted,
     Point,
     Printed,
     Process,
@@ -28,6 +31,7 @@ from bench.checks import (
     clearance_between,
     contact_between,
     exportable,
+    fit_between,
     fits,
     overhangs,
     sampling,
@@ -189,3 +193,41 @@ def test_a_solid_on_printed_stock_is_exportable_unless_marked_cnc() -> None:
     :func:`exportable` has nothing to say about it."""
     solid = extrude(fill(rect(50, 50)), 10)
     assert exportable(solid, Printed(PLA), Process.PRINT) is None
+
+
+# ---- a pair put together at a fit --------------------------------------------------------
+
+
+def test_a_fit_with_no_kernel_is_unchecked_and_says_what_it_asked() -> None:
+    """The answer still says what was asked, so a browser before the modeller has loaded
+    reads the fit the script meant even though nothing measured it."""
+    fitted = fit_between(cuboid(10, 10, 10), cuboid(10, 10, 10), Fit.SLIDE, 0.2, kernel=None)
+    assert fitted.gap is None
+    assert fitted.finding is not None
+    assert fitted.finding.severity is Severity.UNCHECKED
+    assert str(fitted).startswith("asked 0.200 (slide), not measured:")
+    assert str(fit_between(cuboid(1, 1, 1), cuboid(1, 1, 1), CONTACT, 0.0, kernel=None)).startswith(
+        "asked contact, not measured:"
+    )
+
+
+def test_a_fit_says_what_it_measured_against_what_it_asked() -> None:
+    """The sentence a maker reads, pass or fail: the measured gap beside the asked one."""
+    assert str(Fitted(Fit.SLIDE, 0.2, 0.2, None)) == "clear by 0.200 mm, asked 0.200 (slide)"
+    assert str(Fitted(Fit.SLIDE, 0.2, 1.2, None)) == (
+        "clear by more than 1.200 mm, asked 0.200 (slide)"
+    )
+    tight = Violation("fit", "too close", Severity.ERROR)
+    assert str(Fitted(Fit.SLIDE, 0.2, 0.15, tight)) == (
+        "clear by 0.150 mm, asked 0.200 (slide): too close"
+    )
+
+
+def test_a_contact_says_whether_it_touched_overlapped_or_never_met() -> None:
+    overlap = Violation("contact", "shares material", Severity.ERROR)
+    apart = Violation("fit", "stands apart", Severity.WARNING)
+    assert str(Fitted(CONTACT, 0.0, 0.0, None)) == "touch, asked contact"
+    assert str(Fitted(CONTACT, 0.0, 0.0, overlap)) == "overlap, asked contact: shares material"
+    assert str(Fitted(CONTACT, 0.0, 3.0, apart)) == (
+        "stand 3.000 mm apart, asked contact: stands apart"
+    )

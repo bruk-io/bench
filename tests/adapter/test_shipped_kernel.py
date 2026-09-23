@@ -24,11 +24,13 @@ from typing import Any, assert_never, get_args
 import pytest
 
 from bench import (
+    XY,
     Mesh,
     Process,
     Ref,
     Severity,
     Stock,
+    circle,
     faces_of,
     part,
     refs,
@@ -47,6 +49,7 @@ from bench.topology import (
     Revolve,
     Union,
     chord_step,
+    flat_ring,
 )
 from tests.adapter import kernel_cases
 from tests.adapter.kernel_cases import BORE, BOSS, PLATE, POCKET, WALLED
@@ -99,6 +102,29 @@ def _polygon_area(radius: float) -> float:
     noise and has to be in the expected value rather than in the tolerance."""
     sides = _facets(radius)
     return 0.5 * sides * radius * radius * math.sin(math.tau / sides)
+
+
+def _ring_area(points: tuple[tuple[float, float], ...]) -> float:
+    """A closed polygon's own area, by the shoelace formula - the same arithmetic a kernel's
+    cross-section is built from, so a footprint with arcs in it can be worked out here rather
+    than read off a formula for a circle it never fully is."""
+    pairs = tuple(zip(points, points[1:] + points[:1], strict=True))
+    return abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in pairs)) / 2
+
+
+def _large_plate_footprint_area() -> float:
+    """The area one large plate's flange actually meshes as: the outer rounded square, less
+    the rounded-square window, less its four round clearance holes - every wire chorded the
+    one rule the package uses everywhere, :func:`~bench.topology.flat_ring`, so this is the
+    same arithmetic the kernel's own cross-section is built from and not a second guess at
+    it."""
+    outer = kernel_cases.large_outline()
+    window = kernel_cases.large_window()
+    hole = circle(kernel_cases.FLANGE_HOLE_D / 2)
+    outer_area = _ring_area(flat_ring(outer, XY, (0,) * len(outer.edges)).points)
+    window_area = _ring_area(flat_ring(window, XY, (0,) * len(window.edges)).points)
+    hole_area = _ring_area(flat_ring(hole, XY, (0,) * len(hole.edges)).points)
+    return outer_area - window_area - 4 * hole_area
 
 
 def _mesh(built: dict[str, Any], key: str) -> Mesh:
@@ -611,6 +637,61 @@ def test_a_declared_contact_says_nothing_about_whether_the_two_actually_meet(
     clear of each other shares no material and passes: declaring a contact names the pair
     that is *allowed* to touch, never the pair that must."""
     assert built["checks"]["contact-apart"] is None
+
+
+def test_a_small_face_sunk_one_micron_still_fails(built: dict[str, Any]) -> None:
+    """The figure :data:`~bench.checks._SHARED_SLACK`'s own docstring cites: the same disc
+    and boss as :func:`test_a_declared_contact_passes_exactly_where_an_undeclared_pair_fails`,
+    sunk a single micron rather than a fifth of a millimetre. A mean-penetration-depth test
+    has to fail this exactly as a fixed-volume one already did, so it is measured here and
+    not assumed."""
+    sunk = built["checks"]["contact-sunk-one-micron"]
+    assert sunk is not None
+    assert sunk["severity"] == Severity.ERROR
+    assert f"share {_polygon_area(4.0) * 0.001:.3f} mm3" in sunk["message"]
+
+
+def test_two_large_coincident_faces_pass_a_declared_contact(built: dict[str, Any]) -> None:
+    """task-57: two 317.5 mm rounded-square plates, each with a 266.7 mm rounded-square
+    window and four clearance holes, the second extruded from the exact plane the first's
+    top face is on. A fixed-volume test failed this - the rounding two large faces pick up
+    just from being large reads as more shared material than a real one-micron overlap on a
+    small pair ever did - so this is the check the fix exists to pass."""
+    assert built["checks"]["contact-large-plates"] is None
+
+
+def test_a_one_micron_sink_of_the_large_plates_still_fails(built: dict[str, Any]) -> None:
+    """The other half of task-57's evidence: the same two large plates, the upper one sunk
+    one micron into the lower, still have to fail. The shared volume a one-micron overlap
+    that size leaves behind is the footprint - a rounded square less a rounded-square window
+    less four round holes, chorded the one rule the kernel's own cross-section uses - times
+    the sink, so the expected share is worked out from that footprint rather than read off a
+    second run of the modeller - within a few ten-thousandths, since a footprint this large is
+    single-precision mesh vertices summed a hundred thousand times over."""
+    expected = _large_plate_footprint_area() * 0.001
+    sunk = built["checks"]["contact-large-plates-sunk-one-micron"]
+    assert sunk is not None
+    assert sunk["severity"] == Severity.ERROR
+    reported = float(sunk["message"].split("share ")[1].split(" mm3")[0])
+    assert reported == pytest.approx(expected, rel=1e-3)
+
+
+def test_two_islands_of_overlap_far_apart_on_one_large_face_still_fail(
+    built: dict[str, Any],
+) -> None:
+    """Why the contact area is read off the shared shape's own surface rather than off a
+    bounding box: two small bosses seated at opposite corners of the same large flange pass
+    exactly as the boss and disc do on their own, and sunk a micron into it still fail, even
+    though the two overlaps sit 260-odd millimetres apart and a box around both of them would
+    be most of the plate. A bounding box read that large would have driven the mean
+    penetration depth down by orders of magnitude and passed this as if it were rounding
+    noise; it is not, and the check has to catch it."""
+    assert built["checks"]["contact-scattered"] is None
+    sunk = built["checks"]["contact-scattered-sunk-one-micron"]
+    assert sunk is not None
+    assert sunk["severity"] == Severity.ERROR
+    # two 4 mm bosses, each sunk the same micron the small disc and boss above were
+    assert f"share {2 * _polygon_area(4.0) * 0.001:.3f} mm3" in sunk["message"]
 
 
 def test_a_run_with_a_kernel_measures_what_a_run_without_one_leaves_unchecked(

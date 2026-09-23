@@ -304,6 +304,8 @@ def test_the_checks_are_injected_per_run_and_are_not_names_of_the_package() -> N
         "check_clearance_within",
         "check_clearance_through",
         "check_contact",
+        "check_fit",
+        "mated",
         "require",
     ):
         assert not hasattr(bench, name), f"{name} is a per-run closure, not an export"

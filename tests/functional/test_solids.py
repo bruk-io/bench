@@ -90,7 +90,7 @@ def test_the_plates_features_stand_where_the_sketch_put_them() -> None:
     assert near(plane_of(plate, "boss/top").origin, Point(0, 0, 9))
     floor = plane_of(plate, "pocket/bottom")
     assert near(floor.origin, Point(0, 0, 3))
-    assert near(floor.normal, Vector(0, 0, -1))
+    assert near(floor.normal, Vector(0, 0, 1))
     assert near(plane_of(plate, "pocket/top").origin, Point(0, 0, 5))
     # the boss grew the body upward; the pocket and the bore, being cuts, left the bound
     # where it was, which is what makes a bound conservative rather than wrong
