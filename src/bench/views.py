@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import NamedTuple, assert_never
 
-from .checks import Severity, Violation
+from .checks import Severity, Violation, exportable
 from .export import part_svg, sheet_dxf, sheet_svg, stl, three_mf
 from .kernel import Kernel, Mesh
 from .model import Assembly, Part, Printed, Process, Ref, Stock, Stocked, index
@@ -92,7 +92,8 @@ def scene(
     the work is a span on ``tracer``.
     """
     parts = tuple(placed.part for placed in assembly.parts)
-    violations = tuple(_qualified(one, parts) for one in findings)
+    refused = _export_findings(parts)
+    violations = tuple(_qualified(one, parts) for one in (*findings, *refused))
     counts = tuple(quantities.get(Ref(part.label), 1) for part in parts)
     cut_list: tuple[PartSpec, ...] = tuple(zip(parts, counts, strict=True))
     with timed(tracer, "bench.scene.nest") as nesting:
@@ -234,6 +235,13 @@ def _files(
     An STL is one nameless body, which is what a slicer wants when a part is printed on its
     own; the 3MF is the whole print job with every part named inside it, and is written only
     when there is a body to put in it.
+
+    A part whose shape is a :class:`~bench.topology.Solid` gets no ``part-*.svg`` at all,
+    ordinary printed part or a part :func:`bench.checks.exportable` refuses alike:
+    :func:`bench.export.part_paths` draws nothing for a solid - a body is shown by building
+    it, which is a kernel's business, not a cutter's - so the file would be a page with no
+    path on it, the empty file this whole task exists to stop writing rather than a blank
+    download that looks like a real one.
     """
     files: dict[str, str] = {}
     for view, one in nested:
@@ -241,7 +249,13 @@ def _files(
         files[f"{view['name']}.dxf"] = sheet_dxf(one)
     files.update(extra)
     for part in parts:
-        files[f"part-{part.label}.svg"] = part_svg(part)
+        match part.shape:
+            case Face():
+                files[f"part-{part.label}.svg"] = part_svg(part)
+            case Solid():
+                continue
+            case _:
+                assert_never(part.shape)
     built = tuple(
         (str(part.label), body)
         for part, body in zip(parts, printed, strict=True)
@@ -399,6 +413,27 @@ def _stock_view(stock: Stocked) -> StockView:
             return StockView(thickness=0.0, material=stock.material.name, kerf=0.0)
         case _:
             assert_never(stock)
+
+
+def _export_findings(parts: Sequence[Part]) -> tuple[Finding, ...]:
+    """Every part :func:`bench.checks.exportable` refuses - a solid on sheet stock, or a
+    solid marked :data:`~bench.model.Process.CNC` - as one :class:`Finding` each, so the
+    reason reaches the scene's violations (the app's Problems panel and :mod:`tools.build`)
+    exactly as a script's own checks do, without a script having to ask for it. A part built
+    the wrong way is not something a maker should have to notice from an empty download.
+
+    The refs are the part's own label, put there directly rather than left for
+    :func:`_qualified` to find by matching ``part.shape``'s identity: two parts made from the
+    very same shape - a script that hands one ``Solid`` to two ``part()`` calls - would
+    otherwise both be named for whichever part :func:`_label_of` happens to see first. No
+    subjects are carried, so :func:`_qualified` leaves these refs exactly as they arrive.
+    """
+    found: list[Finding] = []
+    for part in parts:
+        violation = exportable(part.shape, part.stock, part.process)
+        if violation is not None:
+            found.append(Finding(replace(violation, refs=(Ref(str(part.label)),)), ()))
+    return tuple(found)
 
 
 def _qualified(finding: Finding, parts: Sequence[Part]) -> Violation:

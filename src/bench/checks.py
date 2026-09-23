@@ -12,10 +12,11 @@ comes back, and the violation is collected the way :func:`bench.nest.nest` alrea
 a part that will not fit on the bed. A script that wants to stop says so itself, with
 ``require(...)``, which is injected into it beside ``show``.
 
-Two tiers, and the signature says which: :func:`fits` reads the tree's own
-:func:`~bench.topology.bounds` and runs anywhere, including in a browser with no kernel at
-all. :func:`clearance_between`, :func:`contact_between`, :func:`wall` and :func:`overhangs`
-are measurements of a built body, and without a modeller they answer ``UNCHECKED``.
+Two tiers, and the signature says which: :func:`fits` and :func:`exportable` read the tree's
+own :func:`~bench.topology.bounds` and shape and run anywhere, including in a browser with no
+kernel at all. :func:`clearance_between`, :func:`contact_between`, :func:`wall` and
+:func:`overhangs` are measurements of a built body, and without a modeller they answer
+``UNCHECKED``.
 
 :func:`clearance_between` and :func:`contact_between` are the two halves of one question and
 a pair gets exactly one of them. Bodies that are meant to stay apart are asked how far apart
@@ -40,8 +41,8 @@ from .facets import Triangle, area, normal, thinnest, triangles
 from .fasteners import Contact, Fit
 from .geometry import TOL, Plane, Point, Vector, plane, unit
 from .kernel import Kernel, Mesh
-from .model import Material, Orient, Ref, Volume
-from .topology import Extrude, Intersection, Shape, Solid, bounds, face, polygon
+from .model import Material, Orient, Printed, Process, Ref, Stock, Stocked, Volume
+from .topology import Extrude, Face, Intersection, Shape, Solid, bounds, face, polygon
 
 _ORIGIN = Point(0.0, 0.0, 0.0)
 """Where a point is measured from when it has to become a vector to be projected."""
@@ -98,7 +99,7 @@ def unchecked(check: str) -> Violation:
 def fits(shape: Shape, volume: Volume) -> Violation | None:
     """Whether ``shape`` fits in ``volume`` as it stands, or ``None`` when it does.
 
-    The one check that needs no kernel: :func:`~bench.topology.bounds` answers it from the
+    One of the two checks that need no kernel: :func:`~bench.topology.bounds` answers it from the
     tree, and is conservative under a cut - a bound that is too big never passes a part that
     will not fit, which is the direction a build-volume check has to err in.
 
@@ -122,6 +123,53 @@ def fits(shape: Shape, volume: Volume) -> Violation | None:
         message=f"the part is bigger than the build volume: {', '.join(over)}",
         severity=Severity.ERROR,
     )
+
+
+def exportable(shape: Shape, stock: Stocked, process: Process) -> Violation | None:
+    """Whether a part's shape, stock and process combine into something the cut sheets and
+    the print files can actually be drawn from, or ``None`` when they do.
+
+    Needs no kernel, the same as :func:`fits`: a sheet part is a flat :class:`~bench.topology.Face`
+    that :mod:`bench.export` cuts a path from, and a :class:`~bench.topology.Solid` on sheet
+    :class:`~bench.model.Stock` is not one - it needs :class:`~bench.model.Printed` stock
+    instead, or, once it exists, stock that is milled. A :class:`~bench.topology.Solid` marked
+    :data:`~bench.model.Process.CNC` asks to mill a billet, which nothing here builds yet,
+    whatever its stock: that is refused the same way rather than quietly dropped.
+
+    A :class:`~bench.topology.Face` marked :data:`Process.CNC` is left alone - a flat part
+    routed on a CNC is still a 2D profile, cut the same way a laser cuts one, and draws
+    exactly like one.
+    """
+    match shape:
+        case Face():
+            return None
+        case Solid():
+            if process is Process.CNC:
+                return Violation(
+                    check="exportable",
+                    message=(
+                        "Process.CNC on a solid asks to mill a billet, and milling is not"
+                        " modelled yet - nothing is exported for this part"
+                    ),
+                    severity=Severity.ERROR,
+                )
+            match stock:
+                case Stock():
+                    return Violation(
+                        check="exportable",
+                        message=(
+                            "a solid cannot be cut from sheet stock: a sheet part is a flat"
+                            " Face that is cut out, and a solid needs Printed stock instead -"
+                            " or, once it exists, stock that is milled"
+                        ),
+                        severity=Severity.ERROR,
+                    )
+                case Printed():
+                    return None
+                case _:
+                    assert_never(stock)
+        case _:
+            assert_never(shape)
 
 
 # ---- what only a built body can answer -----------------------------------------------

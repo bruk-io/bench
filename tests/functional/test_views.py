@@ -188,6 +188,15 @@ def test_a_printed_part_with_no_kernel_is_unbuilt() -> None:
     assert (scene["summary"]["solid"], scene["summary"]["unbuilt"]) == (0, 1)
 
 
+def test_an_ordinary_printed_part_gets_no_blank_part_svg_either() -> None:
+    """A printed body has no flat outline to draw - :func:`bench.export.part_paths` draws
+    nothing for a solid - so it never had a violation to say why; the same rule that stops a
+    refused part getting an empty ``part-*.svg`` (task-58) stops one here too."""
+    scene = _ok(run(PRINTED))
+    assert scene["violations"] == []
+    assert "part-block.svg" not in scene["files"]
+
+
 def test_the_summary_counts_what_the_run_made() -> None:
     scene = _ok(run(CABINET.read_text()))
     summary = scene["summary"]
@@ -201,3 +210,87 @@ def test_the_summary_counts_what_the_checks_found_and_where() -> None:
     summary = _ok(run(TOO_BIG))["summary"]
     assert summary["errors"] == 1
     assert summary["error_line"] == 5
+
+
+# ---- a part exportable() refuses says so, rather than exporting nothing ---------------
+
+SOLID_ON_SHEET = """\
+from bench import *
+
+box = extrude(fill(rect(50, 50)), 10)
+show(part("frame", box, Stock(19.05, "ply")))
+"""
+
+SOLID_MARKED_CNC = """\
+from bench import *
+
+box = extrude(fill(rect(50, 50)), 10)
+show(part("frame", box, Stock(19.05, "ply"), Process.CNC))
+"""
+
+FACE_MARKED_CNC = """\
+from bench import *
+
+show(part("routed", fill(rect(50, 50)), Stock(19.05, "ply"), Process.CNC))
+"""
+
+
+def test_a_solid_on_sheet_stock_is_an_error_naming_the_part_not_an_empty_file() -> None:
+    scene = _ok(run(SOLID_ON_SHEET))
+    [found] = scene["violations"]
+    assert found["check"] == "exportable"
+    assert found["severity"] == "error"
+    assert found["refs"] == ["frame"]
+    assert scene["summary"]["errors"] == 1
+    assert "part-frame.svg" not in scene["files"]
+
+
+def test_a_solid_marked_cnc_says_milling_is_not_modelled_not_an_empty_file() -> None:
+    scene = _ok(run(SOLID_MARKED_CNC))
+    [found] = scene["violations"]
+    assert found["check"] == "exportable"
+    assert found["refs"] == ["frame"]
+    assert "milling is not modelled yet" in found["message"]
+    assert "part-frame.svg" not in scene["files"]
+
+
+def test_a_flat_part_marked_cnc_is_still_a_2d_profile_and_still_exports() -> None:
+    """A router cutting a flat sheet part is a legitimate 2D profile, the same shape a
+    laser cuts - see :func:`bench.checks.exportable`'s own docstring for the rule."""
+    scene = _ok(run(FACE_MARKED_CNC))
+    assert scene["violations"] == []
+    assert scene["summary"]["errors"] == 0
+    assert "part-routed.svg" in scene["files"]
+    assert scene["sheets"]
+
+
+def test_an_unexportable_part_still_appears_in_the_scene_named_and_unbuilt() -> None:
+    """The finding names a part that never disappears: it is still counted, still has a
+    box, and the maker sees why it has no file rather than wondering where it went."""
+    scene = _ok(run(SOLID_ON_SHEET))
+    [only] = scene["parts"]
+    assert only["label"] == "frame"
+    assert scene["summary"]["parts"] == 1
+
+
+TWO_PARTS_ONE_SOLID = """\
+from bench import *
+
+box = extrude(fill(rect(50, 50)), 10)
+left = part("left", box, Stock(19.05, "ply"), Process.CNC)
+right = part("right", box, Stock(19.05, "ply"), Process.CNC)
+show((left, right))
+"""
+
+
+def test_two_parts_sharing_one_solid_are_each_named_by_their_own_violation() -> None:
+    """The same ``Solid`` handed to two ``part()`` calls is two objects worth refusing, and
+    a finding matched by the shape's identity would name whichever part
+    :func:`bench.views._label_of` happened to see first for both - see
+    :func:`bench.views._export_findings`, which carries the part's own label instead of
+    matching by shape."""
+    scene = _ok(run(TWO_PARTS_ONE_SOLID))
+    named = {one["refs"][0] for one in scene["violations"]}
+    assert named == {"left", "right"}
+    assert "part-left.svg" not in scene["files"]
+    assert "part-right.svg" not in scene["files"]

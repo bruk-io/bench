@@ -1,9 +1,9 @@
 """Unit: :mod:`bench.checks` alone - what a check answers with nothing to measure with.
 
-Four of the five checks need a solid modeller, and this layer has none: what is asserted
-here is that they say so, in a record, rather than raising or quietly passing. The fifth
-reads the tree's own bounds and is answered in full. The measurements themselves are the
-adapter layer's, against a real kernel.
+Five of the seven checks need a solid modeller, and this layer has none: what is asserted here
+is that they say so, in a record, rather than raising or quietly passing. The other two -
+``fits`` and ``exportable`` - read the tree's own bounds and shape, and are answered in full.
+The measurements themselves are the adapter layer's, against a real kernel.
 """
 
 import pytest
@@ -14,20 +14,25 @@ from bench import (
     Fit,
     Fitted,
     Point,
+    Printed,
+    Process,
     Ref,
     RoundPair,
     Sampled,
     Severity,
+    Stock,
     Violation,
     cuboid,
     cut,
     cylinder,
+    extrude,
     fill,
     rect,
 )
 from bench.checks import (
     clearance_between,
     contact_between,
+    exportable,
     fit_between,
     fits,
     overhangs,
@@ -149,6 +154,47 @@ def test_a_motion_nothing_could_measure_says_that_and_not_how_it_sampled() -> No
     assert said == (
         "the motion was not measured: there is no kernel in this run, so nothing measured it"
     )
+
+
+# ---- exportable: what a shape, its stock and its process can actually be cut from -----
+
+
+def test_a_face_on_sheet_stock_is_exportable_whatever_its_process() -> None:
+    """The ordinary laser case, and the point of the whole check: nothing here refuses a
+    part that was always fine."""
+    face = fill(rect(50, 50))
+    assert exportable(face, Stock(3.0, "ply"), Process.LASER) is None
+    assert exportable(face, Stock(3.0, "ply"), Process.CNC) is None
+
+
+def test_a_solid_on_sheet_stock_is_refused_naming_what_a_sheet_part_is() -> None:
+    """A sheet part is cut from a flat Face; a solid was never one, whatever it is marked."""
+    solid = extrude(fill(rect(50, 50)), 10)
+    found = exportable(solid, Stock(19.05, "ply"), Process.LASER)
+    assert found is not None
+    assert found.check == "exportable"
+    assert found.severity is Severity.ERROR
+    assert "Face" in found.message
+    assert "Printed" in found.message
+
+
+def test_a_solid_marked_cnc_is_refused_saying_milling_is_not_modelled() -> None:
+    """The bug report's own case: ``Process.CNC`` over a solid asks to mill a billet, and
+    nothing here builds one yet - whatever the stock is."""
+    solid = extrude(fill(rect(50, 50)), 10)
+    on_sheet = exportable(solid, Stock(19.05, "ply"), Process.CNC)
+    on_filament = exportable(solid, Printed(PLA), Process.CNC)
+    for found in (on_sheet, on_filament):
+        assert found is not None
+        assert found.severity is Severity.ERROR
+        assert "milling is not modelled yet" in found.message
+
+
+def test_a_solid_on_printed_stock_is_exportable_unless_marked_cnc() -> None:
+    """The ordinary printed case: a body on filament, built by a kernel rather than cut -
+    :func:`exportable` has nothing to say about it."""
+    solid = extrude(fill(rect(50, 50)), 10)
+    assert exportable(solid, Printed(PLA), Process.PRINT) is None
 
 
 # ---- a pair put together at a fit --------------------------------------------------------
