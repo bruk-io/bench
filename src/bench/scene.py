@@ -64,6 +64,18 @@ class MeshView(TypedDict, closed=True):
     refs: list[str]
 
 
+class FrameView(TypedDict, closed=True):
+    """One named face's frame, exactly what :func:`bench.solids.plane_of` answers for it:
+    ``origin`` and ``normal`` already stood where the stage put the body - a translation
+    only, so a direction needs none of it - and ``x`` the direction the face was authored
+    with, unmoved. Three numbers each, task-61's pick draws as small axes and reads to write
+    ``offset``/``spin`` by eye."""
+
+    origin: list[float]
+    normal: list[float]
+    x: list[float]
+
+
 class MarksView(TypedDict, closed=True):
     """The wires engraved on a plate, ready to draw: ``segments`` is six numbers per line
     segment - both ends, already placed on the stage and just clear of the plate's top - and
@@ -125,6 +137,10 @@ class PartView(TypedDict, closed=True):
     a laser part's plate, or a printed part's body as a kernel built it - and ``None`` for a
     part there is no body for, such as a printed part in a run given no kernel. ``marks`` and
     ``lettering`` are what is engraved on a plate; ``marks`` is ``None`` when nothing is.
+    ``frames`` is every named planar face's frame, under its own ref the way ``refs`` names
+    it - one entry per face :func:`~bench.solids.plane_of` can answer for, which is only a
+    printed part's: a laser part's plate has none, and neither does a round face with no
+    ``around=`` to take a tangent at, which is task-61's own "cannot frame" case.
     """
 
     ref: str
@@ -136,6 +152,7 @@ class PartView(TypedDict, closed=True):
     mesh: MeshView | None
     marks: MarksView | None
     lettering: list[LetteringView]
+    frames: dict[str, FrameView]
 
 
 class ViolationView(TypedDict, closed=True):

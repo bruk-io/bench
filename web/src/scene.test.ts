@@ -19,6 +19,7 @@ function wire(part: Record<string, unknown> = {}): Record<string, unknown> {
         mesh: { positions: 0, ref_index: 1, refs: ["plate/hole"] },
         marks: { segments: 2, ref_index: 3, refs: ["plate/score"] },
         lettering: [{ text: "1", ref: "plate/label", corners: Array.from({ length: 12 }, () => 0) }],
+        frames: {},
         ...part,
       },
     ],
@@ -83,5 +84,23 @@ describe("received, plates and what is engraved on them", () => {
     const old = wire();
     old["summary"] = { parts: 1, sheets: 0, errors: 0, warnings: 0, error_line: null, drawn: 1 };
     expect(problemOf(old)).toBe("summary.solid is not a whole number");
+  });
+
+  it("reads a face's frame - origin, normal, x - onto the part", () => {
+    const found = received(
+      wire({ frames: { "plate/hole": { origin: [1, 2, 3], normal: [0, 0, 1], x: [1, 0, 0] } } }),
+      buffers(),
+    );
+    if (!("scene" in found) || !found.scene.ok) throw new Error("that scene was meant to be read");
+    expect(found.scene.parts[0]?.frames["plate/hole"]).toEqual({
+      origin: [1, 2, 3],
+      normal: [0, 0, 1],
+      x: [1, 0, 0],
+    });
+  });
+
+  it("refuses a frame with the wrong count of numbers", () => {
+    const bad = wire({ frames: { "plate/hole": { origin: [1, 2], normal: [0, 0, 1], x: [1, 0, 0] } } });
+    expect(problemOf(bad)).toContain("frames");
   });
 });
