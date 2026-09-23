@@ -137,14 +137,19 @@ that rule, and `index()` walks them like any other rung:
 | --- | --- |
 | `Extrude(profile, distance)` | `top` (the face at `distance`), `bottom` (on the profile's plane), `side-<edge label or index>` per outer-wire edge, and one face per profile hole wire under that wire's label (`hole-0`, `hole-1` ... unlabelled). A side swept from an arc or a circle has no plane and carries a `Curved` - the axis it turns about, its radius, where zero points, and which side the material is on - which is what `plane_of(..., around=, along=)` builds a tangent plane out of |
 | `Revolve(profile, axis, angle)` | the same `side-` and hole faces, none of them planar, plus `start` and `end` when `angle` is less than a full turn |
-| `Union` / `Difference` / `Intersection` | nothing of its own: each operand keeps its own label path, so a tool labelled `pocket` puts its floor at `plate/pocket/bottom` |
+| `Union` / `Difference` / `Intersection` | nothing of its own: each operand keeps its own label path, so a tool labelled `pocket` puts its floor at `plate/pocket/bottom`. A `Difference`'s tool faces are the walls of a cavity, so their frames come back turned over (normal reversed, X kept, Y reversed - how `bottom` is `top` turned over, and a round face's material on its other side): every face's normal points out of the material that is left, so the floor faces up into the pocket |
 | `Hull(parts)` | nothing at all. Face identity does not survive a hull, and the parts are unreachable as refs |
 | `Moved(node, at)` | what is under it, planes transformed. It renames nothing |
 
 `side-` is load-bearing: `joints.open_box` already labels a panel's edges `top`,
 `bottom`, `right` and `left`, and an extruded panel has a `top` and a `bottom` of its
 own. A pocket's floor is `bottom` because that is the tool's own role; calling it `floor`
-would take a kernel, to say which face of the tool survived the cut.
+would take a kernel, to say which face of the tool survived the cut. Its *frame* is not the
+tool's, though: the tool's `bottom` faces down out of the tool, into the plate, and the floor
+it leaves bounds the plate, so the naming walk turns every face under a cut's tool over
+(`Moved(..., cavity=True)`, which a kernel builds exactly as it builds any other move) - a tool
+within a tool is turned back again. `plane_of(plate, "pocket/bottom")` faces up into the pocket
+with X and Y the profile's own, and a part mated onto it sits in the pocket.
 
 **At most one anonymous body per part.** An unlabelled `Solid` is transparent like every
 other unlabelled node, so two of them under one part both offer a face called `top` and

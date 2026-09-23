@@ -45,6 +45,7 @@ from bench import (
     fill,
     foot_chamfer,
     grid,
+    hole,
     hull,
     is_ccw,
     is_closed,
@@ -669,7 +670,8 @@ def test_a_pocket_floor_is_the_tools_own_bottom_and_a_boss_crown_its_top() -> No
     )
     floor = plane_of(sunk, "pocket/bottom")
     assert near(floor.origin, Point(0, 0, 3))
-    assert near(floor.normal, Vector(0, 0, -1))
+    assert near(floor.normal, Vector(0, 0, 1)), "out of the plate that is left, into the pocket"
+    assert near(floor.x_dir, X), "X still runs the profile's way"
     assert near(plane_of(sunk, "pocket/top").origin, Point(0, 0, 5))
     stood = boss(
         plate, fill(circle(3, Point(20, 15)), on=plane_of(plate, "top")), 4.0, label="boss"
@@ -1015,6 +1017,19 @@ def test_a_bore_is_round_from_the_other_side() -> None:
     wall = plane_of(plate, "bore", around=0.0, along=4.0)
     assert near(wall.origin, Point(25.0, 20.0, 4.0))
     assert near(wall.normal, -X)
+
+
+def test_a_drilled_bore_is_round_from_the_other_side_too() -> None:
+    """``hole`` cuts a bore with a cylinder, whose side had its material inside; what the cut
+    leaves has it outside, so the tangent plane on the wall faces the axis - the same answer
+    as a bore drawn as a hole in the profile."""
+    plate = cuboid(40, 40, 10)
+    plate = hole(
+        plate, Point(20, 20), on=plane_of(plate, "top"), diameter=10.0, top=Top.ROUND, label="bore"
+    )
+    wall = plane_of(plate, "bore/side-0", around=0.0, along=4.0)
+    assert near(wall.normal, -X)
+    assert near(wall.origin, Point(25.0, 20.0, 10.01 - 4.0))
 
 
 def test_plane_of_refuses_a_turn_on_a_flat_face_and_a_height_with_no_turn() -> None:

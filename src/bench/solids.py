@@ -269,7 +269,9 @@ def pocket(base: Solid, profile: Face, depth: float, *, label: str | Label) -> S
     the tool is ``profile`` dropped ``depth`` down its own normal and swept back up to it,
     so the pocket's floor is that tool's own ``bottom`` - ``plate/pocket/bottom`` - and its
     opening the tool's ``top``. Calling the floor ``floor`` would take a kernel, which
-    would have to say which face of the tool survived the cut.
+    would have to say which face of the tool survived the cut. Its frame is the tool's
+    turned over, as every face a cut leaves is (see :func:`plane_of`): it faces up out of
+    the base into the pocket, with X and Y the profile's own.
 
     Raises:
         ValueError: if ``depth`` is not positive; a pocket goes in.
@@ -305,6 +307,14 @@ def plane_of(
     is drawn with the same numbers the plate was. ``bottom`` faces the other way, so it is
     that frame turned over - X still runs the profile's way and Y runs backwards, which is
     what keeps a wire drawn counter-clockwise on it counter-clockwise seen from outside.
+
+    **A face a cut leaves is its tool's, turned over.** A pocket's floor is the tool's
+    ``bottom``, whose own normal points out of the tool - into the base. What is left after
+    the cut is the base, so the floor answers that frame turned over the way ``bottom`` is
+    ``top`` turned over: normal up out of the base into the pocket, X still the profile's.
+    The same goes for every face of a cut's tool - a groove's ceiling faces down into the
+    groove, and a drilled bore's wall faces its axis - so a normal always points out of the
+    material that remains, and a part mated onto a face a cut left sits in the cavity.
 
     **A round face has a plane at every point of it, and ``around`` is how you ask for one.**
     The side of a cylinder is where a set screw goes, and it has no single plane, so
