@@ -3,9 +3,10 @@ id: task-60
 title: >-
   mated() for round faces: a shaft in a bore, the gap round it from the Fit
   table
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-23 17:20'
+updated_date: '2026-09-23 17:59'
 labels: []
 milestone: m-8
 dependencies:

@@ -1,9 +1,10 @@
 ---
 id: task-62
 title: 'A section view: clip the 3D view at a plane to see fits hidden inside parts'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-23 17:20'
+updated_date: '2026-09-23 17:22'
 labels: []
 milestone: m-8
 dependencies: []
