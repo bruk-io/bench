@@ -154,7 +154,9 @@ stage = ["topology", "model", "kernel"]
 transport = ["scene"]
 # views turns what a run collected into the scene: nesting, the bodies - a laser part's plate,
 # a printed part's body built with the kernel - the stage, the files, and every record as its
-# view. It runs no script and knows nothing of one.
+# view. It runs no script and knows nothing of one. `solids` is task-61's own addition: a
+# named planar face's frame, from the same `plane_of` a script's `on=` reads, one call per
+# face rather than per triangle.
 views = [
     "topology",
     "model",
@@ -168,6 +170,7 @@ views = [
     "stage",
     "telemetry",
     "transport",
+    "solids",
 ]
 # mate puts one part's face on another's: the two faces' frames from `solids`' plane_of, the
 # move in `geometry`, the fit's gap off the part's own `model` record, and the `Fitted` record

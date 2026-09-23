@@ -1436,6 +1436,112 @@ def test_the_insert_shortcut_writes_a_ref_picked_off_the_solid(
     assert _state(page) == "ok", _status(page)
 
 
+VENT = "wall_vent.py"
+"""The mated pair, drawn as two printed bodies - a face on each is what task-61 picks."""
+
+# The attachment sits touching the frame at CONTACT over exactly the frame's own footprint
+# (decision-10's own vent), so the two faces `mated()` actually joins - the flange's `top`
+# and the attachment's `base/bottom` - are the ones no camera angle can see: each covers the
+# other. What the default framed view *can* see of the frame at all is a sliver of the
+# flange's own outer wall, peeking out under the attachment's base - found once, by scanning
+# the view, and pinned here rather than searched again every run.
+_VENT_FRAME_SPOTS = ((0.23, 0.68), (0.59, 0.815))
+# A flat face of the attachment's own base - framed, so the pair can honestly write a line.
+_VENT_ATTACHMENT_FLAT_SPOTS = ((0.7, 0.5), (0.7, 0.6), (0.5, 0.7), (0.6, 0.7))
+# The funnel's loft, seen from most of the view's middle - curved, so `plane_of` refuses it
+# and *Insert fit* has to say why rather than writing a broken line.
+_VENT_ATTACHMENT_ROUND_SPOTS = ((0.5, 0.5), (0.5, 0.6))
+
+
+def _click_at(
+    page: Page, spots: tuple[tuple[float, float], ...], prefix: str, *, shift: bool = False
+) -> str:
+    """Click (or shift-click) each of ``spots`` in turn until one answers with a ref starting
+    ``prefix``, reading the plain pick from ``#selection`` and the second pick from
+    ``data-second``, and give back the ref it answered with.
+
+    Raises:
+        AssertionError: if none of ``spots`` answers to such a ref.
+    """
+    box = _canvas3d(page)
+    for across, down in spots:
+        if shift:
+            page.keyboard.down("Shift")
+        page.mouse.click(box["x"] + box["width"] * across, box["y"] + box["height"] * down)
+        if shift:
+            page.keyboard.up("Shift")
+        page.wait_for_timeout(150)
+        said = (
+            (page.locator("#canvas3d").get_attribute("data-second") or "")
+            if shift
+            else page.locator("#selection").inner_text().strip()
+        )
+        if said.startswith(prefix):
+            return said
+    raise AssertionError(f"no face at {spots} answered with prefix {prefix!r}")
+
+
+@pytest.mark.e2e
+def test_shift_click_picks_a_second_face_and_insert_fit_writes_mated(
+    printed_page: Page,
+    example: Callable[[Page, str], None],
+    settle: Callable[[Page], None],
+    screenshots: Path,
+) -> None:
+    """decision-10 step 4: click a face, shift-click a face on another part, and *Insert
+    fit* writes the `mated(...)` line with both refs - the two faces' own frames drawn
+    while they are picked."""
+    page = printed_page
+    example(page, VENT)
+    page.wait_for_function(f"() => ({BODIES})() === 2", timeout=BOOT_MS)
+
+    fit_button = page.locator("#insert-fit")
+    first = _click_at(page, _VENT_FRAME_SPOTS, "frame/")
+    assert page.locator("#canvas3d").get_attribute("data-second") in (None, "")
+    assert fit_button.is_disabled(), "Insert fit is offered with one pick"
+
+    # A shift-click on a curved face - the funnel's loft, which `plane_of` refuses without
+    # `around=` - highlights it and lights its part, but frames neither and Insert fit says
+    # why instead of writing a broken line.
+    curved = _click_at(page, _VENT_ATTACHMENT_ROUND_SPOTS, "attachment/", shift=True)
+    assert page.locator("#canvas3d").get_attribute("data-second") == curved
+    assert page.locator("#canvas3d").get_attribute("data-frames") != "2"
+    assert fit_button.is_disabled(), f"Insert fit is offered for a round face ({curved})"
+    why = page.locator("#fit-why").inner_text()
+    assert why != "", "Insert fit gave no reason for a face it cannot frame"
+
+    # Shift-clicking a flat face of the same part replaces the second pick - the first is
+    # untouched - and both faces frame, so Insert fit is offered.
+    second = _click_at(page, _VENT_ATTACHMENT_FLAT_SPOTS, "attachment/", shift=True)
+    assert page.locator("#canvas3d").get_attribute("data-selected") == first
+    assert page.locator("#canvas3d").get_attribute("data-second") == second
+    assert _lit(page) >= 2, "both picked faces should be lit"
+    assert page.locator("#canvas3d").get_attribute("data-frames") == "2"
+    page.screenshot(path=str(screenshots / "15-two-face-pick.png"))
+
+    assert fit_button.is_enabled(), page.locator("#fit-why").inner_text()
+
+    _script(page)
+    page.locator(".cm-content").click()
+    page.keyboard.press("ControlOrMeta+End")
+    page.keyboard.press("Enter")
+    fit_button.click()
+    wanted = f'mated(frame, ref("{first}"), attachment, ref("{second}"))'
+    page.wait_for_function(INSERTED, arg=wanted, timeout=10_000)
+    assert _editor_text(page).rstrip().endswith(wanted), (
+        "Insert fit did not put its line at the cursor, on a fresh last line"
+    )
+    page.screenshot(path=str(screenshots / "16-mated-inserted.png"))
+
+    # A plain click afterwards is the single pick, exactly as it always was: the second pick
+    # is dropped, *Insert fit* goes away, and *Insert ref* still works on the one pick left.
+    third = _click_a_face(page, "")
+    assert page.locator("#canvas3d").get_attribute("data-second") in (None, "")
+    assert fit_button.is_disabled()
+    assert page.locator("#insert").is_enabled()
+    assert page.locator("#selection").inner_text().strip() == third
+
+
 @pytest.mark.e2e
 def test_a_laser_example_is_drawn_as_plates(
     printed_page: Page, example: Callable[[Page, str], None], screenshots: Path

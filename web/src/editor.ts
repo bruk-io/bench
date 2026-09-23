@@ -45,6 +45,9 @@ export interface Editor {
   replace(text: string): void;
   /** Put `ref("…")` at the cursor and leave the cursor after it. */
   insertRef(ref: string): void;
+  /** Put `text` at the cursor verbatim and leave the cursor after it - task-61's *Insert
+   * fit*, whose `mated(…)` call is more than one ref for `insertRef` to wrap. */
+  insertText(text: string): void;
   /** Mark one line as the failing one, or clear the mark with `null`. */
   showError(line: number | null): void;
   /** The refs a cursor-in-string is matched against. */
@@ -243,6 +246,15 @@ export function mount(parent: HTMLElement, doc: string, hooks: EditorHooks): Edi
       view.dispatch({
         changes: { from: at.from, to: at.to, insert },
         selection: { anchor: at.from + insert.length },
+        scrollIntoView: true,
+      });
+      view.focus();
+    },
+    insertText(text) {
+      const at = view.state.selection.main;
+      view.dispatch({
+        changes: { from: at.from, to: at.to, insert: text },
+        selection: { anchor: at.from + text.length },
         scrollIntoView: true,
       });
       view.focus();

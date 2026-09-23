@@ -26,6 +26,7 @@ from .plates import Lettering, Marks, Plate, plate
 from .scene import (
     ErrorScene,
     ErrorView,
+    FrameView,
     GridView,
     LetteringView,
     MarksView,
@@ -40,6 +41,7 @@ from .scene import (
     SummaryView,
     ViolationView,
 )
+from .solids import plane_of
 from .stage import Box, Offset, as_given, grid, layout, positions, ref_table, shifted
 from .telemetry import Tracer, timed
 from .topology import SEP, Face, Label, Shape, Solid
@@ -121,7 +123,7 @@ def scene(
         params=list(params),
         values=dict(values),
         parts=[
-            _part_view(part, qty, one, offset, frame)
+            _part_view(part, qty, one, offset, frame, tracer)
             for part, qty, one, offset, frame in zip(
                 parts, counts, built, offsets, boxes, strict=True
             )
@@ -295,7 +297,9 @@ def _stage_view(box: Box) -> StageView:
     )
 
 
-def _part_view(part: Part, qty: int, built: _Built, offset: Offset | None, box: BBox) -> PartView:
+def _part_view(
+    part: Part, qty: int, built: _Built, offset: Offset | None, box: BBox, tracer: Tracer
+) -> PartView:
     label = str(part.label)
     body = _body(built)
     here = offset or (0.0, 0.0, 0.0)
@@ -314,7 +318,44 @@ def _part_view(part: Part, qty: int, built: _Built, offset: Offset | None, box: 
         mesh=None if body is None else _mesh_view(body, label, here),
         marks=marks,
         lettering=lettering,
+        frames=_frames_view(part.shape, body, label, here, tracer),
     )
+
+
+def _frames_view(
+    shape: Shape, body: Mesh | None, prefix: str, offset: Offset, tracer: Tracer
+) -> dict[str, FrameView]:
+    """Every named planar face of ``shape`` that :func:`~bench.solids.plane_of` can answer
+    for, under the same prefixed ref :func:`_mesh_view` names it by.
+
+    One call per *named face* the mesh already carries, never per triangle - proportional to
+    what a click can land on, not to what a kernel triangulated it into. Only a body has a
+    face to answer for; a laser part's plate (``shape`` a ``Face``) carries none. A round
+    face with no ``around=`` to take a tangent at is skipped the same way a hole with no
+    single plane is: :func:`plane_of` refuses it, and a face with no frame is exactly what
+    tells the app's *Insert fit* it cannot write a line for that pick.
+
+    A frame's ``origin`` is moved by ``offset`` - the same rigid translation
+    :func:`_mesh_view` stands the mesh's own triangles at - because a frame is drawn where
+    the face is drawn, and the stage never rotates a body to get it there. ``normal`` and
+    ``x`` are directions, which a translation leaves alone.
+    """
+    if body is None or not isinstance(shape, Solid):
+        return {}
+    dx, dy, dz = offset
+    out: dict[str, FrameView] = {}
+    with timed(tracer, "bench.scene.frames"):
+        for raw in dict.fromkeys(ref for ref in body.refs if ref is not None):
+            try:
+                found = plane_of(shape, str(raw))
+            except LookupError, ValueError:
+                continue
+            out[f"{prefix}{SEP}{raw}"] = FrameView(
+                origin=[found.origin.x + dx, found.origin.y + dy, found.origin.z + dz],
+                normal=[found.normal.x, found.normal.y, found.normal.z],
+                x=[found.x_dir.x, found.x_dir.y, found.x_dir.z],
+            )
+    return out
 
 
 def _summary(

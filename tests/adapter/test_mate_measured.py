@@ -3,8 +3,10 @@
 :mod:`mate_cases` is run inside Pyodide by :mod:`tools.stack` with the real kernel: the wall
 vent's attachment put on its frame by :func:`bench.mate.mating` and by hand, a mate whose
 contact is really an overlap, a mate at a slide fit, a part mated upside down, pins put
-into bores - one drawn right, one drawn without the concave allowance, one too tight, and one
-with a head that seats - and a plate mated onto a pocket's floor. The pure
+into bores - one drawn right, one drawn without the concave allowance, one too tight, and a
+pin with a head that seats on the plate: in a bore drawn right, in one too tight, driven
+into the plate, slid out of its bore altogether, and in a bore :func:`bench.features.hole`
+drilled - and a plate mated onto a pocket's floor. The pure
 arithmetic of where a mate puts a face is ``tests/unit/test_mate.py``'s; what is asked here
 is what only a built body can answer.
 """
@@ -180,14 +182,84 @@ def test_a_pin_too_fat_for_its_fit_is_a_finding_on_both_parts(measured: dict[str
     assert "within 0.000 mm" in found["message"]
 
 
-def test_a_pin_whose_head_sits_on_the_plate_reads_the_heads_zero(
+def test_a_pin_whose_head_sits_on_the_plate_is_measured_on_its_shank(
     measured: dict[str, Any],
 ) -> None:
-    """Whole bodies, as every check here measures: a headed pin whose head seats on the
-    plate comes within nothing of it there, so its shank's slide reads as tight however right
-    the bore is. A shoulder is a second pair, and this pins down that the round mate does not
-    see past it - the gap round the shank alone is not what is measured."""
+    """task-66's acceptance, and the rewrite of what task-60 recorded as a limitation - a
+    headed pin read its head's zero as the shank's slide and failed. Now the gap round the
+    pin is measured over the length the shank and the bore share, so the shank's slide reads
+    as the headless pin's does and passes, and the head's seat - a second pair, declared by
+    the script with ``check_fit`` at ``CONTACT`` - reads as the touch it is."""
     scene = _ok(measured["pin_headed"])
-    [found] = scene["violations"]
-    assert found["refs"] == ["pin", "plate"]
-    assert scene["stdout"].startswith("pin/shank/side-0 on plate/bore: clear by 0.000 mm")
+    assert scene["violations"] == []
+    said = scene["stdout"].splitlines()
+    assert said == [
+        "pin/shank/side-0 on plate/bore: clear by 0.245 mm, asked 0.200 (slide)",
+        "touch, asked contact",
+    ]
+
+
+def test_a_headed_pin_too_fat_for_its_fit_still_fails_on_both_parts(
+    measured: dict[str, Any],
+) -> None:
+    """Measuring over the shank does not look past a shank that is too fat: in a bore of 1.9
+    it overlaps the bore wall inside the shared length, the mate finds it on the pin and the
+    plate on its own line, and the seat's contact check - which asks whether the two share
+    material - finds the same overlap on its."""
+    scene = _ok(measured["pin_headed_fat"])
+    fit, seat = scene["violations"]
+    assert (fit["check"], fit["severity"], fit["refs"], fit["line"]) == (
+        "fit",
+        Severity.ERROR,
+        ["pin", "plate"],
+        9,
+    )
+    assert "within 0.000 mm" in fit["message"]
+    assert (seat["check"], seat["severity"], seat["refs"], seat["line"]) == (
+        "contact",
+        Severity.ERROR,
+        ["pin", "plate"],
+        11,
+    )
+
+
+def test_a_head_driven_into_the_plate_is_found_though_the_shank_clears(
+    measured: dict[str, Any],
+) -> None:
+    """Slid half a millimetre too far, the head sinks into the plate. The shank still clears
+    its bore by the slide - the gap round it is right - but a clearance fit round a pin
+    shares no material anywhere, so the mate asks the whole bodies that as well and finds the
+    head's 17 mm3."""
+    scene = _ok(measured["pin_headed_sunk"])
+    fit = scene["violations"][0]
+    assert (fit["check"], fit["severity"], fit["refs"], fit["line"]) == (
+        "fit",
+        Severity.ERROR,
+        ["pin", "plate"],
+        9,
+    )
+    assert "17.000 mm3" in fit["message"]
+    assert scene["stdout"].startswith("pin/shank/side-0 on plate/bore: clear by 0.245 mm")
+
+
+def test_a_pin_slid_out_of_its_bore_has_no_fit_to_measure(measured: dict[str, Any]) -> None:
+    """Slid twenty millimetres down the axis, the shank and the bore share no length at all.
+    There is no gap round a pin that is not in its bore, and saying so is a warning, not a
+    quiet fall back to the nearest the whole bodies come."""
+    scene = _ok(measured["pin_headed_out"])
+    fit = scene["violations"][0]
+    assert (fit["check"], fit["severity"], fit["line"]) == ("fit", Severity.WARNING, 9)
+    assert "share no length" in fit["message"]
+
+
+def test_a_headed_pin_in_a_drilled_hole_is_measured_where_the_plate_stops_the_bore(
+    measured: dict[str, Any],
+) -> None:
+    """A bore :func:`bench.features.hole` drilled runs a hundredth proud of the plate, and
+    the headed pin put in it stands its head that hundredth off the top. How long the bore
+    is is read off the mesh, where the plate stops it, so the shank's slide is what is
+    measured and not the hundredth under the head."""
+    scene = _ok(measured["pin_holed"])
+    assert scene["violations"] == []
+    said = scene["stdout"].strip()
+    assert said == "pin/shank/side-0 on plate/bore/side-0: clear by 0.305 mm, asked 0.200 (slide)"

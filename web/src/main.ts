@@ -89,7 +89,7 @@ import {
   resolvedUp,
   shown,
 } from "./pick";
-import type { OkScene, Scene, SheetView } from "./scene";
+import type { OkScene, PartView, Scene, SheetView } from "./scene";
 import type { SectionAxis } from "./viewer3d";
 import { STALE_HINT, STALE_MESSAGE, bundleStale } from "./staleness";
 import { HOW_TO_SELECT, failing, made, noBodiesReason, readOnlyWords, tally } from "./status";
@@ -158,6 +158,8 @@ const ui = {
   run: need<HTMLButtonElement>("run"),
   stop: need<HTMLButtonElement>("stop"),
   insert: need<HTMLButtonElement>("insert"),
+  insertFit: need<HTMLButtonElement>("insert-fit"),
+  fitWhy: need<HTMLSpanElement>("fit-why"),
   shell: need<HTMLDivElement>("shell"),
   rail: need<HTMLElement>("rail"),
   railProblems: need<HTMLButtonElement>("rail-problems"),
@@ -531,6 +533,7 @@ function showStanding(): void {
   ui.explorer.readOnly = reading !== null;
   ui.paramsUnkept.hidden = reading === null;
   ui.insert.disabled = picked === null || !can;
+  showFitState();
   showPickState();
   if (reading === null) {
     ui.lease.hidden = true;
@@ -767,6 +770,9 @@ function showFailure(message: string): void {
 const space = deferred3d(ui.canvas3d, {
   onSelect(ref) {
     showSelection(ref);
+  },
+  onSelectSecond(ref) {
+    showSecondSelection(ref);
   },
   onDetectPick(hit) {
     detectedPicked(hit);
@@ -1527,6 +1533,7 @@ function received(next: Scene): void {
     return;
   }
   scene = next;
+  showFitState();
   // A run that got all the way here is not the thing that hung.
   forget(KEYS.hang);
   held = false;
@@ -1877,10 +1884,16 @@ let picked: string | null = null;
  */
 let pickedReference: string | null = null;
 
+/** task-61's second pick: a shift-click on a face of a part other than `picked`'s. Cleared
+ * whenever `picked` starts over - a fresh single pick is a fresh start, never half a pair
+ * left over from the one before it. */
+let pickedSecond: string | null = null;
+
 /** Say what is selected, everywhere it is said: the bar, the button that acts on it, and the
  * tree, which opens whatever was shut above the row and scrolls it into view. */
 function showSelection(ref: string | null): void {
   picked = ref;
+  pickedSecond = null;
   // A ref is selected, or nothing is: either way no dropped body is, which is what every
   // caller of this already meant - `showSelection(null)` is how the app says "nothing".
   pickedReference = null;
@@ -1890,6 +1903,7 @@ function showSelection(ref: string | null): void {
   ui.refsTree.selected = ref;
   ui.refsTree.selectedReference = null;
   space.markReference(false);
+  showFitState();
 }
 
 /** Say that a dropped body is what is selected. The bar names the file rather than anything
@@ -1898,6 +1912,7 @@ function showReferenceSelection(file: string | null): void {
   pickedReference = file;
   if (file !== null) {
     picked = null;
+    pickedSecond = null;
     ui.refsTree.selected = null;
     space.select(null);
   }
@@ -1906,6 +1921,82 @@ function showReferenceSelection(file: string | null): void {
   ui.insert.disabled = true;
   ui.refsTree.selectedReference = file;
   space.markReference(file !== null);
+  showFitState();
+}
+
+/** Say what task-61's second pick is: the bar grows a second line naming it, and *Insert
+ * fit* is offered exactly when the pair can honestly become a `mated(...)` line - see
+ * `fitLine`. Called from the view's own `onSelectSecond` hook, the same way `showSelection`
+ * only ever reads what the view already decided to highlight. */
+function showSecondSelection(ref: string | null): void {
+  pickedSecond = ref;
+  showFitState();
+}
+
+/** The part a ref belongs to, or `null` when no scene is up or nothing answers to it. */
+function partOfRef(ref: string): PartView | null {
+  if (scene === null) return null;
+  return scene.parts.find((part) => part.ref === ref || ref.startsWith(`${part.ref}/`)) ?? null;
+}
+
+/** A part's ref as a Python identifier, the way a maker would type it by hand: `-` turned to
+ * `_`, a leading digit given a `_` to sit behind. It stands in for the script's own `Part`
+ * variable, which the app has no way to know (decision-7: a pick writes numbers, never a
+ * script's own names) - so it is the most useful honest guess, right when a part's variable
+ * is named after its label and wrong otherwise, and *Insert fit*'s line still needs reading
+ * before it is trusted, the same as any inserted `ref("…")` needing the right hole to sit in. */
+function fitIdentifier(ref: string): string {
+  const cleaned = ref.replaceAll(/[^A-Za-z0-9_]/g, "_");
+  return /^[0-9]/.test(cleaned) ? `_${cleaned}` : cleaned;
+}
+
+/** The `mated(...)` line the current pair would write, or why it cannot - a part with no
+ * body (sheet, not print), or a face `plane_of` cannot frame (round, no `around=`), each say
+ * so rather than *Insert fit* writing a call that only fails once the script runs. */
+function fitLine(): { readonly text: string } | { readonly why: string } {
+  if (picked === null || pickedSecond === null) return { why: "" };
+  const fixed = partOfRef(picked);
+  const moving = partOfRef(pickedSecond);
+  if (fixed === null || moving === null) return { why: "" };
+  if (fixed.process !== "print" || moving.process !== "print") {
+    return { why: "mated puts one printed part's face on another's; a sheet part has none" };
+  }
+  if (fixed.frames[picked] === undefined) {
+    return { why: `${picked} has no single plane - plane_of needs around= for a round face` };
+  }
+  if (moving.frames[pickedSecond] === undefined) {
+    return { why: `${pickedSecond} has no single plane - plane_of needs around= for a round face` };
+  }
+  const text = `mated(${fitIdentifier(fixed.ref)}, ref(${JSON.stringify(picked)}), ${fitIdentifier(moving.ref)}, ref(${JSON.stringify(pickedSecond)}))`;
+  return { text };
+}
+
+/** What the bar and *Insert fit* say about the current pair, or the lack of one.
+ *
+ * The button vanishes when it is disabled - `.picked button:disabled { display: none }`,
+ * the same rule *Insert ref* already lives under - so there is nothing to offer with one
+ * pick or none. The reason a pair cannot be written stays visible beside it regardless,
+ * in `#fit-why`, which is a plain span and not under that rule: a maker shift-clicking a
+ * round face should read why, not watch the button silently fail to appear. */
+function showFitState(): void {
+  if (pickedSecond === null) {
+    ui.fitWhy.textContent = "";
+    ui.insertFit.disabled = true;
+    ui.insertFit.title = "";
+    return;
+  }
+  const line = fitLine();
+  ui.fitWhy.textContent = "why" in line ? line.why : "";
+  ui.insertFit.disabled = !("text" in line) || hostless || !writable();
+  ui.insertFit.title = "text" in line ? line.text : (line.why || "shift-click a face on another part");
+}
+
+/** Write the current pair's `mated(...)` line at the cursor - task-61's *Insert fit*. */
+function insertFit(): void {
+  const line = fitLine();
+  if (!("text" in line) || hostless || !writable()) return;
+  showDocument(SCRIPT);
+  code.insertText(line.text);
 }
 
 function insertSelected(): void {
@@ -1947,6 +2038,7 @@ ui.stop.addEventListener("click", () => {
 });
 
 ui.insert.addEventListener("click", insertSelected);
+ui.insertFit.addEventListener("click", insertFit);
 ui.fit.addEventListener("click", () => {
   space.fit();
 });
