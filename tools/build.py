@@ -8,7 +8,9 @@ script and reads ``bench.toml`` beside it, or the older ``<script>.toml`` (decis
 there is no ``bench.toml`` - one rule for both, so the app's file and this tool's never
 disagree. Either way the directory the script came from goes on the import path, so an entry
 that says ``import parts`` reaches a ``parts.py`` beside it - the same directory
-``web/src/worker.py`` mounts for the browser.
+``web/src/worker.py`` mounts for the browser. An import naming a file the project does not
+have fails in the project's own terms (task-56): :func:`_modules_of` hands the project's other
+files to :func:`bench.script.run`, the same list :mod:`bench.missing` reads.
 
 ``--project NAME`` resolves that directory under the host's projects root - ``$BENCH_PROJECTS``,
 by :mod:`tools.projects`, exactly as the app's route resolves it - and runs its entry;
@@ -211,6 +213,18 @@ def _refused(directory: Path) -> str | None:
     names = [one.name for one in directory.glob("*.py")] if directory.is_dir() else []
     bad = shadowed(names)
     return None if bad is None else f"{directory / bad} would shadow the standard library or bench"
+
+
+def _modules_of(directory: Path, script: Path) -> frozenset[str]:
+    """``directory``'s own ``.py`` files besides ``script`` itself, as their stems - what an
+    import inside ``script`` might reach, handed to :func:`bench.script.run` as ``modules`` so
+    a name it does not have fails saying so (task-56), the same list :func:`_refused` already
+    checked."""
+    if not directory.is_dir():
+        return frozenset()
+    return frozenset(
+        one.stem for one in directory.glob("*.py") if one.resolve() != script.resolve()
+    )
 
 
 @contextmanager
@@ -431,7 +445,12 @@ def main(argv: tuple[str, ...] | None = None, environ: Mapping[str, str] | None 
             else:
                 print(_frame_said(_document_path(script), name, frame))
 
-        scene: Any = run(script.read_text(), values, reference=reference)
+        scene: Any = run(
+            script.read_text(),
+            values,
+            reference=reference,
+            modules=_modules_of(project_root, script),
+        )
     for line in _said(scene):
         print(line)
     if not scene["ok"]:

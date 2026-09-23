@@ -380,9 +380,11 @@ def test_a_two_file_project_imports_its_sibling_module(tmp_path: Path) -> None:
 def test_a_project_or_script_import_that_is_not_there_says_so(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """AC#5: not a raw `ModuleNotFoundError` buried in stderr - the run catches it the way
-    every other exception a script raises is caught, and it is printed with the run's other
-    output, naming the module."""
+    """task-50 AC#5 / task-56 AC#1: not a raw `ModuleNotFoundError` buried in stderr - the run
+    catches it the way every other exception a script raises is caught, and what is printed
+    names the project's own missing file and says the project has none - Python's own message
+    is still there too, for anyone debugging. Rewritten from asserting only the bare
+    `ModuleNotFoundError` text, which task-56 says so little a maker still has to guess."""
     project = tmp_path / "widget"
     project.mkdir()
     entry = project / "entry.py"
@@ -393,6 +395,24 @@ def test_a_project_or_script_import_that_is_not_there_says_so(
     assert build.main((str(entry),)) == 1
     out = capsys.readouterr().out
     assert "No module named 'helper'" in out
+    assert "there is no helper.py (it has none)" in out
+
+
+def test_a_missing_import_lists_the_projects_other_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """task-56 AC#1: a project of more than one file names them all."""
+    project = tmp_path / "widget"
+    project.mkdir()
+    entry, _ = _two_files(project)
+    entry.write_text(
+        "from bench import *\nimport sidekick\n\n"
+        "show(part('p', fill(rect(1, 1)), Stock(3, 'ply')))\n"
+    )
+
+    assert build.main((str(entry),)) == 1
+    out = capsys.readouterr().out
+    assert "there is no sidekick.py (it has: helper.py)" in out
 
 
 def test_a_project_file_that_would_shadow_the_standard_library_is_refused(

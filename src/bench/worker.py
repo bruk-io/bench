@@ -30,6 +30,9 @@ this one has any modules of its own: the worker is one long-lived process, and a
 switched away from must not leave a sibling for the next one to import by accident.
 :func:`bench.shadow.shadowed` refuses a project file that would replace the standard library
 or ``bench`` itself, the same refusal :mod:`tools.build` makes on the command line.
+:func:`_mounted` hands back the names it wrote, and ``run`` passes them into
+:func:`bench.script.run` as ``modules``, so an import a project does not have fails in the
+project's own terms (task-56) rather than only Python's.
 """
 
 import base64
@@ -63,10 +66,12 @@ machine :mod:`tests.functional.test_worker` runs this same code on directly, wit
 underneath it at all."""
 
 
-def _mounted(modules: str | None) -> None:
+def _mounted(modules: str | None) -> frozenset[str]:
     """The mount directory rebuilt from ``modules`` - the open project's other ``.py`` files,
     as ``{name: text}`` JSON, or ``None`` for a project with none - and every module Python
-    cached from the last one it held popped out of ``sys.modules``.
+    cached from the last one it held popped out of ``sys.modules``. Gives back the names
+    written, as their stems, for :func:`bench.script.run` to explain a failed import by
+    (task-56) - the same list this call already checked them against.
 
     Called on every run, not only a run with modules of its own: without the pop, a project
     switched away from would leave its ``parts`` importable by the next one, which is worse
@@ -94,6 +99,7 @@ def _mounted(modules: str | None) -> None:
             del sys.modules[name]
 
     importlib.invalidate_caches()
+    return frozenset(Path(name).stem for name in table)
 
 
 Wire = tuple[str, list[array[float] | array[int]]]
@@ -245,7 +251,7 @@ def start(telemetry: Telemetry, refused: type[Exception]) -> Runner:
         table: str | None = None,
         modules: str | None = None,
     ) -> Wire:
-        _mounted(modules)
+        names = _mounted(modules)
         scene = script.run(
             source,
             json.loads(overrides),
@@ -253,6 +259,7 @@ def start(telemetry: Telemetry, refused: type[Exception]) -> Runner:
             reference=_reference(stl, table),
             kernel=None if modeller is None else JsKernel(modeller, refused, tracer),
             tracer=tracer,
+            modules=names,
         )
         with timed(tracer, "bench.scene.wire"):
             return transport.scene_wire(scene)

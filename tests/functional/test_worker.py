@@ -332,12 +332,31 @@ def test_an_entry_imports_a_module_the_project_hands_over_beside_it() -> None:
 
 
 def test_a_module_the_project_does_not_hold_fails_by_name_not_by_trace() -> None:
-    """AC#5: not a raw `ModuleNotFoundError` buried in stderr - the run catches it as any
-    other exception a script raises and the message names the module."""
+    """task-50 AC#5 / task-56 AC#1: not a raw `ModuleNotFoundError` buried in stderr - the run
+    catches it as any other exception a script raises, the message names the project's own
+    missing file and says the project has none, and Python's own message is still there for
+    anyone debugging."""
     text, _ = start(_Telemetry(), _Refused)(_ENTRY, "{}", None)
     scene = json.loads(text)
     assert scene["ok"] is False
-    assert "No module named 'parts'" in scene["error"]["message"]
+    message = scene["error"]["message"]
+    assert "No module named 'parts'" in message, "the original exception is still readable"
+    assert "there is no parts.py (it has none)" in message
+
+
+def test_a_module_the_project_does_not_hold_lists_the_ones_it_has() -> None:
+    """task-56 AC#1: a project of more than one file names them all, not only that the missing
+    one is not among them."""
+    entry = (
+        "from bench import *\nimport sidekick\n\n"
+        "show(part('p', fill(rect(4, 4)), Stock(3, 'ply')))\n"
+    )
+    text, _ = start(_Telemetry(), _Refused)(
+        entry, "{}", None, None, None, json.dumps({"parts.py": "W = 12.0\n"})
+    )
+    scene = json.loads(text)
+    assert scene["ok"] is False
+    assert "there is no sidekick.py (it has: parts.py)" in scene["error"]["message"]
 
 
 def test_switching_projects_does_not_leak_the_first_ones_module_into_the_second() -> None:

@@ -182,6 +182,7 @@ script = [
     "params",
     "telemetry",
     "views",
+    "missing",
 ]
 # The browser's kernel: it walks the tree itself and asks a Manifold living in JavaScript for
 # each sweep and boolean by handle, deciding every name with `meshing`. It imports no
@@ -209,6 +210,11 @@ worker = [
 # rule (task-50). It reads sys.stdlib_module_names and nothing of bench's, which is what lets
 # both a plain Python process and a script's own worker check it the same way.
 shadow = []
+# missing turns a ModuleNotFoundError script.run catches into a sentence in the project's own
+# terms - task-56's shared rule for the same reason shadow's is shared. It reads shadow to
+# tell a name the project could never have written (the standard library, bench, or Pyodide's
+# own js/pyodide) apart from one that might genuinely be a forgotten project file.
+missing = ["shadow"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
