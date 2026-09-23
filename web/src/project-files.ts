@@ -105,9 +105,10 @@ export function writesFor(previous: Workspace | null, next: Workspace): readonly
 /** The files `previous` had and `next` no longer does: every file of a project renamed away
  * from or deleted, and a script gone from a project that is still there.
  *
- * The route has no call that removes or renames a directory, so a project that goes leaves its
- * directory behind, empty of everything this mapping wrote - and a dropped mesh, which no store
- * write ever knew the version of, stays in it (task-48 makes a delete a move to a trash). */
+ * A project renamed or deleted as a whole is not this: the store moves its directory in one
+ * step (`ProjectStore.renameProject`, `trashProject`) and forgets it here, so what is left for
+ * this is a script gone from a project that is still there - each removal a move into the
+ * trash under the root, never an unlink. */
 export function removalsFor(previous: Workspace | null, next: Workspace): readonly FileRemoval[] {
   if (previous === null) return [];
   const now = new Map(next.projects.map((one) => [one.name, one]));

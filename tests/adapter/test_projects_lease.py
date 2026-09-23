@@ -187,6 +187,20 @@ def test_a_rename_and_a_delete_are_refused_to_a_non_holder_too(server: Server) -
     assert (server.root / "cabinet" / "cabinet.py").read_text() == "w = 1\n"
 
 
+def test_a_whole_project_is_neither_renamed_nor_trashed_by_a_non_holder(server: Server) -> None:
+    take(server.port, "cabinet", DESK)
+    trashed = ask(server.port, "DELETE", f"{ROUTE}/cabinet", headers=as_holder(TABLET))
+    assert trashed.json()["refused"] == "leased"
+    renamed = ask(server.port, "POST", f"{ROUTE}/cabinet?to=shelf", headers=as_holder(TABLET))
+    assert renamed.json()["refused"] == "leased"
+    # Nor may a project be moved onto a name somebody else has open.
+    take(server.port, "shelf", TABLET)
+    onto = ask(server.port, "POST", f"{ROUTE}/cabinet?to=shelf", headers=as_holder(DESK))
+    assert onto.json()["refused"] == "leased"
+    assert (server.root / "cabinet" / "cabinet.py").is_file()
+    assert ask(server.port, "DELETE", f"{ROUTE}/cabinet", headers=as_holder(DESK)).status == 200
+
+
 def test_a_project_with_no_directory_yet_can_be_leased_and_none_is_made(server: Server) -> None:
     assert take(server.port, "not-yet", DESK)["yours"] is True
     assert not (server.root / "not-yet").exists()

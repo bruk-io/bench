@@ -104,5 +104,51 @@ export function hostStore(client: Host, box: Outbox): ProjectStore {
         }
       })();
     },
+
+    async renameProject(from, to) {
+      // A write still on its way to `from/…` would land in a directory that is not there any
+      // more - or make it again - so a project is not moved from under one.
+      // A project made a moment ago is the common case, so this waits a few seconds for the
+      // outbox to land it before giving up.
+      const waiting = async (): Promise<boolean> =>
+        [...(await box.pending()).values()].some((one) => one.project === from);
+      for (let tries = 0; (await waiting()) && tries < 25; tries += 1) {
+        box.drain();
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      if (await waiting()) {
+        return { ok: false, message: `${from} has edits still on their way to the host - try again in a moment` };
+      }
+      const moved = await client.renameProject(from, to);
+      // Nothing of it on the host yet - a fresh first example - is a rename the next save makes.
+      if (!moved.ok && moved.refusal.refused === "missing") return { ok: true, trashed: null };
+      if (!moved.ok) return { ok: false, message: moved.refusal.message };
+      await box.forget(from);
+      if (known !== null) {
+        known = { ...known, projects: known.projects.map((one) => (one.name === from ? { ...one, name: to } : one)) };
+      }
+      // What moved, by the versions it has under its new name, so the next edit to any of it
+      // is a write from a base rather than a create onto a file that is there.
+      const files = await client.files(to);
+      if (files.ok) {
+        for (const entry of files.value) {
+          if (!owned(entry.name)) continue;
+          const got = await client.read(to, entry.name);
+          if (got.ok) {
+            await box.rebase(to, entry.name, got.value.version.version, new TextDecoder().decode(got.value.bytes));
+          }
+        }
+      }
+      return { ok: true, trashed: null };
+    },
+
+    async trashProject(name) {
+      const moved = await client.trashProject(name);
+      // Already gone is what was asked for.
+      if (!moved.ok && moved.refusal.refused !== "missing") return { ok: false, message: moved.refusal.message };
+      await box.forget(name);
+      if (known !== null) known = { ...known, projects: known.projects.filter((one) => one.name !== name) };
+      return { ok: true, trashed: moved.ok ? moved.value.trashed : null };
+    },
   };
 }

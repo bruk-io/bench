@@ -59,13 +59,23 @@ export interface Host {
   create(project: string, file: string, bytes: Uint8Array | string): Promise<Answer<Version>>;
   /** `file` under the name `to`, in the same project. Refused if `to` is taken. */
   rename(project: string, file: string, to: string): Promise<Answer<Version>>;
-  /** Delete `file`, which must still be at `base`. For now this is gone from the disk;
-   * task-48 makes it recoverable. */
-  remove(project: string, file: string, base: string): Promise<Answer<null>>;
+  /** Delete `file`, which must still be at `base`: moved into the trash under the root, never
+   * unlinked - and where it went. */
+  remove(project: string, file: string, base: string): Promise<Answer<Trashed>>;
+  /** `project`'s whole directory under the name `to`. Refused if `to` is taken. */
+  renameProject(project: string, to: string): Promise<Answer<{ readonly project: string }>>;
+  /** `project`'s whole directory, moved into the trash - and where it went. */
+  trashProject(project: string): Promise<Answer<Trashed>>;
   /** Ask about `project`'s write lease, or act on it, as this client's `Identity` (`lease.ts`).
    * `keepalive` for the one asked as a page goes away - a release on `pagehide` - which the
    * browser then finishes sending after the page has gone. */
   lease(project: string, act: Act, keepalive?: boolean): Promise<Answer<Standing>>;
+}
+
+/** Where a delete put what it deleted, relative to the projects root - `.trash/20260923-101503-
+ * cabinet/parts.py` - so a person can be told where to find it. */
+export interface Trashed {
+  readonly trashed: string;
 }
 
 /** Who this client is to the leases: the id it holds them under - sent on every write, so the
@@ -139,9 +149,14 @@ export function host(origin = "", fetchImpl: typeof fetch = fetch, identity: Ide
         r.json() as Promise<Version>,
       ),
     remove: (project, file, base) =>
-      asked(path(project, file), { method: "DELETE", headers: { "if-match": `"${base}"` } }, () =>
-        Promise.resolve(null),
+      asked(path(project, file), { method: "DELETE", headers: { "if-match": `"${base}"` } }, (r) =>
+        r.json() as Promise<Trashed>,
       ),
+    renameProject: (project, to) =>
+      asked(`${path(project)}?to=${encodeURIComponent(to)}`, { method: "POST" }, (r) =>
+        r.json() as Promise<{ readonly project: string }>,
+      ),
+    trashProject: (project) => asked(path(project), { method: "DELETE" }, (r) => r.json() as Promise<Trashed>),
     lease: (project, act, keepalive = false) =>
       asked(
         act === "look"

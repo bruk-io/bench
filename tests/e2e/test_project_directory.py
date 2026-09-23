@@ -243,7 +243,8 @@ def test_which_project_is_open_is_each_browsers_own(
             ),
         )
         desk.click("#rail-files")
-        desk.locator("bench-explorer .file", has_text="beta").click()
+        desk.click("#project-switcher")
+        desk.locator("bench-explorer .project", has_text="beta").click()
         desk.wait_for_function(f"() => ({BODIES})() === 2", timeout=BOOT_MS)
         desk.wait_for_timeout(1000)
         assert written == [], f"switching projects wrote to the host: {written}"

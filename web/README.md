@@ -295,7 +295,13 @@ reason in a JSON body:
   create or rename onto a name that is taken (`exists`), and a write that names no version
   at all (`precondition`).
 
-A delete is a plain unlink for now; task-48 makes it recoverable.
+**Nothing is unlinked.** A `DELETE` of a file moves it into `.trash/` under the root, in a
+folder of its own named for the time and the project (`.trash/20260923-101503-cabinet/parts.py`),
+and says where in its answer; `DELETE /__bench/projects/<project>` moves the whole directory
+there, meshes and all, and `POST /__bench/projects/<project>?to=<name>` renames the directory
+as one move. `.trash` is hidden, so it is never listed as a project and never reachable as a
+name; putting something back is the maker's own file manager moving it out again. The
+explorer names the directory before it moves anything, and says where it went after.
 
 **The write lease.** Two clients can have one project open - the desk and the tablet - and the
 app writes on every keystroke and knob turn, so one of them left on yesterday's state could

@@ -19,6 +19,11 @@ import {
   project,
   renamed,
   restored,
+  scriptCopied,
+  scriptNameProblem,
+  scriptRemovable,
+  scriptRemoved,
+  scriptRenamed,
   scriptsOf,
   serialized,
   single,
@@ -31,6 +36,50 @@ import {
 import { NOTHING_KEPT, keptOf } from "./values";
 
 const STARTER = "from bench import *\n";
+
+/** One project of two scripts, its entry open. */
+const twoScripts = (): Workspace => ({
+  projects: [{ ...project("cab", "entry text"), scripts: { "cab.py": "entry text", "parts.py": "parts text" } }],
+  current: "cab",
+  script: "cab.py",
+});
+
+describe("a script in the open project, by its row", () => {
+  it("renames one, the entry and the open script following it, and puts .py on", () => {
+    const next = scriptRenamed(twoScripts(), "cab.py", "main");
+    expect(Object.keys(opened(next).scripts).sort()).toEqual(["main.py", "parts.py"]);
+    expect(opened(next).entry).toBe("main.py");
+    expect(next.script).toBe("main.py");
+    expect(opened(next).scripts["main.py"]).toBe("entry text");
+    const other = scriptRenamed(twoScripts(), "parts.py", "bits.py");
+    expect(opened(other).entry).toBe("cab.py");
+    expect(other.script).toBe("cab.py");
+  });
+
+  it("will not take a name another script has, or one the route would refuse", () => {
+    expect(scriptNameProblem(["cab.py", "parts.py"], "cab.py", "parts")).toBe("there is already a parts.py");
+    expect(scriptNameProblem(["cab.py"], "cab.py", "")).toBe("a script needs a name");
+    expect(scriptNameProblem(["cab.py"], "cab.py", ".hidden")).not.toBeNull();
+    expect(scriptNameProblem(["cab.py"], "cab.py", "cab")).toBeNull();
+    expect(scriptRenamed(twoScripts(), "cab.py", "parts")).toEqual(twoScripts());
+  });
+
+  it("copies one beside it under a free name, and opens the copy", () => {
+    const next = scriptCopied(twoScripts(), "parts.py");
+    expect(opened(next).scripts["parts-2.py"]).toBe("parts text");
+    expect(next.script).toBe("parts-2.py");
+    expect(opened(next).entry).toBe("cab.py");
+  });
+
+  it("removes one while another is left, the entry passing on when it was the entry", () => {
+    const next = scriptRemoved(twoScripts(), "cab.py");
+    expect(Object.keys(opened(next).scripts)).toEqual(["parts.py"]);
+    expect(opened(next).entry).toBe("parts.py");
+    expect(next.script).toBe("parts.py");
+    expect(scriptRemovable(opened(next), "parts.py")).toBe(false);
+    expect(scriptRemoved(next, "parts.py")).toBe(next);
+  });
+});
 
 /** Three projects of one script each, the middle one open. */
 const three = (): Workspace => ({

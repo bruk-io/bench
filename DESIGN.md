@@ -805,10 +805,14 @@ Interactions that define the product:
   edit with what the run built (decision-3). Which project, and which of its scripts, a browser
   has open is that browser's own, and one tab at a time writes a project: it holds the
   project's write lease, and every other tab on it reads - runs, exports, turns knobs that are
-  not kept - and is told whose it is, and can take it over (task-47). The Projects container makes one - starting as
-  `templates/untitled.py` - and opens, renames, deletes, duplicates, downloads (its scripts and
-  a `.toml` in one archive) and opens them from disk; a browser holding projects from before
-  is asked, once, whether to write them to the host.
+  not kept - and is told whose it is, and can take it over (task-47). The Project container is a switcher and a tree (task-48):
+  one line naming the open project, behind which the others are listed with New (starting as
+  `templates/untitled.py`), Open… from disk and Download (its scripts and a `.toml` in one
+  archive); and under it the open project's own files - `bench.toml`, its scripts, the meshes
+  dropped into it - each opening in the editor group on a click, with rename, duplicate and
+  delete on the row they act on. A delete moves a file or a whole directory into `.trash/`
+  under the root and says so first; a browser holding projects from before is asked, once,
+  whether to write them to the host.
   An examples menu opens bundled scripts, each as a file of its own so it never
   replaces the one being written, from `examples/*.py` at the repository root - the prebuild script bundles the directory,
   so the five printed parts appear in the menu beside the two flat ones with nothing in

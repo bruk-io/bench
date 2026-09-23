@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { type Asked, type Operation, type Refusal, decided, hostRefused, nameProblem, within, writable } from "./route";
+import {
+  type Asked,
+  type Operation,
+  type Refusal,
+  decided,
+  hostRefused,
+  nameProblem,
+  trashFolder,
+  within,
+  writable,
+} from "./route";
 
 const asked = (method: string, url: string, headers: Partial<Asked> = {}): Asked => ({
   method,
@@ -188,6 +198,35 @@ describe("within", () => {
     expect(within("/r/projects", "/r/projects")).toBe(false);
     expect(within("/r/projects", "/r/projects/")).toBe(false);
     expect(within("/r/projects", "/etc/passwd")).toBe(false);
+  });
+});
+
+describe("decided: a whole project", () => {
+  it("renames one with POST ?to= and puts one in the trash with DELETE", () => {
+    expect(decided(asked("POST", "/__bench/projects/cab?to=shelf"), [])).toEqual({
+      op: "rename-project",
+      project: "cab",
+      holder: null,
+      to: "shelf",
+    });
+    expect(decided(asked("DELETE", "/__bench/projects/cab"), [])).toEqual({
+      op: "trash-project",
+      project: "cab",
+      holder: null,
+    });
+  });
+
+  it("holds the new name to the rule for one, and a trash is never a name", () => {
+    expect(reason(decided(asked("POST", "/__bench/projects/cab"), []))).toBe("name");
+    expect(reason(decided(asked("POST", "/__bench/projects/cab?to=..%2Fx"), []))).toBe("name");
+    expect(reason(decided(asked("POST", "/__bench/projects/cab?to=.trash"), []))).toBe("name");
+    expect(reason(decided(asked("DELETE", "/__bench/projects/.trash"), []))).toBe("name");
+  });
+
+  it("names a trash folder by when, sortably and without a colon, and from which project", () => {
+    const when = new Date(2026, 8, 23, 10, 15, 3);
+    expect(trashFolder(when, "cabinet")).toBe("20260923-101503-cabinet");
+    expect(trashFolder(when, "cabinet", 2)).toBe("20260923-101503-cabinet-2");
   });
 });
 

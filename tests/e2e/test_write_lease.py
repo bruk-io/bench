@@ -256,10 +256,17 @@ def test_the_first_to_open_writes_and_the_second_reads_is_told_why_and_keeps_not
 
         # ... nor renamed or deleted, and it can still be exported.
         tablet.click("#rail-files")
-        assert tablet.locator("#file-rename").is_disabled()
-        assert tablet.locator("#file-delete").is_disabled()
+        # Its files are listed, and no row in the tree offers an action at all (task-48 AC#6).
+        rows = tablet.locator("bench-explorer .file").all_inner_texts()
+        assert [row.split()[0] for row in rows] == ["bench.toml", "plates.py"]
+        assert tablet.locator("bench-explorer .list .file ~ .more").count() == 0
+        tablet.click("#project-switcher")
+        tablet.locator('bench-explorer [aria-label="Actions for plates"]').click()
+        offered = tablet.locator("bench-explorer .acts button").all_inner_texts()
+        assert [one.strip() for one in offered] == ["Duplicate"]
+        _shot(tablet, "lease-reader-explorer.png")
         with tablet.expect_download() as download:
-            tablet.click("#file-download")
+            tablet.click("#project-download")
         assert download.value.suggested_filename == "plates.zip"
 
         # AC#7: a knob turns, the model runs on it, and the value goes nowhere at all.

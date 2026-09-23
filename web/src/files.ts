@@ -137,6 +137,66 @@ export const withKept = (space: Workspace, kept: Kept): Workspace => changed(spa
 export const withScript = (space: Workspace, script: string): Workspace =>
   script in opened(space).scripts ? { ...space, script } : space;
 
+/** A script's name as a person typed it: trimmed, and with `.py` put on the end when it was
+ * left off - a row in the tree is a file, and a file says what kind it is in its name. */
+export function scriptName(typed: string): string {
+  const trimmed = typed.trim();
+  return trimmed.endsWith(SCRIPT) ? trimmed : `${trimmed}${SCRIPT}`;
+}
+
+/** Why the script `from`, among the open project's `scripts`, cannot be called what was
+ * typed, or `null` when it can: the route's own rule for a name, and not another script's. */
+export function scriptNameProblem(scripts: readonly string[], from: string, typed: string): string | null {
+  const name = scriptName(typed);
+  if (name === SCRIPT) return "a script needs a name";
+  const plain = plainProblem(name);
+  if (plain !== null) return plain;
+  if (name !== from && scripts.includes(name)) return `there is already a ${name}`;
+  return null;
+}
+
+/** The open project with its script `from` called what was typed - its entry, and the script
+ * that is open, following it - or unchanged, when that name will not do. */
+export function scriptRenamed(space: Workspace, from: string, typed: string): Workspace {
+  const one = opened(space);
+  if (!(from in one.scripts) || scriptNameProblem(Object.keys(one.scripts), from, typed) !== null) return space;
+  const name = scriptName(typed);
+  if (name === from) return space;
+  const scripts: Record<string, string> = {};
+  for (const [file, text] of Object.entries(one.scripts)) scripts[file === from ? name : file] = text;
+  const next = changed(space, (was) => ({ ...was, scripts, entry: was.entry === from ? name : was.entry }));
+  return { ...next, script: space.script === from ? name : space.script };
+}
+
+/** The open project with a copy of its script `name` beside it, and the copy open - `parts-2.py`
+ * for `parts.py` - or unchanged, when it has no such script. */
+export function scriptCopied(space: Workspace, name: string): Workspace {
+  const one = opened(space);
+  const text = one.scripts[name];
+  if (text === undefined) return space;
+  const stems = Object.keys(one.scripts).map((file) => file.slice(0, -SCRIPT.length));
+  const copy = `${freeName(stems, name.slice(0, -SCRIPT.length))}${SCRIPT}`;
+  const next = changed(space, (was) => ({ ...was, scripts: { ...was.scripts, [copy]: text } }));
+  return { ...next, script: copy };
+}
+
+/** Whether the open project's script `name` can go: it has another. A project with no script
+ * is not one this app can open, so its last goes with the project or not at all. */
+export const scriptRemovable = (one: Project, name: string): boolean =>
+  name in one.scripts && Object.keys(one.scripts).length > 1;
+
+/** The open project without its script `name` - the entry passing to the first left by name
+ * when it was the entry, and the open script to the entry when it was the one open - or
+ * unchanged, when it cannot go (`scriptRemovable`). */
+export function scriptRemoved(space: Workspace, name: string): Workspace {
+  const one = opened(space);
+  if (!scriptRemovable(one, name)) return space;
+  const scripts = Object.fromEntries(Object.entries(one.scripts).filter(([file]) => file !== name));
+  const entry = one.entry === name ? (Object.keys(scripts).sort()[0] ?? one.entry) : one.entry;
+  const next = changed(space, (was) => ({ ...was, scripts, entry }));
+  return { ...next, script: space.script === name ? entry : space.script };
+}
+
 /** A name as a person typed it, as a project is called: trimmed, and without a `.py` a person
  * who is used to naming scripts might still put on the end. */
 export function normalized(typed: string): string {

@@ -61,6 +61,9 @@ import {
   pristine,
   renamed,
   restored,
+  scriptCopied,
+  scriptRemoved,
+  scriptRenamed,
   scriptsOf,
   serialized,
   single,
@@ -468,9 +471,10 @@ function keep(next: Workspace): void {
 function show(next: Workspace): void {
   workspace = next;
   remember(KEYS.open, JSON.stringify({ project: next.current, script: next.script }));
-  ui.explorer.names = next.projects.map((one) => one.name);
-  ui.explorer.current = next.current;
   ui.openName.textContent = next.current;
+  showFiles();
+  // The meshes are the directory's, not the store's: asked for again when the project changes.
+  if (meshesOf !== next.current && client !== null) void readMeshes();
   showValues();
   drawTabs();
   // A different project may place the very body already dropped, or stop placing the one
@@ -1035,6 +1039,7 @@ async function keepBody(project: string, name: string, bytes: Uint8Array): Promi
         "bench.reference.name": name,
         "bench.project": project,
       });
+      if (workspace.current === project) await readMeshes();
       return;
     }
     if (sent.refusal.refused === "exists") {
@@ -1095,10 +1100,14 @@ ui.canvas3d.addEventListener("drop", (event: DragEvent) => {
   })();
 });
 
-/** Forget the dropped body: the chip goes, its report goes with it, and the next run draws
+ui.referenceClear.addEventListener("click", () => {
+  forgetBody();
+});
+
+/** Forget the body on the view: the chip goes, its report goes with it, and the next run draws
  * the work on its own. The re-run is the point - without it the backdrop would stay on
  * screen until something else happened to run. */
-ui.referenceClear.addEventListener("click", () => {
+function forgetBody(): void {
   reference = null;
   referenceName = "";
   report = null;
@@ -1118,7 +1127,7 @@ ui.referenceClear.addEventListener("click", () => {
   if (pickedReference !== null) showSelection(null);
   closeReport();
   runNow();
-});
+}
 
 /** The report, asked for again from the chip after its tab was shut. */
 ui.referenceReport.addEventListener("click", () => {
@@ -1708,6 +1717,8 @@ function showDocument(doc: Doc = front): void {
   for (const tab of ui.editorTabs.querySelectorAll('[role="tab"]')) {
     tab.setAttribute("aria-selected", String(tab.id === tabId(front)));
   }
+  // The tree marks the file in front, as the tab strip does.
+  showFiles();
 }
 
 /** Mark the script's tab while it has a failing line, so a person reading a sheet can see
@@ -1891,25 +1902,184 @@ function load(next: Workspace): void {
   void heldBody();
 }
 
-// The explorer asks; the workspace is changed here, and only a change of open project reruns.
-ui.explorer.addEventListener("file-new", () => {
+// ---- the explorer: the switcher, and the open project's own files -------------------------
+//
+// The explorer asks; the workspace, the host and the view are changed here.
+
+/** Where the host keeps the projects, as it said - what a delete names before it moves
+ * anything into the trash under it. `""` until the host has said. */
+let projectsRoot = "";
+
+/** The meshes in the open project's directory, by name, and which project that was read for -
+ * they are bytes the store does not carry, so the tree asks the route for the listing. */
+let meshes: readonly string[] = [];
+let meshesOf = "";
+
+const isMesh = (name: string): boolean => name.toLowerCase().endsWith(".stl");
+
+/** Put the open project into the explorer: every project for the switcher, and this one's
+ * files for the tree, with the one in front marked. */
+function showFiles(): void {
+  const one = opened(workspace);
+  ui.explorer.projects = workspace.projects.map((each) => each.name);
+  ui.explorer.current = workspace.current;
+  ui.explorer.files = { scripts: scriptsOf(one), entry: one.entry, meshes: meshesOf === one.name ? meshes : [] };
+  ui.explorer.front = front.kind === "values" ? BENCH : front.kind === "script" ? workspace.script : "";
+  ui.explorer.root = projectsRoot;
+}
+
+/** Ask the route which meshes the open project's directory holds, and show them. A project not
+ * on the host yet holds none. */
+async function readMeshes(): Promise<void> {
+  const project = workspace.current;
+  // Asked of the root first: a project not written yet is not a directory, and asking for its
+  // files would be a 404 in the console for nothing that went wrong.
+  const there = await client?.projects().catch(() => null);
+  const on = there?.ok === true && there.value.projects.includes(project);
+  const listed = on ? await client?.files(project).catch(() => null) : null;
+  if (workspace.current !== project) return; // another project opened while this was asked
+  meshes = listed?.ok === true ? listed.value.map((one) => one.name).filter(isMesh) : [];
+  meshesOf = project;
+  showFiles();
+}
+
+/** Say at the foot of the explorer where a delete put what it moved. */
+function sayMoved(what: string, trashed: string | null): void {
+  const where = trashed ?? ".trash/";
+  ui.explorer.said = `${what} moved to ${projectsRoot === "" ? where : `${projectsRoot}/${where}`}`;
+}
+
+ui.explorer.addEventListener("project-new", () => {
   load(created(workspace, UNTITLED, STARTER));
   code.focus();
 });
-ui.explorer.addEventListener("file-open", (event) => {
+ui.explorer.addEventListener("project-open", (event) => {
   load(switched(workspace, event.detail.name));
 });
-ui.explorer.addEventListener("file-rename", (event) => {
-  keep(renamed(workspace, event.detail.from, event.detail.to));
-});
-ui.explorer.addEventListener("file-delete", (event) => {
-  const next = deleted(workspace, event.detail.name, STARTER);
-  if (event.detail.name === workspace.current) load(next);
-  else keep(next);
-});
-ui.explorer.addEventListener("file-duplicate", (event) => {
+ui.explorer.addEventListener("project-duplicate", (event) => {
   load(duplicated(workspace, event.detail.name));
 });
+
+/** A project called something else: its directory moved as one on the host - meshes and all -
+ * and then the workspace renamed, which writes only what else the rename changed (a script
+ * named for the project is renamed with it). */
+ui.explorer.addEventListener("project-rename", (event) => {
+  const { from, to } = event.detail;
+  void (async () => {
+    if (store === null) return;
+    const moved = await store.renameProject(from, to).catch((problem: unknown) => ({
+      ok: false as const,
+      message: String(problem),
+    }));
+    if (!moved.ok) {
+      showFailure(`${from} was not renamed: ${moved.message}.`);
+      return;
+    }
+    keep(renamed(workspace, from, to));
+    if (workspace.current === to) void readMeshes();
+  })();
+});
+
+/** A project put away: its whole directory into the trash on the host, then gone from the
+ * workspace - opening its neighbour when it was the one open. */
+ui.explorer.addEventListener("project-delete", (event) => {
+  const { name } = event.detail;
+  void (async () => {
+    if (store === null) return;
+    const moved = await store.trashProject(name).catch((problem: unknown) => ({
+      ok: false as const,
+      message: String(problem),
+    }));
+    if (!moved.ok) {
+      showFailure(`${name} was not deleted: ${moved.message}.`);
+      return;
+    }
+    const next = deleted(workspace, name, STARTER);
+    if (name === workspace.current) load(next);
+    else keep(next);
+    sayMoved(name, moved.trashed === null ? null : `${moved.trashed}/`);
+  })();
+});
+
+/** A row in the tree: the values document to its tab, a script into the editor, a mesh onto
+ * the view - where its survey opens in the editor group beside the script. */
+ui.explorer.addEventListener("file-open", (event) => {
+  const { name } = event.detail;
+  if (name === BENCH) {
+    showDocument(VALUES);
+    showFiles();
+  } else if (name in opened(workspace).scripts) {
+    if (name === workspace.script) showDocument(SCRIPT);
+    else openScript(name);
+    showFiles();
+  } else if (isMesh(name)) {
+    void openMesh(name);
+  }
+});
+
+/** Put the open project's mesh `name` on the view, read from its directory. */
+async function openMesh(name: string): Promise<void> {
+  const project = workspace.current;
+  const got = await client?.read(project, name).catch(() => null);
+  if (got === undefined || got === null || !got.ok) {
+    showFailure(`${name} could not be read from ${project}${got?.ok === false ? `: ${got.refusal.message}` : ""}.`);
+    return;
+  }
+  if (workspace.current !== project) return;
+  hold(name, got.value.bytes, false);
+}
+
+ui.explorer.addEventListener("file-rename", (event) => {
+  keep(scriptRenamed(workspace, event.detail.from, event.detail.to));
+});
+
+ui.explorer.addEventListener("file-duplicate", (event) => {
+  const next = scriptCopied(workspace, event.detail.name);
+  if (next === workspace) return;
+  keep(next);
+  code.replace(openSource(next));
+  showDocument(SCRIPT);
+  window.clearTimeout(timer);
+  runNow();
+});
+
+/** A file put away: a script by the store, which moves it into the trash as it lands; a mesh
+ * straight through, since the store does not carry meshes - and off the view if it was there. */
+ui.explorer.addEventListener("file-delete", (event) => {
+  const { name } = event.detail;
+  if (isMesh(name)) {
+    void deleteMesh(name);
+    return;
+  }
+  const was = workspace.script;
+  const next = scriptRemoved(workspace, name);
+  if (next === workspace) return;
+  keep(next);
+  sayMoved(name, null);
+  if (was === name) {
+    code.replace(openSource(next));
+    showDocument(SCRIPT);
+    window.clearTimeout(timer);
+    runNow();
+  }
+});
+
+async function deleteMesh(name: string): Promise<void> {
+  if (client === null || !writable()) return;
+  const project = workspace.current;
+  const said = await (async () => {
+    const got = await client.read(project, name);
+    if (!got.ok) return got;
+    return client.remove(project, name, got.value.version.version);
+  })().catch((problem: unknown) => ({ ok: false as const, refusal: { message: String(problem) } }));
+  if (!said.ok) {
+    showFailure(`${name} was not deleted: ${said.refusal.message}.`);
+    return;
+  }
+  sayMoved(name, said.value.trashed);
+  if (referenceName === name) forgetBody();
+  await readMeshes();
+}
 
 // A project leaves as one archive: its scripts, and its document named for its entry - the
 // pair `tools/build.py` runs from a directory today (`<script>.py` beside `<script>.toml`), so
@@ -1917,7 +2087,7 @@ ui.explorer.addEventListener("file-duplicate", (event) => {
 // document as `bench.toml`, `[project]` table and all; `tools.build` reads `[values]` and
 // `[reference]` out of it and passes over the rest. Downloading the directory itself, with
 // `bench.toml` in it, waits for `tools.build` to read one (task-50).
-ui.explorer.addEventListener("file-download", (event) => {
+ui.explorer.addEventListener("project-download", (event) => {
   const one = workspace.projects.find((each) => each.name === event.detail.name);
   if (one === undefined) return;
   save(`${one.name}.zip`, zip({ ...one.scripts, [tomlName(one.entry)]: valuesDocument(one) }));
@@ -1926,7 +2096,7 @@ ui.explorer.addEventListener("file-download", (event) => {
 // And arrives the same way: each script picked becomes a project, with the values of the
 // `.toml` of the same stem when that was picked too, and a values file picked on its own goes
 // to the open project. The explorer only asked; reading the files is this page's to do.
-ui.explorer.addEventListener("file-import", (event) => {
+ui.explorer.addEventListener("project-import", (event) => {
   void importFiles(event.detail.files);
 });
 
@@ -2073,6 +2243,15 @@ async function boot(): Promise<void> {
   if (client !== null) {
     lease = leasing(client);
     lease.subscribe(standingChanged);
+    // Where the projects are, for a delete to name before it moves anything into the trash.
+    void client
+      .projects()
+      .then((listed) => {
+        if (!listed.ok) return;
+        projectsRoot = listed.value.root.replace(/[/\\]+$/, "");
+        showFiles();
+      })
+      .catch(() => undefined);
   }
 
   let kept: string | null = null;
