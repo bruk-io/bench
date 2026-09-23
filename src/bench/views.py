@@ -211,6 +211,12 @@ def _as_printed(part: Part, body: Mesh | None) -> Mesh | None:
     posed mesh unchanged for any stock but :class:`~bench.model.Printed`, which is the only
     one with a way up to read - :func:`_files` only ever calls this on a printed part's body,
     so that never actually happens, but a stray call should move nothing rather than guess.
+
+    A ``bed_face`` is read the same way a script's own ``ref()`` is: a name the part has no
+    face by, or a face with no one plane, is :func:`~bench.solids.plane_of`'s to refuse - and
+    that refusal is left to propagate to the script's own error rather than caught here and
+    traded for an arbitrary turn nobody asked for. A bad ``bed_face`` is the maker's mistake
+    to fix, the same as a bad ref anywhere else in a script.
     """
     if body is None or not isinstance(part.stock, Printed):
         return body

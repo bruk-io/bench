@@ -25,10 +25,35 @@ show(assembly("pair", (Placed(base, XY), Placed(fitted.part, XY)), posed=True))
 posed part sits upside down at the top of the assembly - a printer still has to read it
 right way up, from underneath the pose rather than through it."""
 
+BED_FACE = """\
+from bench import *
+from bench.library.print import PLA
+
+block = part("block", cuboid(10, 6, 3), Printed(PLA, Orient(up=-Z, bed_face="top")))
+show(block)
+"""
+"""A part that names its own ``bed_face``: printed upside down (``up=-Z``), and the face
+touching the bed is the one it says, ``top`` - the block's own top when drawn, since a
+cuboid's ``top`` faces +Z and ``-up`` does too."""
+
+BAD_BED_FACE = """\
+from bench import *
+from bench.library.print import PLA
+
+block = part("block", cuboid(10, 6, 3), Printed(PLA, Orient(bed_face="no-such-face")))
+show(block)
+"""
+"""A ``bed_face`` naming nothing on the part - the same mistake a bad ``ref()`` anywhere else
+in a script is, and answered the same way: the run fails, naming why, rather than exporting
+something arbitrary."""
+
 
 def measured(kernel: Kernel, enclosure_source: str) -> dict[str, object]:
-    """The enclosure example and the upside-down mate, both run with ``kernel``."""
+    """The enclosure example, the upside-down mate, and a part with (and without) a real
+    ``bed_face`` to read - all run with ``kernel``."""
     return {
         "enclosure": run(enclosure_source, kernel=kernel),
         "mated": run(MATED_UPSIDE_DOWN, kernel=kernel),
+        "bed_face": run(BED_FACE, kernel=kernel),
+        "bad_bed_face": run(BAD_BED_FACE, kernel=kernel),
     }

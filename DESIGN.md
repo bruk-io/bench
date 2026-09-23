@@ -538,19 +538,23 @@ it knows its way up (which has to turn with it). The fixed side may be either.
 `bore()` matches exhaustively, a row of every material's clearance table - and a touch is
 neither, so `Contact` sits beside `Fit` in `fasteners.py` and a pair says `Fit | Contact`.
 
-**Where a part sits is not how it prints - the rule, written down.** Today every printed part's
-STL and 3MF is `kernel.mesh(part.shape)` written verbatim, in world coordinates, wherever the
-script put the body (`views._files`, `export.stl`, `export.three_mf`); nothing on the way out
-reads `Orient`. `Orient.up` is "in the part's own coordinates", and only the checks
-(`overhangs`) and the features (a teardrop, a bridged top) read it. So moving a body without
-turning `up` would silently change how it prints: a part mated upside down would read as
-printed on its other face. `mating` therefore turns `up` by the mate's rotation (`oriented`):
-the same face lies on the bed and every overhang measures what it did as authored - the
-adapter test mates a ridge crown-down and measures it both ways. What it does **not** do is
-turn the exported file: the STL of a mated part is the posed mesh, exactly as a lid that prints
-upside down (`Orient(up=-Z)`) is exported the way it is drawn today, and laying it along `up`
-for the slicer is the maker's. Exporting each printed part in its print frame would be the
-real fix for both, and it is a change to `views`/`export`, not to the mate.
+**Where a part sits is not how it prints - the rule, written down.** `Orient.up` is "in the
+part's own coordinates", and only the checks (`overhangs`) and the features (a teardrop, a
+bridged top) read it - so moving a body without turning `up` would silently change how it
+prints: a part mated upside down would read as printed on its other face. `mating` therefore
+turns `up` by the mate's rotation (`oriented`): the same face lies on the bed and every
+overhang measures what it did as authored - the adapter test mates a ridge crown-down and
+measures it both ways.
+
+Until task-64, the exported file did not follow: `kernel.mesh(part.shape)` was written
+verbatim, in world coordinates, wherever the script put the body, and a part mated upside
+down, or a lid that prints upside down (`Orient(up=-Z)`), exported in its assembly pose.
+`export.as_printed(mesh, up, bed_along)` is the fix - a pure rotate-then-drop transform,
+turning `up` to +Z and standing the lowest point at z = 0 - and `views._as_printed` calls it
+on every printed part's body before it goes into `scene['files']`, reading `bed_along` off
+`plane_of(shape, orient.bed_face)` when the part names one. It runs only on the bytes a maker
+downloads; the mesh the 3D view draws is still the posed one `mating` built, which is the
+whole point of keeping the two apart.
 
 ## kernel.py [new] and adapters/ [new] - the seam a solid modeller is plugged into
 

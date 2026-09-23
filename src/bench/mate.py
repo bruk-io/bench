@@ -30,15 +30,15 @@ not solved for: it is a check of where the first pair put the part, which is wha
 and a check measures, so a finding about the pair reaches the part by identity, the way
 :mod:`bench.views` matches every finding. It is never a copy made for looking at.
 
-**Where a part sits is not how it prints.** A body is exported exactly where the script put
-it - an STL or a 3MF is the posed mesh, verbatim, as every part's has always been, and no
-file is turned to its print orientation on the way out. What says which way up a part
-prints is its :class:`~bench.model.Orient`, whose ``up`` is in the part's own coordinates;
-move the part and those coordinates move with it. So :func:`mating` turns ``up`` by the same
-rotation it moves the body with: a part mated upside down still prints the way it was
-authored to, its bed face still on the bed and its overhangs still what they were, and only
-its place in the assembly has changed. The exported mesh is still the posed one, and laying
-it along ``up`` for the slicer is the maker's, as it is for a lid that prints upside down.
+**Where a part sits is not how it prints.** What says which way up a part prints is its
+:class:`~bench.model.Orient`, whose ``up`` is in the part's own coordinates; move the part and
+those coordinates move with it. So :func:`mating` turns ``up`` by the same rotation it moves
+the body with: a part mated upside down still prints the way it was authored to, its bed face
+still on the bed and its overhangs still what they were, and only its place in the assembly
+has changed. The body a kernel builds is still the posed one - this module moves a part, not
+a printer - and it is :func:`bench.export.as_printed`, called on the way out by
+:mod:`bench.views`, that lays the posed mesh back on the bed by this very ``Orient`` for the
+STL and the 3MF a maker downloads; the 3D view keeps showing the posed body.
 
 **Round faces - a bore and its pin - are the other kind of pair.** A round face has no one
 plane to lay another on, but it has an axis, and :func:`~bench.solids.axis_of` answers it as
