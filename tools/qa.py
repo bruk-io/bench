@@ -129,7 +129,7 @@ def _stops(named: tuple[str, ...]) -> tuple[str, ...]:
 def _visited(page: Page, stop: str, spoken: list[str], number: int) -> None:
     """Load one example, wait for it, shoot it and read it."""
     page.click("#examples-button")
-    page.locator("#examples button", has_text=stop).click()
+    page.locator("#examples").get_by_role("button", name=stop, exact=True).click()
     _settled(page)
     page.wait_for_timeout(SETTLE_MS)
     shot = OUT / f"qa-{number:02d}-{stop.removesuffix('.py')}.png"
