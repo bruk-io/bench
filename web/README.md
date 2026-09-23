@@ -6,15 +6,42 @@ with Manifold's WASM build beside it in that same worker, so a printed part is *
 the browser and not merely described. Nothing is fetched from a CDN at run time: the Python
 runtime, the solid modeller and the `bench` sources are all served by this app.
 
+bench is a tool you run, not a page you can put anywhere (decision-9). The server that serves
+the page is also where the projects live: a directory per project under one root on that
+machine, read and written over a small route beside the page. A page with no such host behind
+it says so and stops - it does not pretend to keep work it has nowhere to put.
+
 ## Run it
 
 ```sh
 cd web
 npm install
-npm run dev        # http://localhost:5173
+npm run dev        # http://localhost:5173 - the page and the projects route
 npm run build      # tsc --noEmit && vite build -> dist/
-npm run preview    # serve dist/
+npm run preview    # serve dist/, with the projects route
 ```
+
+The projects are kept under `$BENCH_PROJECTS` (an absolute path), or `projects/` at the top of
+the repository when that is unset (see *The projects route* below). Both commands serve the
+route; a plain file server in front of `dist/` does not, and the app says there is no host.
+
+**Another device on the network** - a tablet in the workshop, say - needs the server bound
+beyond this machine, which the npm scripts deliberately do not do:
+
+```sh
+npm run dev -- --host        # or: npm run preview -- --host
+```
+
+Vite prints the `Network:` address to open on the other device (`http://192.168.x.x:5173`).
+**From then on, anyone on that network can read and write every project under the root,
+through the route.** There is no authentication - it is a workshop
+tool on a trusted network, not a service. The route refuses a page on another origin and
+confines itself to the root (below), but a person on the same network with `curl` is exactly
+what it lets in. Bind wide on purpose, on a network you trust, and stop the server when you are
+done. To reach it by a name rather than an address - an mDNS name like `workshop.local` - add
+that name to `server.allowedHosts` (for `dev`) and `preview.allowedHosts` (for `preview`) in
+`vite.config.ts`: the route keeps Vite's host rule itself (task-45) and refuses any `Host` that
+is not an address, `localhost` or listed there.
 
 `predev` and `prebuild` run `npm run generate`, which is three node scripts:
 
@@ -51,8 +78,8 @@ newest mtime under `../src/bench` and `../examples` into `pysources.ts` as `GENE
 (`/__bench/generated-at`) with the same number recomputed live off those two trees, in both
 `npm run dev` and `npm run preview`. `src/staleness.ts` compares the two on boot and, if the
 bundle is behind, lights up **stale examples** in the status bar rather than letting a two-day-old
-example list pass as current - a static deploy has no such route behind it, so the check is
-silent there instead of guessing. Pulling `main` and wanting the new examples: run
+example list pass as current - a server without that route behind it says nothing rather than
+guess. Pulling `main` and wanting the new examples: run
 `npm ci --prefix web && npm --prefix web run generate`, then (re)start `npm run dev` or
 rebuild with `npm run build && npm run preview`.
 
@@ -76,7 +103,9 @@ The end-to-end checks live with the rest of the suite, in `tests/e2e/` at the re
 root, and are the only layer excluded from a default `uv run pytest` - ask for them by
 marker. They drive this app with Playwright (`playwright.sync_api`, chromium): the session
 fixtures run `npm run build` when `dist/` is older than anything under `src/` or
-`../src/bench`, serve the build with `npx vite preview` on a free port, and open one page.
+`../src/bench`, serve the build with `npx vite preview` on a free port - one server per page,
+each over an empty projects root of its own, since the host is where a page's projects live -
+and open one page.
 The checks wait for the first render, change a parameter and check the geometry changed, click
 a plate and insert its ref with `Ctrl+I`, check that a cursor inside `ref("drawer-front-1/pull")`
 lights up the pull's wall on the drawer front's plate, download a sheet and the zip (and open the zip with `zipfile` to
@@ -150,26 +179,58 @@ itself in the component test browser.
   small button that names it. The STL and the 3MF
   are bytes, carried through the scene as base64 - `transport.binary(name)` says which
   entries those are - and decoded on the way out, in the archive as well as on their own.
-- **Projects**: a project is a script and its values (decision-3), kept in `localStorage`
-  together. The values are the TOML `tools/build.py` reads from beside a script on disk -
-  `[values]`, one line per knob you turned - written on every panel edit, and written as the
-  run *built* it: a number the script's range held at its end comes back from the scene and
-  replaces what was sent, so the file never claims a cabinet the run did not make. It opens
-  as `<script>.toml`, a tab beside the script that cannot be closed any more than the script
-  can. The Projects container on the rail makes a new one from `templates/untitled.py`, and
-  opens, renames, deletes and duplicates them; `Download` is the two files in one archive,
-  and `Open…` takes a `.py` back in with the `.toml` beside it - or a `.toml` alone, for the
-  project that is open. A pick with a values file that cannot be read opens nothing and
-  names the line. An example opens as a project of its own, so it never replaces the script
-  being written; the first visit opens `gridfinity_cabinet.py`.
+- **Projects**: a project is a directory on the host (decision-9) - its scripts, and one
+  `bench.toml`:
+
+  ```toml
+  [project]
+  entry = "cabinet.py"      # the script a fresh open of the project runs
+
+  [values]                  # one line per knob you turned (decision-3)
+  units_x = 4
+
+  [reference]               # where a dropped mesh the project holds is placed (decision-4)
+  file = "drawer-slide.stl"
+  ```
+
+  Values are written on every panel edit, as the run *built* them: a number the script's range
+  held at its end comes back from the scene and replaces what was sent, so the file never
+  claims a cabinet the run did not make. `bench.toml` is a tab beside the scripts that cannot
+  be closed. Every script in the project has a tab; opening a project opens its `entry`, and
+  clicking another script's tab opens that one - and that is what Run runs, without changing
+  `entry`. Which project and which script are open is kept in *this browser*, never on the
+  host, so a tablet and a desktop on the same host each keep their own. Anything in
+  `bench.toml` this version does not read - a `[[measured]]` table, a key a later bench wrote -
+  is written back as it was; a directory from before, with `<script>.toml` beside its script
+  and no `bench.toml`, opens on that file's values, and the next edit writes `bench.toml`
+  without touching the old one. A mesh dropped on the view is written into the open project's
+  directory, straight through rather than queued; a different file of the same name already
+  there is not written over, and the chip says the body is not kept. Opening a project whose
+  `[reference]` names a mesh it holds puts that body back on the view, placed.
+
+  The Projects container on the rail lists the projects under the root, makes a new one from
+  `templates/untitled.py`, and opens, renames, deletes and duplicates them; `Download` is the
+  project's scripts and its document in one archive - the document as `<entry>.toml`, which is
+  what `tools/build.py` reads beside a script until it reads `bench.toml` itself (task-50) - and
+  `Open…` takes a `.py` back in with the `.toml` beside it, or a `.toml` alone, for the project
+  that is open. A pick with a values file that cannot be read opens nothing and names the line.
+  An example opens as a project of its own, so it never replaces the script being written; a
+  host with nothing on it opens `gridfinity_cabinet`, and writes nothing until something in it
+  is changed. A browser that kept projects in `localStorage` before this asks once, in the
+  page, whether to write them to the host - naming every directory it would create - and does
+  nothing until it is answered; declining leaves them in the browser, and neither answer is
+  asked for again.
 
 ## How it fits together
 
 ```
 index.html          the layout: header, editor pane, viewer, params and output panels
 src/main.ts         wiring and state (the workspace, overrides, the last scene)
-src/files.ts        the scripts kept as data: named files, the open one, each with its
-                    overrides - new, rename, delete, an example as a file of its own
+src/files.ts        the projects as data: directories of scripts, each with its entry,
+                    values and placement, the open one - new, rename, delete, an example
+                    as a project of its own, what a browser kept before, read to adopt it
+src/values.ts       a project's bench.toml: [project], [values], [reference] written and
+                    read, and every line it does not read kept to be written back
 src/bridge.ts       the worker seen from the page: one run at a time, latest wins, a
                     15 s watchdog that replaces a hung worker, and the scene check
 src/worker.ts       Pyodide and Manifold in one thread: /lib from PY_SOURCES, then one call
@@ -194,8 +255,13 @@ src/scene.ts        the contract of bench.script as TypeScript types, and `recei
                     checks a payload and its buffers before the UI reads them
 src/route.ts        what the projects route will and will not do, decided from the request
                     alone - the names, the host, the origin, the version a write names
-src/host.ts         the route as typed calls - list, read, write, create, rename, delete -
-                    for task-52's store; nothing in the app uses it yet
+src/host.ts         the route as typed calls - list, read, write, create, rename, delete
+src/store.ts        where the projects are kept, as a protocol: one document in, one out
+src/store-host.ts   that protocol over the route, every project read, only the diff written
+src/project-files.ts  a workspace as files: one directory per project, its scripts and
+                    bench.toml - and which project is open in none of them
+src/outbox.ts       the writes that have not reached the host yet, in IndexedDB
+src/store-local.ts  the projects a browser kept before they lived on the host - read once
 server/projects.ts  the route's edge in Node: the root, symlinks resolved, the disk itself
 ```
 
@@ -263,9 +329,17 @@ app to draw a laser-cut box never downloads a renderer. The entry chunk is ~448 
 
 ## Deploying it
 
-Everything is static: `dist/` behind any file server, nothing at run time but the files in
-it - except the projects route, which only `npm run dev` and `npm run preview` answer, and
-which a plain file server does not have. Two things are worth setting up.
+This used to say "everything is static", and it is not any more (decision-9). `dist/` behind
+a plain file server loads, and then says there is no host behind it and stops: the projects
+live on the host, and a server without the projects route has nowhere to keep them. What is
+still true is the part that costs the most - nothing is fetched from a CDN, the runtime and the
+modeller are served by this app - and the host is a static file server *plus one middleware*,
+not an application server. Today that host is `npm run preview` (or `npm run dev`), started
+where the projects root is; see *Run it* for serving it to another device, and what that
+exposes. Where the line falls between that and anything a person would call a deployment is
+decision-9's open question, not drawn here.
+
+Two things are worth setting up in front of it all the same.
 
 **Caching.** `public/_headers` is read by Netlify and Cloudflare Pages and asks for
 `/pyodide/*`, `/manifold/*` and `/assets/*` `immutable` for a year, and `index.html`

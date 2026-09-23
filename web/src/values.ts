@@ -28,6 +28,14 @@ export const VALUES = "values";
 /** The table a project's mesh placement lives in - `tools/build.py`'s `REFERENCE`. */
 export const REFERENCE = "reference";
 
+/** The table where a project directory says things about itself that no script can -
+ * decision-9's `[project]`, today only `entry`. */
+export const PROJECT = "project";
+
+/** The one values document a project directory holds (decision-9), whatever its scripts are
+ * called. */
+export const BENCH = "bench.toml";
+
 /** A triple of numbers: `[reference]`'s own grammar for `origin`, `up` and `along`, beside
  * the words each may also be (`"low"`, `"+Z"`, …) - `bench.placement.placement` resolves
  * both, this module only reads the shape. */
@@ -60,6 +68,34 @@ export const tomlName = (script: string): string => `${stemOf(script)}${DOCUMENT
 export type Read =
   | { readonly ok: true; readonly values: Overrides; readonly reference: ReferenceTable | null }
   | { readonly ok: false; readonly problem: string };
+
+/** What a project's document holds besides `[values]` and `[reference]`: the `[project]`
+ * table's `entry`, and everything this version does not read, kept as the lines it was written
+ * as so a write puts it back rather than dropping it (task-46 AC#3).
+ *
+ * - `entry` - the script `[project]` names, or `null` for a document from before there was a
+ *   `[project]` table, or one whose `entry` is not a string.
+ * - `root` - key lines above the first table header, which TOML only allows there.
+ * - `project` - every other line of `[project]`, a key some later version wrote.
+ * - `tables` - every other table, its header included - a `[[measured]]` (decision-3), or
+ *   whatever comes next.
+ *
+ * Comments inside a table this does read are not kept: that table is regenerated on every
+ * write, as `[values]` always has been.
+ */
+export interface Kept {
+  readonly entry: string | null;
+  readonly root: readonly string[];
+  readonly project: readonly string[];
+  readonly tables: readonly string[];
+  /** A document `fromToml` could not read at all - a value this version has no reader for, a
+   * hand edit with a typo - kept whole, with why, so it is never regenerated over: nothing
+   * above can say which of its lines it would be losing. Absent for one that was read. */
+  readonly unreadable?: { readonly text: string; readonly problem: string };
+}
+
+/** A document with nothing in it but what this version reads. */
+export const NOTHING_KEPT: Kept = { entry: null, root: [], project: [], tables: [] };
 
 // ---- writing --------------------------------------------------------------------------
 
@@ -124,11 +160,16 @@ export function toml(
   script: string,
   order: readonly string[] = [],
   reference: ReferenceTable | null = null,
+  kept: Kept = NOTHING_KEPT,
 ): string {
-  const lines = [
-    `# The values ${script} builds with. A field left out keeps the script's own default.`,
-    `[${VALUES}]`,
-  ];
+  const lines = [`# The values ${script} builds with. A field left out keeps the script's own default.`];
+  lines.push(...kept.root);
+  if (kept.entry !== null || kept.project.length > 0) {
+    lines.push(`[${PROJECT}]`);
+    if (kept.entry !== null) lines.push(`entry = ${quoted(kept.entry)}`);
+    lines.push(...kept.project, "");
+  }
+  lines.push(`[${VALUES}]`);
   for (const name of ordered(table, order)) {
     const value = table[name];
     if (value === undefined) continue;
@@ -144,7 +185,19 @@ export function toml(
       lines.push(`${key} = ${referenceLiteral(value)}`);
     }
   }
+  if (kept.tables.length > 0) lines.push("", ...trimmed(kept.tables));
   return `${lines.join("\n")}\n`;
+}
+
+/** `lines` without the blank lines at either end - a kept table is put back with exactly one
+ * blank line before it, however many it was read with, so a file does not grow a line on
+ * every write. */
+function trimmed(lines: readonly string[]): readonly string[] {
+  let start = 0;
+  let end = lines.length;
+  while (start < end && (lines[start] ?? "").trim() === "") start += 1;
+  while (end > start && (lines[end - 1] ?? "").trim() === "") end -= 1;
+  return lines.slice(start, end);
 }
 
 // ---- reading --------------------------------------------------------------------------
@@ -342,4 +395,47 @@ export function fromToml(text: string): Read {
     into[read.key] = read.value;
   }
   return { ok: true, values, reference: sawReference ? reference : null };
+}
+
+/** What `fromToml` passes over in `text`, kept: `[project]`'s `entry`, and every line of every
+ * table this version does not read, in the order it came.
+ *
+ * Never a problem: a line here is either `entry`, read when it is a string and kept as it was
+ * when not, or somebody else's, kept without being read. That is the whole of the
+ * compatibility promise - a file a later version wrote opens here, and is written back with
+ * what this version could not read still in it. Comments above the first table are not kept,
+ * because `toml` writes its own there and would otherwise grow one on every write.
+ */
+export function keptOf(text: string): Kept {
+  let entry: string | null = null;
+  const root: string[] = [];
+  const project: string[] = [];
+  const tables: string[] = [];
+  let table: string | null = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    const header = HEADER.exec(line);
+    if (header !== null) {
+      table = header[1] ?? "";
+      if (table !== VALUES && table !== REFERENCE && table !== PROJECT) tables.push(raw);
+      continue;
+    }
+    if (table === VALUES || table === REFERENCE) continue;
+    if (table === null) {
+      if (line !== "" && !line.startsWith("#")) root.push(raw);
+      continue;
+    }
+    if (table !== PROJECT) {
+      tables.push(raw);
+      continue;
+    }
+    if (line === "" || line.startsWith("#")) continue;
+    const read = keyValueAt(line, "", valueAt, "");
+    if (entry === null && !("problem" in read) && read.key === "entry" && typeof read.value === "string") {
+      entry = read.value;
+      continue;
+    }
+    project.push(raw);
+  }
+  return { entry, root, project, tables };
 }

@@ -16,14 +16,21 @@ One thing worth knowing about the log: Chromium surfaces a worker's console on t
 well, and ``web/src/worker.ts`` sends the script's stderr to ``console.warn`` inside the
 worker, so ``page.on("console")`` is the whole story - a script's stderr arrives here with
 nothing wrapped round the worker to fetch it.
+
+The app keeps its projects on the host it is served from (decision-9), so every example a look
+round opens is a project written to disk. It is served over a projects root of its own, made
+for the walk and removed after it, so a look round never leaves anything in the repository's
+own ``projects/`` or anyone's ``$BENCH_PROJECTS``.
 """
 
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tools import preview
+from tools.projects import VARIABLE
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -220,7 +227,10 @@ def main(argv: tuple[str, ...] | None = None) -> int:
     spoken: list[str] = []
     _said(spoken, "build", "building the app if anything it is made from has changed")
     preview.built()
-    with preview.served() as url:
+    with (
+        tempfile.TemporaryDirectory(prefix="bench-qa-") as root,
+        preview.served(env={VARIABLE: root}) as url,
+    ):
         _said(spoken, "server", f"vite preview at {url}")
         _walk(url, stops, spoken)
     shots = sum(1 for line in spoken if " screenshot " in line)

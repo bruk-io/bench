@@ -21,10 +21,14 @@ import shutil
 import time
 import tomllib
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from tests.e2e.conftest import Hosted
 
 try:
     from playwright.sync_api import FloatRect, Page
@@ -82,14 +86,6 @@ CURSOR_LINE = """() => {
 }"""
 """Which line the editor's cursor is on, as its gutter number says."""
 
-OVERRIDES = """() => {
-    try {
-        const kept = JSON.parse(window.localStorage.getItem('bench.files') ?? 'null');
-        const open = kept?.files?.find((file) => file.name === kept.current);
-        return open === undefined ? null : open.values;
-    } catch { return null; }
-}"""
-"""The open project's values as the browser keeps them: the TOML document itself."""
 
 DRAWN = "#canvas3d[data-bodies]:not([data-bodies='0'])"
 """The view once it has drawn a scene with something in it."""
@@ -150,12 +146,23 @@ WATCHDOG_MS = 40_000
 """How long a check may wait for the 15 s watchdog to fire and the panel to say so."""
 
 
-def _overrides(page: Page) -> dict[str, object]:
-    """The open project's values as the browser remembers them - read with :mod:`tomllib`,
-    which is what makes them a document rather than a blob: the same reader
-    ``tools/build.py`` uses on a file beside a script."""
-    said = page.evaluate(OVERRIDES)
-    return {} if said is None else dict(tomllib.loads(str(said)).get("values", {}))
+def _overrides(page: Page, root: Path, want: Mapping[str, object]) -> dict[str, object]:
+    """The open project's values as the host keeps them - its ``bench.toml`` on the disk under
+    ``root``, read with :mod:`tomllib`, which is what makes them a document rather than a blob:
+    the same reader ``tools/build.py`` uses on a file beside a script.
+
+    A write reaches the disk through the outbox a debounce after the edit that made it, so this
+    waits - up to ten seconds - for the file to say ``want``, and hands back whatever it said
+    last: a check that fails says what the file held, not that it was not there yet.
+    """
+    document = root / _open_name(page) / "bench.toml"
+    deadline = time.monotonic() + 10
+    while True:
+        said = document.read_text() if document.is_file() else ""
+        found = dict(tomllib.loads(said).get("values", {}))
+        if found == want or time.monotonic() > deadline:
+            return found
+        page.wait_for_timeout(100)
 
 
 def _ran(page: Page, settle: Callable[[Page], None]) -> None:
@@ -725,7 +732,7 @@ def test_a_run_that_fell_over_still_shows_what_it_printed(
 
 @pytest.mark.e2e
 def test_an_override_survives_a_scene_that_lands_mid_debounce(
-    clean_page: Page, settle: Callable[[Page], None]
+    clean_page: Page, clean_host: Hosted, settle: Callable[[Page], None]
 ) -> None:
     """A scene that arrives while a parameter edit is still waiting out its debounce must
     not put the old override table back.
@@ -778,7 +785,9 @@ def test_an_override_survives_a_scene_that_lands_mid_debounce(
         assert _drawn(page) == at_seven, (
             f"the drawing is not the one for units_x=7, with the edit {early} ms early"
         )
-        assert _overrides(page) == {"units_x": 7}, f"localStorage lost the edit, {early} ms early"
+        assert _overrides(page, clean_host.root, {"units_x": 7}) == {"units_x": 7}, (
+            f"the host lost the edit, {early} ms early"
+        )
 
 
 # ---- a runaway script -----------------------------------------------------------------
@@ -873,7 +882,7 @@ def _open_file(page: Page, name: str, settle: Callable[[Page], None]) -> None:
 
 
 def _open_name(page: Page) -> str:
-    """Which script the title bar says is open."""
+    """Which project the title bar says is open."""
     return page.locator("#open-name").inner_text().strip()
 
 
@@ -887,7 +896,7 @@ def test_a_new_file_starts_from_the_template_and_draws_it(
     page.wait_for_function(f"() => ({BODIES})() === 1", timeout=BOOT_MS)
     settle(page)
     assert _state(page) == "ok", _status(page)
-    assert _open_name(page) == "untitled.py"
+    assert _open_name(page) == "untitled"
     assert "class Settings" in _editor_text(page)
     page.screenshot(path=str(screenshots / "09-new-file.png"))
 
@@ -897,8 +906,8 @@ def test_a_new_file_does_not_cost_the_script_before_it(
     files_page: Page, settle: Callable[[Page], None]
 ) -> None:
     page = files_page
-    assert _file_names(page) == ["gridfinity_cabinet.py", "untitled.py"]
-    _open_file(page, "gridfinity_cabinet.py", settle)
+    assert _file_names(page) == ["gridfinity_cabinet", "untitled"]
+    _open_file(page, "gridfinity_cabinet", settle)
     page.wait_for_function(f"() => ({BODIES})() > 5", timeout=BOOT_MS)
     assert CABINET_FIRST_LINE in _editor_text(page)
 
@@ -909,17 +918,17 @@ def test_an_example_opens_as_a_file_of_its_own(
 ) -> None:
     """Picking an example used to replace the script in the editor, whatever was in it."""
     page = files_page
-    _open_file(page, "untitled.py", settle)
+    _open_file(page, "untitled", settle)
     _typed(page, "\n# mine")
     _ran(page, settle)
 
     page.click("#examples-button")
     page.locator("#examples button", has_text="box_with_hole.py").click()
     _ran(page, settle)
-    assert _open_name(page) == "box_with_hole.py"
-    assert _file_names(page) == ["gridfinity_cabinet.py", "untitled.py", "box_with_hole.py"]
+    assert _open_name(page) == "box_with_hole"
+    assert _file_names(page) == ["gridfinity_cabinet", "untitled", "box_with_hole"]
 
-    _open_file(page, "untitled.py", settle)
+    _open_file(page, "untitled", settle)
     assert "# mine" in _editor_text(page)
 
 
@@ -932,22 +941,24 @@ def test_a_rename_and_a_delete_outlast_a_reload(
     page.click("#file-rename")
     page.fill("#file-name", "shelf")
     page.click("#file-rename-confirm")
-    assert _open_name(page) == "shelf.py"
-    # The values file is named for its script, so it was renamed too.
-    assert page.locator("#tab-values").inner_text().strip() == "shelf.toml"
+    assert _open_name(page) == "shelf"
+    # The script was named for the project, so it is renamed with it; the values are the
+    # project's one bench.toml, whatever it is called.
+    assert page.locator("#tab-script").inner_text().strip() == "shelf.py"
+    assert page.locator("#tab-values").inner_text().strip() == "bench.toml"
 
-    _open_file(page, "box_with_hole.py", settle)
+    _open_file(page, "box_with_hole", settle)
     _files(page)
     page.click("#file-delete")
     page.click("#file-delete-confirm")
     _ran(page, settle)
-    assert _open_name(page) == "shelf.py", "deleting the open file opens its neighbour"
+    assert _open_name(page) == "shelf", "deleting the open project opens its neighbour"
 
     page.reload()
     page.wait_for_selector(DRAWN, timeout=BOOT_MS)
     settle(page)
-    assert _file_names(page) == ["gridfinity_cabinet.py", "shelf.py"]
-    assert _open_name(page) == "shelf.py"
+    assert _file_names(page) == ["gridfinity_cabinet", "shelf"]
+    assert _open_name(page) == "shelf"
     assert "# mine" in _editor_text(page)
     assert _state(page) == "ok", _status(page)
 
@@ -971,7 +982,7 @@ def _pick(page: Page, *paths: Path) -> None:
 
 @pytest.mark.e2e
 def test_a_panel_edit_is_a_line_in_the_values_file(
-    files_page: Page, settle: Callable[[Page], None], screenshots: Path
+    files_page: Page, files_host: Hosted, settle: Callable[[Page], None], screenshots: Path
 ) -> None:
     """The knob turned is a line somebody can read: the values are kept as TOML, and the
     same TOML opens as a tab beside the script - a document, not a widget."""
@@ -980,13 +991,13 @@ def test_a_panel_edit_is_a_line_in_the_values_file(
     page.fill("#param-w", "150")
     _ran(page, settle)
     assert _state(page) == "ok", _status(page)
-    assert _overrides(page) == {"w": 150}
+    assert _overrides(page, files_host.root, {"w": 150}) == {"w": 150}
 
     page.click("#tab-values")
     assert page.locator("#values-text").is_visible()
     assert page.locator("#editor").is_hidden(), "the values did not come to the front"
     assert page.locator("#canvas3d").is_visible(), "opening the values covered the view"
-    assert page.locator("#tab-values").inner_text().strip() == "shelf.toml"
+    assert page.locator("#tab-values").inner_text().strip() == "bench.toml"
     assert page.locator("#tab-values .tab-close").count() == 0, "the values offer a close button"
     text = page.locator("#values-text").inner_text()
     assert "[values]" in text
@@ -998,17 +1009,17 @@ def test_a_panel_edit_is_a_line_in_the_values_file(
 
 @pytest.mark.e2e
 def test_duplicating_a_project_copies_its_values_with_it(
-    files_page: Page, settle: Callable[[Page], None]
+    files_page: Page, files_host: Hosted, settle: Callable[[Page], None]
 ) -> None:
     page = files_page
     _files(page)
     page.click("#file-duplicate")
     _ran(page, settle)
-    assert _open_name(page) == "shelf-2.py"
-    assert _file_names(page) == ["gridfinity_cabinet.py", "shelf.py", "shelf-2.py"]
+    assert _open_name(page) == "shelf-2"
+    assert _file_names(page) == ["gridfinity_cabinet", "shelf", "shelf-2"]
     assert "# mine" in _editor_text(page)
-    assert _overrides(page) == {"w": 150}, "the copy lost the values"
-    assert page.locator("#tab-values").inner_text().strip() == "shelf-2.toml"
+    assert _overrides(page, files_host.root, {"w": 150}) == {"w": 150}, "the copy lost the values"
+    assert page.locator("#tab-script").inner_text().strip() == "shelf-2.py"
 
 
 @pytest.mark.e2e
@@ -1048,7 +1059,7 @@ def test_a_downloaded_project_runs_outside_the_browser(
 
 @pytest.mark.e2e
 def test_a_project_opened_from_disk_arrives_with_its_values(
-    files_page: Page, settle: Callable[[Page], None], tmp_path: Path
+    files_page: Page, files_host: Hosted, settle: Callable[[Page], None], tmp_path: Path
 ) -> None:
     """A script and the `.toml` beside it, picked together, open as one project - and a
     value the file holds past the script's range is held at that end by the run and written
@@ -1059,10 +1070,10 @@ def test_a_project_opened_from_disk_arrives_with_its_values(
     _pick(page, tmp_path / "plate.py", tmp_path / "plate.toml")
     _ran(page, settle)
     assert _state(page) == "ok", _status(page)
-    assert _open_name(page) == "plate.py"
+    assert _open_name(page) == "plate"
     assert "class Settings" in _editor_text(page)
     # `hole_r` is `knob(8.0, min=2.0, max=20.0)`: 99 was sent, 20 was built, 20 is kept.
-    assert _overrides(page) == {"w": 40, "hole_r": 20}
+    assert _overrides(page, files_host.root, {"w": 40, "hole_r": 20}) == {"w": 40, "hole_r": 20}
     _container(page, "parameters")
     assert page.locator("#param-hole_r").input_value() == "20"
     assert page.locator("#param-w").input_value() == "40"
@@ -1070,18 +1081,18 @@ def test_a_project_opened_from_disk_arrives_with_its_values(
 
 @pytest.mark.e2e
 def test_a_script_opened_with_no_values_file_runs_on_its_defaults(
-    files_page: Page, settle: Callable[[Page], None], tmp_path: Path
+    files_page: Page, files_host: Hosted, settle: Callable[[Page], None], tmp_path: Path
 ) -> None:
     page = files_page
     (tmp_path / "bare.py").write_text(STARTER_TEXT)
     _pick(page, tmp_path / "bare.py")
     _ran(page, settle)
     assert _state(page) == "ok", _status(page)
-    assert _open_name(page) == "bare.py"
-    assert _overrides(page) == {}
+    assert _open_name(page) == "bare"
+    assert _overrides(page, files_host.root, {}) == {}
     page.click("#tab-values")
     text = page.locator("#values-text").inner_text()
-    assert tomllib.loads(text) == {"values": {}}, text
+    assert tomllib.loads(text) == {"project": {"entry": "bare.py"}, "values": {}}, text
     _script(page)
 
 
@@ -1500,7 +1511,7 @@ def test_an_example_whose_name_is_another_examples_prefix_still_picks_cleanly(
     contains it."""
     page = printed_page
     example(page, "hinge.py")
-    assert _open_name(page) == "hinge.py", _open_name(page)
+    assert _open_name(page) == "hinge", _open_name(page)
 
 
 @pytest.mark.e2e

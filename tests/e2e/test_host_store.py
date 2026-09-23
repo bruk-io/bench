@@ -9,12 +9,9 @@ show is what this file is for: a write blocked at the network and drained once i
 edits while blocked landing as one PUT, a write the route refuses as `moved` reported and left
 alone, and typing continuously against a reachable host never conflicting with itself.
 
-Each test gets its own project root and its own `vite preview`, seeded with `workspace/` - the
-one project directory `web/src/project-files.ts` maps the browser's workspace onto until
-task-46 - already holding a script, so the app's store probe finds it and boots into host mode
-rather than the browser's own store (`main.ts`'s `chosenStore`, AC#8). `PROJECT`/`MANIFEST`
-below mirror `project-files.ts`'s own constants; a change to either file has to keep both sides
-in step until task-46 gives Python a mapping of its own to read them by.
+Each test gets its own project root and its own `vite preview`, seeded with one project
+directory - `cabinet/`, a script and its `bench.toml`, the shape `web/src/project-files.ts` maps
+a project onto since task-46 - so the app boots straight onto it.
 """
 
 import re
@@ -46,10 +43,9 @@ BOOT_MS = 240_000
 
 OUT = preview.WEB / "e2e" / "out"
 
-PROJECT = "workspace"
-MANIFEST = "_workspace.toml"
+PROJECT = "cabinet"
 SCRIPT = "from bench import *\n\nshow((part('plate', face(rect(60, 40)), Stock(3, 'ply')),))\n"
-VALUES = "[values]\n"
+VALUES = '[project]\nentry = "cabinet.py"\n\n[values]\n'
 
 ROUTE = re.compile(r"/__bench/projects/")
 
@@ -78,14 +74,21 @@ def _wait_reach_shown(page: Page) -> None:
 
 
 def _seed(root: Path) -> Path:
-    """A projects root with `workspace/cabinet.py` and its values already on it, so the app's
-    store probe finds a project directory and boots into host mode."""
+    """A projects root with `cabinet/cabinet.py` and its `bench.toml` already on it, so the app
+    boots onto that project."""
     project = root / PROJECT
     project.mkdir(parents=True)
     (project / "cabinet.py").write_text(SCRIPT)
-    (project / "cabinet.toml").write_text(VALUES)
-    (project / MANIFEST).write_text('current = "cabinet.py"\n')
+    (project / "bench.toml").write_text(VALUES)
     return project
+
+
+def _wait_editor(page: Page, text: str) -> None:
+    """Wait until the editor shows `text` - the project read off the host and put on screen,
+    which is later than the reach chip's first "ok": that is said the moment the host is found,
+    before the boot's own read of the project has finished."""
+    lines = "Array.from(document.querySelectorAll('.cm-content .cm-line'), (l) => l.textContent)"
+    page.wait_for_function(f"() => {lines}.join('\\n').includes({text!r})", timeout=BOOT_MS)
 
 
 def _type(page: Page, text: str) -> None:
@@ -193,6 +196,9 @@ def test_a_write_the_host_refuses_as_moved_is_reported_and_not_retried(
         page.goto(url)
         _wait_reach_shown(page)
         _wait_reach_state(page, "ok")
+        # The boot's own read has to have happened first, or the change below is simply what
+        # the boot reads - the race that made this check fail now and then on main.
+        _wait_editor(page, "part('plate'")
 
         # Somebody else's editor moves the file from under the browser, between the boot's
         # own read and the edit below.

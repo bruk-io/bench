@@ -476,6 +476,56 @@ kbd {
   overflow: hidden;
 }
 
+/* Something the page has to say before anything else in the editor group: that there is no
+   host, or the one-time question about projects this browser kept. Part of the page rather
+   than a dialog over it - it waits to be answered without stopping anything else. */
+.notice {
+  flex: none;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--warn-soft);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.notice[hidden] {
+  display: none;
+}
+
+.notice-bad {
+  background: var(--danger-soft);
+}
+
+.notice p {
+  margin: 0 0 6px;
+}
+
+.notice-title {
+  font-weight: 600;
+}
+
+.notice-text code,
+.notice-list {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.notice-list {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  max-height: 14em;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+
+.notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
 /* The values file and a survey's report are documents to read, in the same face and on the
    same ground as the script they sit beside. A report runs to hundreds of lines, so the panel
    scrolls and the text is never wrapped: a line of it is one measurement. */

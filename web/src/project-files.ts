@@ -1,48 +1,50 @@
-/** How the workspace `files.ts` already knows maps onto files under one project directory on
- * the host, until task-46 gives every project a directory of its own.
+/** How the workspace `files.ts` knows maps onto the host: one directory per project under the
+ * projects root, its scripts beside one `bench.toml` (decision-9).
  *
- * decision-3 shipped `<script>.py` beside `<script>.toml` on the command line, and this keeps
- * exactly that pairing - all of them under one project directory (`PROJECT`) rather than one
- * directory per script, because splitting the workspace into per-project directories is
- * task-46's own move. Choosing the pairing task-46 already assumes means exploding `workspace/`
- * into one directory per script is a rename of what is already there, not a rewrite of how it
- * is written.
+ * ```
+ * $BENCH_PROJECTS/
+ *   gridfinity_cabinet/
+ *     bench.toml            [project] entry, [values], [reference]
+ *     gridfinity_cabinet.py
+ *     drawer-slide.stl      a dropped body (`main.ts` sends it straight through)
+ * ```
+ *
+ * **Nothing here says which project is open.** That is each browser's own (`files.ts`), so a
+ * desktop switching projects never moves a tablet looking at the same host. task-52's interim
+ * mapping kept it in a `_workspace.toml` on the host, and that file is gone with the rest of
+ * that mapping: every project in one `workspace/` directory as `<name>.py` beside
+ * `<name>.toml`. Nothing shipped wrote that shape for real - the host store only ever switched
+ * on for a root already holding `workspace/` - so nothing reads it back either; a
+ * `workspace/` left on a disk opens as one more project, of several scripts.
+ *
+ * **A directory from before `bench.toml` still opens.** One with a `<script>.toml` beside its
+ * script - decision-3's shape, and what `tools/build.py` still reads until task-50 - is read
+ * from that file; the next change to its values is written to `bench.toml`, and the old file
+ * is left exactly where it was, because it is somebody's file and not this app's to delete.
+ * Once `bench.toml` is there it wins.
  *
  * Pure: no `fetch`, no IndexedDB, nothing asynchronous. `store-host.ts` is the only caller,
  * and it is what turns these into real reads and writes.
  */
-import { type Project, type Workspace, document as projectToml } from "./files";
-import { fromToml, tomlName } from "./values";
-
-/** The one project directory the browser's workspace lives under, until task-46. */
-export const PROJECT = "workspace";
-
-/** The file naming which project is open - not a project's own values file, so it carries no
- * `[values]` or `[reference]` table and is never paired with a `.py`. Reserved: a script
- * actually called `_workspace.py` would collide with it, which `route.ts`'s `nameProblem`
- * does not forbid - unlikely enough that this is a documented limitation rather than a check. */
-export const MANIFEST = "_workspace.toml";
+import { type Project, type Workspace, declaredEntry, document, entryFor, readDocument } from "./files";
+import { BENCH, tomlName } from "./values";
 
 /** One file this mapping needs written, and the text it needs written as. */
 export interface FileWrite {
+  readonly project: string;
   readonly file: string;
   readonly text: string;
 }
 
-const manifest = (current: string): string => `current = ${JSON.stringify(current)}\n`;
-
-const CURRENT = /^current\s*=\s*"((?:[^"\\]|\\.)*)"/m;
-
-/** The project named `current = "…"` in a manifest's text, or `null` when it cannot be read. */
-function currentIn(text: string): string | null {
-  const found = CURRENT.exec(text);
-  if (found === null) return null;
-  try {
-    return JSON.parse(`"${found[1] ?? ""}"`) as string;
-  } catch {
-    return null;
-  }
+/** One file this mapping needs gone. */
+export interface FileRemoval {
+  readonly project: string;
+  readonly file: string;
 }
+
+/** What a projects root holds, as far as this mapping reads it: each project directory's name,
+ * and in it each file's name and text. */
+export type Directories = ReadonlyMap<string, ReadonlyMap<string, string>>;
 
 /** Deep equality that does not care about key order - two `Overrides` or `ReferenceTable`
  * values built by different code paths (typed by hand here, parsed from TOML there) compare
@@ -61,90 +63,105 @@ function sameValue(a: unknown, b: unknown): boolean {
   return [...keys].every((key) => sameValue(left[key], right[key]));
 }
 
-const sameValues = (a: Project, b: Project): boolean =>
-  sameValue(a.overrides, b.overrides) && sameValue(a.reference, b.reference);
+/** Whether `a` and `b` would write the same `bench.toml` - compared as what they mean rather
+ * than as text, so a document read back and kept again is not rewritten over a hand-written
+ * comment in it. */
+const sameDocument = (a: Project, b: Project): boolean =>
+  a.entry === b.entry &&
+  sameValue(a.overrides, b.overrides) &&
+  sameValue(a.reference, b.reference) &&
+  sameValue({ ...a.kept, entry: null }, { ...b.kept, entry: null });
 
-/** Every file `next` needs on the host to be read back exactly as it is: one `.py` and one
- * `.toml` per project, and the manifest naming which is open. */
+/** Every file `next` needs on the host to be read back exactly as it is: each project's
+ * scripts and its `bench.toml`. */
 export function filesFor(next: Workspace): readonly FileWrite[] {
-  const writes: FileWrite[] = [];
-  for (const project of next.files) {
-    writes.push({ file: project.name, text: project.source });
-    writes.push({ file: tomlName(project.name), text: projectToml(project, []) });
-  }
-  writes.push({ file: MANIFEST, text: manifest(next.current) });
-  return writes;
+  return writesFor(null, next);
 }
 
 /** Only the files that changed between `previous` (what was last kept - `null` for nothing
- * yet) and `next`, compared project by project rather than as text - and the script and its
- * values file compared *separately*, so typing in the script never rewrites the values file
- * (and regenerates over a hand-written comment in it) and a panel edit never rewrites the
- * script. A workspace read back from the host and kept again unchanged writes nothing, which
- * is what keeps a boot from rewriting anything underneath a maker's own editor. */
+ * yet) and `next`, compared project by project and file by file - a script and the document
+ * compared *separately*, so typing in a script never rewrites `bench.toml` and a panel edit
+ * never rewrites a script. A workspace read back from the host and kept again unchanged writes
+ * nothing, which is what keeps a boot from rewriting anything underneath a maker's own editor
+ * - and which project is open is not compared at all, since no file says it. */
 export function writesFor(previous: Workspace | null, next: Workspace): readonly FileWrite[] {
   const writes: FileWrite[] = [];
-  const before = new Map((previous?.files ?? []).map((project) => [project.name, project]));
-  for (const project of next.files) {
-    const was = before.get(project.name);
-    if (was === undefined || was.source !== project.source) {
-      writes.push({ file: project.name, text: project.source });
+  const before = new Map((previous?.projects ?? []).map((one) => [one.name, one]));
+  for (const one of next.projects) {
+    const was = before.get(one.name);
+    for (const [file, text] of Object.entries(one.scripts)) {
+      if (was?.scripts[file] !== text) writes.push({ project: one.name, file, text });
     }
-    if (was === undefined || !sameValues(was, project)) {
-      writes.push({ file: tomlName(project.name), text: projectToml(project, []) });
+    // A document this version could not read is never regenerated over (`Kept.unreadable`);
+    // a new project carrying one - adopted from a browser - gets it written as it was.
+    const regenerated = was !== undefined && !sameDocument(was, one) && one.kept.unreadable === undefined;
+    if (was === undefined || regenerated) {
+      writes.push({ project: one.name, file: BENCH, text: document(one) });
     }
-  }
-  if (previous === null || previous.current !== next.current) {
-    writes.push({ file: MANIFEST, text: manifest(next.current) });
   }
   return writes;
 }
 
-/** The files `previous` had and `next` no longer does - a project renamed away from or
- * deleted, whose script and values file both have to go. */
-export function removalsFor(previous: Workspace | null, next: Workspace): readonly string[] {
+/** The files `previous` had and `next` no longer does: every file of a project renamed away
+ * from or deleted, and a script gone from a project that is still there.
+ *
+ * The route has no call that removes or renames a directory, so a project that goes leaves its
+ * directory behind, empty of everything this mapping wrote - and a dropped mesh, which no store
+ * write ever knew the version of, stays in it (task-48 makes a delete a move to a trash). */
+export function removalsFor(previous: Workspace | null, next: Workspace): readonly FileRemoval[] {
   if (previous === null) return [];
-  const kept = new Set(next.files.map((project) => project.name));
-  const gone: string[] = [];
-  for (const project of previous.files) {
-    if (kept.has(project.name)) continue;
-    gone.push(project.name, tomlName(project.name));
+  const now = new Map(next.projects.map((one) => [one.name, one]));
+  const gone: FileRemoval[] = [];
+  for (const one of previous.projects) {
+    const kept = now.get(one.name);
+    for (const file of Object.keys(one.scripts)) {
+      if (kept?.scripts[file] === undefined) gone.push({ project: one.name, file });
+    }
+    if (kept === undefined) gone.push({ project: one.name, file: BENCH });
   }
   return gone;
 }
 
-/** Whether `file` is one this mapping ever writes: a script, a values file paired with one
- * (`.toml` files with no `.py` twin are somebody else's, and are read past rather than read
- * as a project's own), or the manifest. */
-export function owned(file: string, scripts: ReadonlySet<string>): boolean {
-  if (file === MANIFEST || file.endsWith(".py")) return true;
-  if (!file.endsWith(".toml")) return false;
-  return scripts.has(`${file.slice(0, -".toml".length)}.py`);
+/** Whether `file` is one this mapping reads: a script, or a TOML document - `bench.toml`, or
+ * a `<script>.toml` from before it. An STL is read by nobody here: it is bytes, not text, and
+ * `main.ts` asks for the one a project's `[reference]` names when it needs it. */
+export const owned = (file: string): boolean => file.endsWith(".py") || file.endsWith(".toml");
+
+/** The script a project directory runs: the `entry` its document declares when that is one of
+ * its scripts, else the one named for the directory, else the first by name. */
+function entryOf(name: string, scripts: readonly string[], declared: string | null): string | null {
+  if (declared !== null && scripts.includes(declared)) return declared;
+  if (scripts.includes(entryFor(name))) return entryFor(name);
+  return scripts[0] ?? null;
 }
 
-/** The workspace `entries` (a file name to its text, everything this mapping wrote and
- * nothing else) reads back as - `null` when there is not one script in it, which is a host
- * with nothing kept yet. A `.toml` that cannot be read (`values.ts`'s `fromToml`, exactly as
- * `files.ts`'s `fieldsOf` already treats one) opens as a project with no values file, on the
- * script's own defaults, rather than losing the script over it. */
-export function workspaceFrom(entries: ReadonlyMap<string, string>): Workspace | null {
-  const scripts = [...entries.keys()].filter((name) => name.endsWith(".py")).sort();
-  if (scripts.length === 0) return null;
-  const files: Project[] = scripts.map((name) => {
-    const source = entries.get(name) ?? "";
-    const tomlText = entries.get(tomlName(name));
-    const read = tomlText === undefined ? undefined : fromToml(tomlText);
-    return {
-      name,
-      source,
-      overrides: read?.ok === true ? read.values : {},
-      reference: read?.ok === true ? read.reference : null,
-    };
-  });
-  const manifestText = entries.get(MANIFEST);
-  const wanted = manifestText === undefined ? null : currentIn(manifestText);
-  const first = files[0];
+/** One project directory, read: `null` when it holds no script, which is not a project this
+ * version can open - an empty directory a rename or a delete left behind (`removalsFor`), or
+ * one somebody made by hand and has not written anything in yet. */
+function projectFrom(name: string, files: ReadonlyMap<string, string>): Project | null {
+  const scripts = [...files.keys()].filter((file) => file.endsWith(".py")).sort();
+  const bench = files.get(BENCH);
+  const declared = declaredEntry(bench);
+  const entry = entryOf(name, scripts, declared);
+  if (entry === null) return null;
+  const read = readDocument(bench ?? files.get(tomlName(entry)));
+  const texts: Record<string, string> = {};
+  for (const file of scripts) texts[file] = files.get(file) ?? "";
+  return { name, entry, scripts: texts, ...read };
+}
+
+/** The workspace `directories` read back as - `null` when not one of them is a project, which
+ * is a host with nothing kept yet. Opens on the first project by name, at its entry: which
+ * project a person actually had open is the browser's to say, not the host's, and `main.ts`
+ * puts it back from there. */
+export function workspaceFrom(directories: Directories): Workspace | null {
+  const projects: Project[] = [];
+  for (const name of [...directories.keys()].sort()) {
+    const files = directories.get(name);
+    const found = files === undefined ? null : projectFrom(name, files);
+    if (found !== null) projects.push(found);
+  }
+  const first = projects[0];
   if (first === undefined) return null;
-  const current = wanted !== null && files.some((project) => project.name === wanted) ? wanted : first.name;
-  return { files, current };
+  return { projects, current: first.name, script: first.entry };
 }

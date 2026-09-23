@@ -798,11 +798,15 @@ Interactions that define the product:
 - Violations: what the checks found, with severity, message, refs and the line that asked.
   An `error` marks that line in the editor exactly as a raised exception does. `UNCHECKED`
   reads **not checked**, never as a pass - the whole point of the third severity.
-- Projects persist in localStorage as named files, each a script and its values - the
-  values kept as the TOML `tools/build.py` reads, shown as a tab beside the script, and
-  written on every panel edit with what the run built (decision-3): the Projects container
-  makes one - starting as `templates/untitled.py` - and opens, renames, deletes, duplicates,
-  downloads (script and `.toml` in one archive) and opens them from disk.
+- Projects are directories on the host that serves the page (decision-9), under the root
+  `$BENCH_PROJECTS` names: each its scripts and one `bench.toml` - `[project] entry`, the
+  values as the TOML `tools/build.py` reads, the `[reference]` placement, and whatever else a
+  newer bench wrote there, kept - shown as a tab beside the script and written on every panel
+  edit with what the run built (decision-3). Which project, and which of its scripts, a browser
+  has open is that browser's own. The Projects container makes one - starting as
+  `templates/untitled.py` - and opens, renames, deletes, duplicates, downloads (its scripts and
+  a `.toml` in one archive) and opens them from disk; a browser holding projects from before
+  is asked, once, whether to write them to the host.
   An examples menu opens bundled scripts, each as a file of its own so it never
   replaces the one being written, from `examples/*.py` at the repository root - the prebuild script bundles the directory,
   so the five printed parts appear in the menu beside the two flat ones with nothing in
@@ -953,4 +957,6 @@ line drawn at the edge of what is built so far.
   changes interpreter underneath a script.
 - **One script, one `show`.** A run shows a single thing once; a person may
   keep many scripts, but one is open and runs at a time, there are no imports
-  between them, and no way for a script to read a file. Scripts live in `localStorage` and nowhere else.
+  between them, and no way for a script to read a file. Scripts live in their project's
+  directory on the host; a project may hold several, and the one open is the one that runs
+  (task-50 is what lets one import another).
