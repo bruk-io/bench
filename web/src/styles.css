@@ -932,6 +932,15 @@ kbd {
   background: currentcolor;
 }
 
+/* `display: inline-flex` above is an author rule, which outranks the user agent's own
+   `[hidden] { display: none }` regardless of either rule's specificity - so `.state` needs
+   its own, the way `.badge`, `.container` and the rest already do, or a `hidden` one keeps
+   its box and its dot: `#stale-bundle` when the bundle is not stale, an empty `.state` with
+   nothing to read but a colour, which is what task-54 was. */
+.state[hidden] {
+  display: none;
+}
+
 .state[data-state="running"],
 .state[data-state="boot"] {
   background: var(--accent-soft);
