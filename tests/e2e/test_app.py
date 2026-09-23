@@ -273,6 +273,19 @@ def test_the_status_bar_says_what_the_run_amounts_to(page: Page) -> None:
     assert page.locator("#timing").inner_text().strip().endswith("s"), "the run was not timed"
 
 
+@pytest.mark.e2e
+def test_the_stale_bundle_indicator_is_invisible_when_nothing_is_stale(page: Page) -> None:
+    """`task-54`: `#stale-bundle` carries `data-state="error"` in the markup always, and only
+    its `hidden` attribute says whether the bundle in this page is behind what is on disk.
+    `e2e` runs against a build `tools/preview.py` just made, so nothing here is stale - and
+    `hidden` alone must be enough to keep it off screen: no dot, no box, nothing red beside a
+    clean run's own count. `.state { display: inline-flex }` is an author rule and used to
+    outrank the browser's own `[hidden] { display: none }`, so the element kept its box and
+    its `::before` dot with nothing in it to read - the bug `.state[hidden]` in
+    `web/src/styles.css` now fixes."""
+    assert page.locator("#stale-bundle").is_hidden(), "a bundle nothing said is stale is showing"
+
+
 # ---- the shell: the rail and its containers --------------------------------------------
 
 
