@@ -260,6 +260,20 @@
                 <button id="zoom-in" type="button" class="zoom" title="Zoom in">+</button>
               </div>
             </div>
+            <!-- A row of its own rather than squeezed into `.viewer-bar`: that bar's own
+                 content already runs the width of a small window once a body is dropped on
+                 it, and `.reference`'s buttons do not shrink - task-63. -->
+            <div class="viewbar-tools">
+              <button
+                id="colour-faces-toggle"
+                type="button"
+                class="reference-detect"
+                title="Colour every named face of every built part"
+                aria-pressed="false"
+              >
+                colour faces
+              </button>
+            </div>
             <div id="stage" class="stage">
               <div id="canvas3d" class="canvas canvas-3d"></div>
               <!-- decision-7's pick: only ever while faces are being detected, which is the

@@ -821,6 +821,20 @@ kbd {
   color: var(--danger);
 }
 
+/* A row of its own under `.viewer-bar` - that bar's own content already runs a small window's
+   width once a body is dropped on it, whose buttons never shrink, so a colour toggle squeezed
+   onto the same line would overlap it rather than wrap. Quiet, the same pill shape as
+   `.reference-detect`, so it reads as one more thing the view can be asked to do. */
+.viewbar-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  padding: 0 6px 0 10px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line);
+}
+
 /* − Fit + as one control. */
 .zoombar {
   display: inline-flex;

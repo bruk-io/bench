@@ -199,6 +199,7 @@ const ui = {
   fit: need<HTMLButtonElement>("fit"),
   zoomIn: need<HTMLButtonElement>("zoom-in"),
   zoomOut: need<HTMLButtonElement>("zoom-out"),
+  colourFacesToggle: need<HTMLButtonElement>("colour-faces-toggle"),
   selection: need<HTMLSpanElement>("selection"),
   params: need<BenchParams>("params"),
   paramCount: need<HTMLSpanElement>("param-count"),
@@ -1903,6 +1904,11 @@ ui.stop.addEventListener("click", () => {
 ui.insert.addEventListener("click", insertSelected);
 ui.fit.addEventListener("click", () => {
   space.fit();
+});
+ui.colourFacesToggle.addEventListener("click", () => {
+  const on = ui.colourFacesToggle.getAttribute("aria-pressed") !== "true";
+  ui.colourFacesToggle.setAttribute("aria-pressed", String(on));
+  space.colourFaces(on);
 });
 ui.zoomIn.addEventListener("click", () => {
   space.zoom(ZOOM_STEP);
