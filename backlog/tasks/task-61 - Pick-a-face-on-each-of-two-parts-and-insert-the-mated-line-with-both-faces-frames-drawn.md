@@ -3,9 +3,10 @@ id: task-61
 title: >-
   Pick a face on each of two parts and insert the mated() line, with both faces'
   frames drawn
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-23 17:20'
+updated_date: '2026-09-23 17:59'
 labels: []
 milestone: m-8
 dependencies:

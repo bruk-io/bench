@@ -90,6 +90,7 @@ import {
   shown,
 } from "./pick";
 import type { OkScene, PartView, Scene, SheetView } from "./scene";
+import type { SectionAxis } from "./viewer3d";
 import { STALE_HINT, STALE_MESSAGE, bundleStale } from "./staleness";
 import { HOW_TO_SELECT, failing, made, noBodiesReason, readOnlyWords, tally } from "./status";
 // `remember`/`forget` are still here for what belongs to this browser rather than to a
@@ -201,6 +202,10 @@ const ui = {
   fit: need<HTMLButtonElement>("fit"),
   zoomIn: need<HTMLButtonElement>("zoom-in"),
   zoomOut: need<HTMLButtonElement>("zoom-out"),
+  colourFacesToggle: need<HTMLButtonElement>("colour-faces-toggle"),
+  sectionToggle: need<HTMLButtonElement>("section-toggle"),
+  sectionAxis: need<HTMLSelectElement>("section-axis"),
+  sectionPosition: need<HTMLInputElement>("section-position"),
   selection: need<HTMLSpanElement>("selection"),
   params: need<BenchParams>("params"),
   paramCount: need<HTMLSpanElement>("param-count"),
@@ -1586,6 +1591,47 @@ function showProblemCount(): void {
 function showGeometry(ok: OkScene): void {
   space.show(ok.parts, ok.stage, ok.sheets, ok.reference);
   space.say(noBodiesReason(ok.summary));
+  // Not `space.section(...)` again - the view keeps a section exactly as set across a
+  // redraw, which is the whole point (task-62). Only the range the slider offers is worth
+  // keeping current, and only for the axis actually chosen, so a later toggle-on or axis
+  // change starts from where the work now stands rather than where it stood when the page
+  // opened.
+  stageBounds = ok.stage.bounds;
+}
+
+/** The last run's `stage.bounds` - `x0, y0, z0, x1, y1, z1` - kept so the section slider's
+ * range can be worked out without asking the viewer for it. */
+let stageBounds: readonly number[] = [-50, -50, 0, 50, 50, 50];
+
+/** Where `axis` runs in the last drawn stage, `[low, high]`. */
+function sectionRange(axis: SectionAxis): readonly [number, number] {
+  const at = axis === "x" ? 0 : axis === "y" ? 1 : 2;
+  const [low = -50, high = 50] = [stageBounds[at], stageBounds[at + 3]];
+  return [low, high];
+}
+
+let sectioning = false;
+let sectionAxis: SectionAxis = "x";
+let sectionPosition = 0;
+
+/** Put the slider's own range and handle at the middle of `axis`'s current span - called
+ * only when the axis is chosen anew (turning the section on, or picking a different axis),
+ * never on a redraw, which is what keeps the plane still while a knob sweeps geometry
+ * through it. */
+function centreSectionOn(axis: SectionAxis): void {
+  const [low, high] = sectionRange(axis);
+  ui.sectionPosition.min = String(low);
+  ui.sectionPosition.max = String(high);
+  ui.sectionPosition.step = String(Math.max((high - low) / 200, 0.001));
+  sectionPosition = (low + high) / 2;
+  ui.sectionPosition.value = String(sectionPosition);
+}
+
+function applySection(): void {
+  ui.sectionToggle.setAttribute("aria-pressed", String(sectioning));
+  ui.sectionAxis.disabled = !sectioning;
+  ui.sectionPosition.disabled = !sectioning;
+  space.section(sectioning ? { axis: sectionAxis, position: sectionPosition } : null);
 }
 
 /** What the script said, from either kind of scene: a run that fell over still printed its
@@ -1995,6 +2041,25 @@ ui.insert.addEventListener("click", insertSelected);
 ui.insertFit.addEventListener("click", insertFit);
 ui.fit.addEventListener("click", () => {
   space.fit();
+});
+ui.colourFacesToggle.addEventListener("click", () => {
+  const on = ui.colourFacesToggle.getAttribute("aria-pressed") !== "true";
+  ui.colourFacesToggle.setAttribute("aria-pressed", String(on));
+  space.colourFaces(on);
+});
+ui.sectionToggle.addEventListener("click", () => {
+  sectioning = !sectioning;
+  if (sectioning) centreSectionOn(sectionAxis);
+  applySection();
+});
+ui.sectionAxis.addEventListener("change", () => {
+  sectionAxis = ui.sectionAxis.value as SectionAxis;
+  centreSectionOn(sectionAxis);
+  applySection();
+});
+ui.sectionPosition.addEventListener("input", () => {
+  sectionPosition = Number(ui.sectionPosition.value);
+  applySection();
 });
 ui.zoomIn.addEventListener("click", () => {
   space.zoom(ZOOM_STEP);

@@ -6,7 +6,7 @@
  * told and hands it over once the real one has loaded.
  */
 import type { MeshView, PartView, SheetView, StageView } from "./scene";
-import type { Viewer3D, Viewer3DHooks } from "./viewer3d";
+import type { SectionState, Viewer3D, Viewer3DHooks } from "./viewer3d";
 
 export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
   let real: Viewer3D | null = null;
@@ -20,6 +20,8 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
   let chosenSecond: string | null = null;
   let pointed: string | null = null;
   let detected: readonly (number | null)[] | null = null;
+  let section: SectionState | null = null;
+  let colouring = false;
   let marked = false;
 
   function wake(): void {
@@ -43,6 +45,8 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
         made.selectSecond(chosenSecond);
         made.point(pointed);
         made.detect(detected);
+        made.section(section);
+        made.colourFaces(colouring);
         made.markReference(marked);
         real = made;
       },
@@ -87,6 +91,14 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
     detect(flatIndex) {
       detected = flatIndex;
       real?.detect(flatIndex);
+    },
+    section(state) {
+      section = state;
+      real?.section(state);
+    },
+    colourFaces(on) {
+      colouring = on;
+      real?.colourFaces(on);
     },
     markReference(lit) {
       marked = lit;
