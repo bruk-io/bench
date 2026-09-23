@@ -7,6 +7,16 @@ status: accepted
 
 # Proposal - a project is a directory, and what a maker drops is in it
 
+Status (2026-09-23): built, every step of **Sequencing** below, as milestone m-4 - the route
+(task-45), the host store and outbox (task-52), the directory with `bench.toml` (task-46), the
+write lease (task-47), the switcher and tree with a trash (task-48), several references with one
+active (task-49), and `tools.build` on a directory with project-local modules (task-50). The
+text below is kept as proposed; where the build settled a question differently, the task's
+notes say so. Still the owner's call, and still provisional in the code: the lease's 60 s expiry
+and 15 s renewal (`web/src/lease.ts`), how far the route goes before it stops being a dev
+server, and whether choosing another reference should ask before it drops the previous one's
+placement (task-49). Follow-ups are in m-6, Host Hardening.
+
 Successor to decision-3, which said in its second sentence "*a project is a directory: one
 script, and one `bench.toml` beside it*" and then, under **Still the owner's call**, left the
 tie-break open:

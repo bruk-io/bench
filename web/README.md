@@ -324,27 +324,6 @@ The holder id is per tab, in `sessionStorage`, so a reload reclaims its own leas
 lease settles nothing about the maker's own editor: `vim` never asks, and the `moved` refusal
 above is what stands between it and the app.
 
-**The write lease.** Two clients can have one project open - the desk and the tablet - and the
-app writes on every keystroke and knob turn, so one of them left on yesterday's state could
-push it over the other's work. The route holds a **write lease** per project, at
-`/__bench/leases/<project>`: `GET` to be told who holds it, `POST ?act=take`, `?act=take-over`
-or `?act=release` to act, as the holder id the client names in `X-Bench-Holder` (and a label
-for others to read - "Chrome on a Mac" - in `X-Bench-Client`). A tab takes the lease on the
-project it opens, renews it while it lives, and lets it go on `pagehide`; every other tab on
-that project reads it - runs it, exports it, turns knobs whose values go nowhere - and is told
-whose it is and from where, with a *Take over writing…* action in the page for when that one
-is somewhere out of reach. The route itself refuses a write, rename or delete of a leased
-project from anybody but its holder (`leased`, 423), whatever the page shows; a project nobody
-holds is anybody's to write, which is what `curl` and `tools.qa` are. It is a lease rather than
-a lock because clients vanish: one not heard from for **60 s** lapses, and the holder renews
-every **15 s** - decision-9's shape rather than a measured number, so both are named constants
-in `src/lease.ts`, and `BENCH_LEASE_MS` starts a server with another expiry (the renewal is a
-quarter of it) for trying one or for a test that watches a lease lapse. The leases live in the
-server's memory and nowhere else: a restart voids every one and leaves nothing on the disk.
-The holder id is per tab, in `sessionStorage`, so a reload reclaims its own lease at once. The
-lease settles nothing about the maker's own editor: `vim` never asks, and the `moved` refusal
-above is what stands between it and the app.
-
 Nothing that crosses the worker boundary is trusted: `scene.ts`'s `received` checks exactly
 the keys and kinds the app reads, and that every mesh's buffers are the typed arrays of the
 lengths its JSON promises, and `bridge.ts` turns a payload that fails into
