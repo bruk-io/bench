@@ -166,7 +166,9 @@ and says in its own text what it could not do and why.
   drawn to. Two round faces - a pin and its bore - are a round pair instead: the moving axis
   goes on the fixed one (`axis_of`'s frames), running the same way, `along` it and turned `spin`
   about it, both explicit and never guessed; the gap round the pin is what the radii make it,
-  and is measured against the fit's figure rather than placed. A round face against a flat one
+  and is measured against the fit's figure rather than placed - over the length the pin and
+  the bore share, so a head or shoulder seating on the plate is not the shank's gap; the seat
+  is a second pair, checked with `check_fit` at `CONTACT`. A round face against a flat one
   is refused. The measuring is the script's `mated`.
 - `joints.py` - how panels hold together. A `partition` of an edge into an odd
   number of fingers, the `female_intervals` / `male_intervals` either side of
