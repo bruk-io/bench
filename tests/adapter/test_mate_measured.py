@@ -2,9 +2,9 @@
 
 :mod:`mate_cases` is run inside Pyodide by :mod:`tools.stack` with the real kernel: the wall
 vent's attachment put on its frame by :func:`bench.mate.mating` and by hand, a mate whose
-contact is really an overlap, a mate at a slide fit, a part mated upside down, and pins put
+contact is really an overlap, a mate at a slide fit, a part mated upside down, pins put
 into bores - one drawn right, one drawn without the concave allowance, one too tight, and one
-with a head that seats. The pure
+with a head that seats - and a plate mated onto a pocket's floor. The pure
 arithmetic of where a mate puts a face is ``tests/unit/test_mate.py``'s; what is asked here
 is what only a built body can answer.
 """
@@ -128,6 +128,17 @@ def test_a_part_mated_upside_down_prints_as_it_was_authored(measured: dict[str, 
     assert turned["left_behind"] is not None
     assert "63" in turned["left_behind"]
     assert turned["bed"] == ["side-0"]
+
+
+def test_a_plate_mated_onto_a_pockets_floor_sits_in_the_pocket(measured: dict[str, Any]) -> None:
+    """task-65's acceptance: the floor a pocket leaves faces out of the base, so the plate
+    laid on it is in the pocket - touching, sharing nothing - where the floor's old frame,
+    the tool's own, would have turned it over and sunk it into the base below."""
+    scene = _ok(measured["pocketed"])
+    assert scene["violations"] == []
+    assert scene["stdout"].strip() == "plate/bottom on base/pocket/bottom: touch, asked contact"
+    plate = next(view for view in scene["parts"] if view["label"] == "plate")
+    assert plate["bbox"] == pytest.approx([0.0, 0.0, 20.0, 10.0])
 
 
 def test_a_pin_in_a_bore_drawn_with_the_concave_clearance_measures_the_slide_it_asked(

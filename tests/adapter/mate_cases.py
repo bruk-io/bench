@@ -67,6 +67,21 @@ show(assembly("slid", (Placed(base, XY), Placed(fitted.part, XY)), posed=True))
 """A plate mated onto a base at a slide fit, with nothing else between them: the gap the
 mate measures is the table's own, exactly."""
 
+POCKETED = """\
+from bench import *
+from bench.library.print import PLA
+
+pla = Printed(PLA)
+block = cuboid(40, 40, 5)
+sunk = pocket(block, fill(rect(20, 10), on=plane_of(block, "top")), 2.0, label="pocket")
+base = part("base", sunk, pla)
+fitted = mated(base, "base/pocket/bottom", part("plate", cuboid(20, 10, 4), pla), "plate/bottom")
+print(fitted)
+show(assembly("pocketed", (Placed(base, XY), Placed(fitted.part, XY)), posed=True))
+"""
+"""A plate mated onto the floor of a pocket its own size: it sits in the pocket, touching the
+floor and the pocket's four walls, and shares no material with the base."""
+
 PINNED = """\
 from bench import *
 from bench.library.print import PLA, clearance
@@ -208,6 +223,7 @@ def measured(kernel: Kernel, vent: str) -> dict[str, object]:
         "pegged": run(PEGGED, kernel=kernel),
         "slid": run(SLID, kernel=kernel),
         "turned": _turned_over(kernel),
+        "pocketed": run(POCKETED, kernel=kernel),
         "pin_concave": run(_pinned("2.0 + clearance(Fit.SLIDE, PLA, concave=True)"), kernel=kernel),
         "pin_plain": run(_pinned("2.0 + clearance(Fit.SLIDE, PLA)"), kernel=kernel),
         "pin_fat": run(_pinned("1.9"), kernel=kernel),

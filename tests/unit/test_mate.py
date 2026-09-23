@@ -26,6 +26,7 @@ from bench import (
     Ref,
     Solid,
     Stock,
+    Top,
     Vector,
     X,
     Y,
@@ -49,6 +50,7 @@ from bench import (
     part,
     placing,
     plane_of,
+    pocket,
     raised,
     rect,
     rotate,
@@ -167,6 +169,35 @@ def test_placing_is_the_frame_arithmetic_on_its_own() -> None:
     assert near(t @ face_.x_dir, X)
 
 
+# ---- onto a face a cut left --------------------------------------------------------------
+
+
+def test_a_part_mated_onto_a_pockets_floor_sits_in_the_pocket() -> None:
+    """The floor a pocket leaves faces up out of the base, into the pocket, so a plate laid on
+    it sits in the pocket the right way up - its bottom on the floor, its top standing out
+    of the base's top - not turned over and hanging below the floor."""
+    sunk = pocket(BASE, fill(rect(20, 10), on=plane_of(BASE, "top")), 2.0, label="pocket")
+    mate = mating(sunk, "pocket/bottom", _plate(), "plate/bottom")
+    body = mate.part.shape
+    assert isinstance(body, Solid)
+    assert bounds(body) == pytest.approx((0.0, 0.0, 3.0, 20.0, 10.0, 7.0))
+    assert near(_face_of(mate, "bottom").normal, -Z)
+    stock = mate.part.stock
+    assert isinstance(stock, Printed)
+    assert near(stock.orient.up, Z)
+
+
+def test_a_part_mated_under_a_cavitys_ceiling_hangs_from_it() -> None:
+    """A slot cut through the middle of a block has a ceiling facing down out of the block,
+    so a plate's top put on it hangs below it, inside the slot."""
+    slot = cut(cuboid(40, 40, 10), cuboid(40, 20, 4, at=Point(0, 10, 3)), label="slot")
+    mate = mating(slot, "slot/top", _plate(), "plate/top")
+    body = mate.part.shape
+    assert isinstance(body, Solid)
+    low = bounds(body)
+    assert (low.z0, low.z1) == pytest.approx((3.0, 7.0))
+
+
 # ---- a pin in its bore ------------------------------------------------------------------
 
 
@@ -261,7 +292,24 @@ def test_a_hole_bores_axis_starts_at_its_mouth_just_outside_the_material() -> No
     assert axis.origin.z == pytest.approx(5.01)
     mate = mating(part("plate", plate, PRINTED), "plate/bore/side-0", _pin(), "pin/side-0")
     low = bounds(_body(mate.part))
+    assert (low.x0, low.y0, low.x1, low.y1) == pytest.approx((8.0, 8.0, 12.0, 12.0))
     assert (low.z0, low.z1) == pytest.approx((5.01 - 12.0, 5.01))
+
+
+def test_a_drilled_bores_wall_facing_its_axis_does_not_move_the_axis() -> None:
+    """A cut's faces are turned over so a drilled bore's wall faces its axis, out of the plate
+    that is left; the axis a pin goes on is the line the drill ran along, which turning the
+    wall's frame over does not touch - so the pin still goes in down the drill's way."""
+    plate = cuboid(20, 20, 5)
+    plate = hole(
+        plate, Point(10, 10), on=plane_of(plate, "top"), diameter=4.4, top=Top.ROUND, label="d"
+    )
+    wall = plane_of(plate, "d/side-0", around=0.0, along=1.0)
+    axis = axis_of(plate, "d/side-0")
+    assert near(wall.normal, -axis.x_dir), "the wall faces the axis"
+    assert near(axis.normal, -Z)
+    mate = mating(part("plate", plate, PRINTED), "plate/d/side-0", _pin(), "pin/side-0")
+    assert _same(_axis(mate, "side-0"), axis)
 
 
 def test_coaxial_is_the_frame_arithmetic_on_its_own() -> None:
