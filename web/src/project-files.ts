@@ -61,8 +61,8 @@ function sameValue(a: unknown, b: unknown): boolean {
   return [...keys].every((key) => sameValue(left[key], right[key]));
 }
 
-const sameProject = (a: Project, b: Project): boolean =>
-  a.source === b.source && sameValue(a.overrides, b.overrides) && sameValue(a.reference, b.reference);
+const sameValues = (a: Project, b: Project): boolean =>
+  sameValue(a.overrides, b.overrides) && sameValue(a.reference, b.reference);
 
 /** Every file `next` needs on the host to be read back exactly as it is: one `.py` and one
  * `.toml` per project, and the manifest naming which is open. */
@@ -77,16 +77,20 @@ export function filesFor(next: Workspace): readonly FileWrite[] {
 }
 
 /** Only the files that changed between `previous` (what was last kept - `null` for nothing
- * yet) and `next`, compared project by project rather than as text: a workspace read back from
- * the host and kept again unchanged writes nothing, which is what keeps a boot from rewriting
- * a script's own hand-edited values file underneath it. */
+ * yet) and `next`, compared project by project rather than as text - and the script and its
+ * values file compared *separately*, so typing in the script never rewrites the values file
+ * (and regenerates over a hand-written comment in it) and a panel edit never rewrites the
+ * script. A workspace read back from the host and kept again unchanged writes nothing, which
+ * is what keeps a boot from rewriting anything underneath a maker's own editor. */
 export function writesFor(previous: Workspace | null, next: Workspace): readonly FileWrite[] {
   const writes: FileWrite[] = [];
   const before = new Map((previous?.files ?? []).map((project) => [project.name, project]));
   for (const project of next.files) {
     const was = before.get(project.name);
-    if (was === undefined || !sameProject(was, project)) {
+    if (was === undefined || was.source !== project.source) {
       writes.push({ file: project.name, text: project.source });
+    }
+    if (was === undefined || !sameValues(was, project)) {
       writes.push({ file: tomlName(project.name), text: projectToml(project, []) });
     }
   }

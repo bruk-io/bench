@@ -9,9 +9,12 @@
  * what the person actually asked for, even though the host has something older (or nothing at
  * all): reading only the host after a reload would show a person's edit vanishing while the
  * outbox quietly kept trying to land it behind their back. Every file read this way is also
- * handed to `outbox.rebase`, which both seeds a base for a file with nothing pending (so the
- * very next edit does not read as a "create") and gives a refusal from before the reload a fair
- * try against what is actually on the host now, rather than replaying the version that lost.
+ * handed to `outbox.rebase`, which seeds a base for a file with nothing pending (so the very
+ * next edit does not read as a "create"), and gives a refusal from before the reload a fair try
+ * against the version actually on the host now - unless what is pending is still unresolved,
+ * in which case `rebase` leaves it exactly alone (see `outbox.ts`). `load()` also asks the
+ * outbox to `drain()` once it is done, so work queued before a reload is sent again without
+ * waiting for the next keystroke.
  *
  * **`save()` diffs, and only the diff is queued.** `keep()` calls this on every keystroke;
  * `project-files.ts`'s `writesFor` compares the workspace structurally against what this store
@@ -32,19 +35,34 @@ export function hostStore(client: Host, box: Outbox): ProjectStore {
 
   async function read(): Promise<Map<string, string>> {
     const entries = new Map<string, string>();
+    const seen = new Set<string>();
     const listed = await client.files(PROJECT);
-    if (!listed.ok) {
-      if (listed.refusal.refused === "missing") return entries; // an empty or absent project: nothing kept yet
+    if (listed.ok) {
+      const scripts = new Set(listed.value.filter((one) => one.name.endsWith(".py")).map((one) => one.name));
+      for (const entry of listed.value) {
+        if (!owned(entry.name, scripts)) continue; // an STL, or a stray `.toml` with no script
+        const got = await client.read(PROJECT, entry.name);
+        if (!got.ok) continue; // gone between the listing and the read; the next load tries again
+        const text = new TextDecoder().decode(got.value.bytes);
+        entries.set(entry.name, text);
+        seen.add(entry.name);
+        await box.rebase(PROJECT, entry.name, got.value.version.version, text);
+      }
+    } else if (listed.refusal.refused !== "missing") {
+      // "missing" is an empty or not-yet-created project directory - nothing kept yet, not a
+      // failure. Anything else is `store.ts`'s "a store that cannot be read" case.
       throw new Error(listed.refusal.message);
     }
-    const scripts = new Set(listed.value.filter((one) => one.name.endsWith(".py")).map((one) => one.name));
-    for (const entry of listed.value) {
-      if (!owned(entry.name, scripts)) continue; // an STL, or a stray `.toml` with no script - not this mapping's
-      const got = await client.read(PROJECT, entry.name);
-      if (!got.ok) continue; // gone between the listing and the read; the next load tries again
-      entries.set(entry.name, new TextDecoder().decode(got.value.bytes));
-      await box.rebase(PROJECT, entry.name, got.value.version.version);
+
+    // Anything this outbox is still holding for a file the listing above did not show does not
+    // exist on the host - rebase with `null` so a landed delete (or a refusal that is no longer
+    // true) can clear, while a create still waiting to land is left alone.
+    const pendingNow = await box.pending();
+    for (const [, one] of pendingNow) {
+      if (one.project !== PROJECT || seen.has(one.file)) continue;
+      await box.rebase(PROJECT, one.file, null, null);
     }
+
     return entries;
   }
 
@@ -60,6 +78,7 @@ export function hostStore(client: Host, box: Outbox): ProjectStore {
         else entries.set(one.file, one.text);
       }
       known = workspaceFrom(entries);
+      box.drain();
       return known === null ? null : serialized(known);
     },
 

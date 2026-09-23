@@ -37,11 +37,11 @@ describe("writesFor", () => {
     expect(writesFor(space, again)).toEqual([]);
   });
 
-  it("writes only the script that changed, not every project in the workspace", () => {
+  it("writes only the script that changed, and only its script - not its values file too", () => {
     const before = { files: [{ name: "a.py", source: "1", overrides: {}, reference: null }, { name: "b.py", source: "2", overrides: {}, reference: null }], current: "a.py" };
     const after = { ...before, files: [before.files[0]!, { name: "b.py", source: "3", overrides: {}, reference: null }] };
     const writes = writesFor(before, after);
-    expect(writes.map((w) => w.file).sort()).toEqual(["b.py", "b.toml"]);
+    expect(writes.map((w) => w.file)).toEqual(["b.py"]);
   });
 
   it("writes only the manifest when just the open project changed", () => {
@@ -50,17 +50,25 @@ describe("writesFor", () => {
     expect(writesFor(before, after)).toEqual([{ file: MANIFEST, text: 'current = "b.py"\n' }]);
   });
 
-  it("writes the values file again when only a value changed, not the script", () => {
+  it("writes the values file again when only a value changed, and only the values file", () => {
     const before = single("cabinet.py", "x = 1\n", { units_x: 4 });
     const after = single("cabinet.py", "x = 1\n", { units_x: 5 });
     const writes = writesFor(before, after);
-    expect(writes.map((w) => w.file).sort()).toEqual(["cabinet.py", "cabinet.toml"]);
+    expect(writes.map((w) => w.file)).toEqual(["cabinet.toml"]);
   });
 
   it("does not care which order an overrides object's keys were built in", () => {
     const before = single("cabinet.py", "x = 1\n", { a: 1, b: 2 });
     const after = single("cabinet.py", "x = 1\n", { b: 2, a: 1 });
     expect(writesFor(before, after)).toEqual([]);
+  });
+
+  it("never rewrites a hand-edited values file just because the script beside it changed", () => {
+    // What `store-host.ts`'s boot rule is for: typing in the editor must not regenerate
+    // `cabinet.toml` (and strip a comment a maker wrote in it by hand) underneath the person.
+    const before = single("cabinet.py", "x = 1\n", { units_x: 4 });
+    const after = single("cabinet.py", "x = 2\n", { units_x: 4 });
+    expect(writesFor(before, after)).toEqual([{ file: "cabinet.py", text: "x = 2\n" }]);
   });
 });
 
