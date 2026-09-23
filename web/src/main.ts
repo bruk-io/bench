@@ -85,8 +85,12 @@ import { HOW_TO_SELECT, failing, made, noBodiesReason, tally } from "./status";
 // `remember`/`forget` are still here for what belongs to this browser rather than to a
 // project - the hang fingerprint, the rail's container, the panel. The projects themselves
 // go through `store` (see `store.ts` on what does not travel).
+import { host as hostClient } from "./host";
+import { type OutboxState, outbox } from "./outbox";
+import { PROJECT } from "./project-files";
 import { KEYS, forget, hashOf, remember, remembered } from "./storage";
 import type { ProjectStore } from "./store";
+import { hostStore } from "./store-host";
 import { localStore } from "./store-local";
 import { type Level, attach, consoleSink, isLevel, log, timed, userTimingSink } from "./telemetry";
 import { type ReferenceTable, type ReferenceValue, fromToml, stemOf, tomlName } from "./values";
@@ -127,6 +131,7 @@ const ui = {
   state: need<HTMLSpanElement>("state"),
   status: need<HTMLSpanElement>("status"),
   staleBundle: need<HTMLSpanElement>("stale-bundle"),
+  reach: need<HTMLSpanElement>("reach"),
   timing: need<HTMLSpanElement>("timing"),
   openName: need<HTMLSpanElement>("open-name"),
   madeChip: need<HTMLSpanElement>("made"),
@@ -199,8 +204,101 @@ let asked = 0;
 // ---- the scripts kept --------------------------------------------------------
 
 /** Where the projects are kept. One store, chosen here and nowhere else; everything below
- * this line moves a document and does not know the place (`store.ts`). */
-const store: ProjectStore = localStore();
+ * this line moves a document and does not know the place (`store.ts`). Reassigned exactly
+ * once, by `chosenStore()` at the top of `boot()`, before anything reads or writes a project -
+ * a browser-kept workspace and a host-kept one are never both live (decision-9, AC#8). This
+ * default is only what a call made before `boot()` finishes would see, and nothing makes one. */
+let store: ProjectStore = localStore();
+
+/** The outbox behind `store`, when it is the host's - `null` for the browser's own store,
+ * which never has anything unreached to report. Set alongside `store` and nowhere else. */
+let reach: ReturnType<typeof outbox> | null = null;
+
+/** How long to wait before asking the host again, while this browser has host work that must
+ * not be lost to a store choice made too early - the same shape as the outbox's own backoff. */
+const PROBE_START_MS = 1000;
+const PROBE_MAX_MS = 30_000;
+
+/** Which store this session uses, decided once. task-46 will give the host a real per-project
+ * directory and an explicit adoption flow; until then, "the host has projects" can only mean
+ * "the host already has `workspace/`, the one directory this store writes" - a reachable route
+ * with an empty or absent root is not by itself an invitation to move a person's browser-kept
+ * work there, which is why that case keeps the local store rather than switching. `no-root`,
+ * the route missing entirely (a static build), and the network failing all fall back the same
+ * way, *unless* this browser's own outbox already holds host work: a restart mid-session
+ * (decision-9's own words) must not read as "never used the host" and quietly go back to
+ * showing a browser-kept workspace while the outbox keeps trying to reach a host nothing is
+ * asking about any more - so that case waits and retries instead of falling back at all
+ * (AC#3, AC#6, AC#8).
+ */
+async function chosenStore(): Promise<ProjectStore> {
+  const client = hostClient();
+  const box = outbox(client);
+  const hadRows = await box.hasRows();
+  let backoffMs = 0;
+  for (;;) {
+    let listing: Awaited<ReturnType<typeof client.projects>> | null;
+    try {
+      listing = await client.projects();
+    } catch {
+      listing = null;
+    }
+    if (listing !== null && listing.ok && (hadRows || listing.value.projects.includes(PROJECT))) {
+      reach = box;
+      return hostStore(client, box);
+    }
+    if (!hadRows) return localStore();
+    log("info", "bench.store", "the host is not answering yet, and this browser has unreached host work", {
+      "bench.store.waitedMs": String(backoffMs),
+    });
+    ui.reach.hidden = false;
+    ui.reach.textContent = "waiting for host…";
+    ui.reach.title = "this browser has work that has not reached the host yet, and the host is not answering";
+    ui.reach.dataset.state = "warn";
+    backoffMs = backoffMs === 0 ? PROBE_START_MS : Math.min(backoffMs * 2, PROBE_MAX_MS);
+    await new Promise<void>((resolve) => {
+      const timer = window.setTimeout(resolve, backoffMs);
+      const onOnline = (): void => {
+        window.clearTimeout(timer);
+        window.removeEventListener("online", onOnline);
+        resolve();
+      };
+      window.addEventListener("online", onOnline);
+    });
+  }
+}
+
+/** What the reach indicator says for `state`, which colour it reads as, and the longer sentence
+ * that goes in its `title` rather than its text - `.state` does not grow with what it says
+ * (`styles.css`), so a refusal's own message lives in a tooltip instead of pushing the status
+ * bar around. `status.ts`'s own kind of function, but kept here beside the outbox it describes
+ * rather than pulled apart from it. Every state is named in words, never a bare dot (task-54). */
+function reachWords(state: OutboxState): { text: string; title: string; kind: "ok" | "boot" | "warn" | "error" } {
+  switch (state.kind) {
+    case "clear":
+      return { text: "saved to host", title: "every edit has reached the host", kind: "ok" };
+    case "sending":
+      return { text: "saving to host…", title: "an edit is on its way to the host", kind: "boot" };
+    case "waiting":
+      return {
+        text: "not yet reached host",
+        title: "the host is not answering; this will be sent again once it is",
+        kind: "warn",
+      };
+    case "refused": {
+      const file = state.file.split("/").slice(1).join("/");
+      return { text: `${file} refused`, title: `the host refused this write: ${state.message}`, kind: "error" };
+    }
+  }
+}
+
+function showReach(state: OutboxState): void {
+  const { text, title, kind } = reachWords(state);
+  ui.reach.hidden = false;
+  ui.reach.textContent = text;
+  ui.reach.title = title;
+  ui.reach.dataset.state = kind;
+}
 
 /** Every project kept, and the open one.
  *
@@ -1453,6 +1551,18 @@ setState("boot", "loading Python…");
  * scripts alone rather than overwriting them with an empty workspace.
  */
 async function boot(): Promise<void> {
+  // Decided once, before anything below reads or writes a project (AC#8).
+  store = await chosenStore();
+  if (reach !== null) {
+    reach.subscribe(showReach);
+    showReach(reach.state());
+  } else {
+    ui.reach.hidden = false;
+    ui.reach.textContent = "kept in this browser";
+    ui.reach.title = "no host was reachable, so the projects are kept in this browser's own storage";
+    ui.reach.dataset.state = "ok";
+  }
+
   let kept: string | null = null;
   try {
     kept = await store.load();
