@@ -312,13 +312,13 @@ export const serialized = (space: Workspace): string =>
  * and whatever it was opened with that this version does not read, `order` given when a run
  * has said the script's own declaration order. */
 export const document = (one: Project, order: readonly string[] = []): string =>
-  toml(one.overrides, one.entry, order, one.reference, { ...one.kept, entry: one.entry });
+  one.kept.unreadable?.text ?? toml(one.overrides, one.entry, order, one.reference, { ...one.kept, entry: one.entry });
 
 /** A project's document read back: its values, its placement, and what is kept beside them.
- * One that cannot be read opens as a project with no values file, on the script's own
- * defaults and no placement, since the script is worth more than the table - `tools/build.py`
- * refuses such a file, and the explorer says so when one is picked (`main.ts`), but a project
- * already kept is not lost over it. */
+ * One that cannot be read opens on the script's own defaults and no placement, since the script
+ * is worth more than the table - `tools/build.py` refuses such a file, and the explorer says so
+ * when one is picked (`main.ts`) - and is kept whole (`Kept.unreadable`): shown as it is, and
+ * never written over by a panel edit, which would cut it down to what the panel knows. */
 export function readDocument(text: string | undefined): {
   overrides: Overrides;
   reference: ReferenceTable | null;
@@ -326,7 +326,9 @@ export function readDocument(text: string | undefined): {
 } {
   if (text === undefined) return { overrides: {}, reference: null, kept: NOTHING_KEPT };
   const found = fromToml(text);
-  if (!found.ok) return { overrides: {}, reference: null, kept: NOTHING_KEPT };
+  if (!found.ok) {
+    return { overrides: {}, reference: null, kept: { ...NOTHING_KEPT, unreadable: { text, problem: found.problem } } };
+  }
   // `entry` is the project's own field, so the one in the document is not kept twice.
   return { overrides: found.values, reference: found.reference, kept: { ...keptOf(text), entry: null } };
 }

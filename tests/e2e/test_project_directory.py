@@ -326,6 +326,35 @@ def test_a_directory_from_before_bench_toml_opens_on_its_own_values(
         page.context.close()
 
 
+def test_a_bench_toml_this_version_cannot_read_opens_and_is_never_written_over(
+    tmp_path: Path, browser: Browser, built_app: Path
+) -> None:
+    """A value this version has no reader for - an array, which a later bench might write -
+    makes the whole document unreadable here. The project still opens, on the script's own
+    defaults, says why on the values tab, and a knob turned does not regenerate the file over
+    what it could not read."""
+    root = tmp_path / "projects"
+    text = (
+        '[project]\nentry = "plate.py"\n\n[values]\nw = [140, 150]\n\n[[measured]]\nname = "wall"\n'
+    )
+    project = _seed(root, "plate", {"plate.py": TEMPLATE, "bench.toml": text})
+    with _hosted(root) as url:
+        page = _opened(browser, url)
+        page.click("#tab-values")
+        said = page.locator("#values-text").inner_text()
+        assert "bench could not read this file (line 5" in said, said
+        assert said.endswith(text.rstrip("\n")) or text in said, said
+        page.click("#tab-script")
+        assert page.locator("#tab-values").get_attribute("data-flag") == "error"
+
+        page.click("#rail-parameters")
+        page.fill("#param-w", "120")
+        _ran(page)
+        page.wait_for_timeout(1500)
+        assert (project / "bench.toml").read_text() == text, "the unreadable file was written over"
+        page.context.close()
+
+
 def test_a_bench_toml_with_tables_this_version_does_not_know_opens_and_keeps_them(
     tmp_path: Path, browser: Browser, built_app: Path
 ) -> None:
@@ -502,12 +531,37 @@ def test_a_page_with_no_host_behind_it_says_so_and_does_not_appear_to_work(
         assert "without bench's projects route" in page.locator("#no-host-why").inner_text()
         assert page.locator("#reach").inner_text().strip() == "no host"
         assert page.locator("#run").is_disabled()
-        # Python booting behind the message does not paint over it.
+        # Python booting behind the message does not paint over it, and the run shortcut -
+        # which a document-level listener hears past the inert controls - runs nothing.
         page.wait_for_timeout(8000)
+        page.keyboard.press("ControlOrMeta+Enter")
+        page.wait_for_timeout(1000)
         assert "no host" in page.locator("#status").inner_text()
+        assert page.locator("#state").get_attribute("data-state") == "error"
         assert page.locator("#canvas3d").get_attribute("data-bodies") in {None, "0"}
         _shot(page, "task46-no-host.png")
         context.close()
+
+
+def test_a_browser_that_has_used_the_host_is_told_there_is_none_rather_than_left_waiting(
+    tmp_path: Path, browser: Browser, built_app: Path
+) -> None:
+    """A browser whose every write has landed still has rows in its outbox - one per file, as a
+    version cache - and must not be kept on "waiting for host…" by them when the host answers
+    that it has no projects root. Only a write that has not landed is a reason to wait."""
+    root = tmp_path / "projects"
+    _seed(root, "plate", {"plate.py": TEMPLATE})
+    with _hosted(root) as url:
+        page = _opened(browser, url)
+        page.click("#rail-parameters")
+        page.fill("#param-w", "150")
+        _ran(page)
+        _saved(page)
+        shutil.rmtree(root)
+        page.reload()
+        page.wait_for_selector("#no-host:not([hidden])", timeout=30_000)
+        assert "The host is running" in page.locator("#no-host-why").inner_text()
+        page.context.close()
 
 
 def test_a_host_whose_projects_root_is_missing_says_that(

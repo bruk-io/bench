@@ -92,7 +92,10 @@ export function writesFor(previous: Workspace | null, next: Workspace): readonly
     for (const [file, text] of Object.entries(one.scripts)) {
       if (was?.scripts[file] !== text) writes.push({ project: one.name, file, text });
     }
-    if (was === undefined || !sameDocument(was, one)) {
+    // A document this version could not read is never regenerated over (`Kept.unreadable`);
+    // a new project carrying one - adopted from a browser - gets it written as it was.
+    const regenerated = was !== undefined && !sameDocument(was, one) && one.kept.unreadable === undefined;
+    if (was === undefined || regenerated) {
       writes.push({ project: one.name, file: BENCH, text: document(one) });
     }
   }

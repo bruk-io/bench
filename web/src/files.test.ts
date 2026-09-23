@@ -255,7 +255,18 @@ describe("files, storage", () => {
       current: "bare.py",
     });
     expect(restored(said)).toEqual({
-      projects: [project("old", "o", { w: 3 }), project("bare", "b"), project("broken", "k")],
+      projects: [
+        project("old", "o", { w: 3 }),
+        project("bare", "b"),
+        // Unreadable, and kept whole rather than lost - see `Kept.unreadable`.
+        project("broken", "k", {}, null, {
+          ...NOTHING_KEPT,
+          unreadable: {
+            text: "[values]\nw = [1, 2]\n",
+            problem: "line 2: w is not a number, a string or true/false",
+          },
+        }),
+      ],
       current: "bare",
       script: "bare.py",
     });

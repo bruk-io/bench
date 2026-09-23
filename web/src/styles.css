@@ -514,7 +514,7 @@ kbd {
 .notice-list {
   margin: 0 0 8px;
   padding-left: 18px;
-  max-height: 8em;
+  max-height: 14em;
   overflow: auto;
   overflow-wrap: anywhere;
 }

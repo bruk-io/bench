@@ -261,7 +261,12 @@ const noHostReason = (refused: { readonly refused: string; readonly message: str
 async function chosenStore(): Promise<Chosen> {
   const route = hostClient();
   const box = outbox(route);
-  const hadRows = await box.hasRows();
+  // Unreached *writes*, not every row: the outbox keeps a row per file it has ever landed, as
+  // a version cache, so "has rows" is true of every browser that has used a host at all and
+  // would keep a returning one waiting on a host that has answered - with `no-root`, say -
+  // rather than saying so. task-52 read `hasRows()` here, when a browser that had never used
+  // the host fell back to its own store; there is no such store to fall back to now.
+  const hadWork = (await box.pending()).size > 0;
   let backoffMs = 0;
   for (;;) {
     let listing: Awaited<ReturnType<typeof route.projects>> | null;
@@ -275,7 +280,7 @@ async function chosenStore(): Promise<Chosen> {
       reach = box;
       return { store: hostStore(route, box) };
     }
-    if (!hadRows) {
+    if (!hadWork) {
       return {
         none: listing === null ? "Nothing answered at the address this page came from." : noHostReason(listing.refusal),
       };
@@ -285,7 +290,9 @@ async function chosenStore(): Promise<Chosen> {
     });
     ui.reach.hidden = false;
     ui.reach.textContent = "waiting for host…";
-    ui.reach.title = "this browser has work that has not reached the host yet, and the host is not answering";
+    ui.reach.title =
+      "this browser has work that has not reached the host yet, and the host " +
+      (listing === null ? "is not answering" : `answered: ${listing.refusal.message}`);
     ui.reach.dataset.state = "warn";
     backoffMs = backoffMs === 0 ? PROBE_START_MS : Math.min(backoffMs * 2, PROBE_MAX_MS);
     await new Promise<void>((resolve) => {
@@ -428,6 +435,7 @@ function show(next: Workspace): void {
   // panel with it, since what it will let a maker do depends on that very answer.
   showReferenceChip();
   showPickState();
+  showAdoption();
 }
 
 /** A project's values as the file they are - the one thing the values tab shows and the
@@ -435,9 +443,18 @@ function show(next: Workspace): void {
  * it, so the file reads like the dataclass does. */
 const valuesDocument = (one: Project): string => projectDocument(one, scene?.params.map((param) => param.name) ?? []);
 
-/** Put the open project's values file on its tab. */
+/** Put the open project's values file on its tab - and, when it could not be read, say so
+ * above it and on the tab: the panel is then on the script's defaults, and what is turned
+ * there is not kept, because keeping it would mean writing over the file (`Kept.unreadable`). */
 function showValues(): void {
-  ui.valuesText.textContent = valuesDocument(opened(workspace));
+  const one = opened(workspace);
+  const unreadable = one.kept.unreadable;
+  ui.valuesText.textContent =
+    unreadable === undefined
+      ? valuesDocument(one)
+      : `# bench could not read this file (${unreadable.problem}), so the panel is on the\n` +
+        "# script's own defaults and nothing turned there is written here. Put the line right\n" +
+        `# and reload.\n\n${unreadable.text}`;
 }
 
 // ---- adopting what this browser kept ----------------------------------------------
@@ -464,6 +481,25 @@ async function adoptable(): Promise<readonly Project[]> {
   return (found?.projects ?? []).filter((one) => !pristine(one, EXAMPLES));
 }
 
+/** The root the question names its directories under - the host's own answer. */
+let adoptingRoot = "";
+
+/** The directories adopting would create, named in full, as they would be *now*: said again
+ * whenever the workspace changes while the question waits (`show`), since a project made or
+ * an example first written in the meantime can take a name the list had promised. */
+function showAdoption(): void {
+  if (adopting.length === 0) return;
+  const into = adoptedInto(adopting);
+  const names = into === null ? [] : into.projects.slice(-adopting.length).map((one) => one.name);
+  ui.adoptList.replaceChildren(
+    ...names.map((name) => {
+      const row = document.createElement("li");
+      row.textContent = `${adoptingRoot}/${name}/`;
+      return row;
+    }),
+  );
+}
+
 /** Where adopting would put `incoming`, beside what is on the host now: the fresh first example
  * is not on the host and is not kept beside them. */
 const adoptedInto = (incoming: readonly Project[]): Workspace | null => merged(fresh ? null : workspace, incoming);
@@ -476,17 +512,9 @@ async function offerAdoption(): Promise<void> {
   const incoming = await adoptable();
   if (incoming.length === 0 || client === null) return;
   const listed = await client.projects().catch(() => null);
-  const root = listed?.ok === true ? listed.value.root.replace(/[/\\]+$/, "") : "the host's projects root";
-  const into = adoptedInto(incoming);
-  const names = into === null ? [] : into.projects.slice(-incoming.length).map((one) => one.name);
+  adoptingRoot = listed?.ok === true ? listed.value.root.replace(/[/\\]+$/, "") : "the host's projects root";
   adopting = incoming;
-  ui.adoptList.replaceChildren(
-    ...names.map((name) => {
-      const row = document.createElement("li");
-      row.textContent = `${root}/${name}/`;
-      return row;
-    }),
-  );
+  showAdoption();
   ui.adopt.hidden = false;
   log("info", "bench.adopt", "this browser holds projects from before; asking before writing them", {
     "bench.adopt.count": String(incoming.length),
@@ -1208,6 +1236,9 @@ const bridge = connect(
 // ---- running -----------------------------------------------------------------
 
 function runNow(): void {
+  // Nothing runs on a page with no host - `Ctrl/Cmd+Enter` reaches here past the inert
+  // controls, and "running…" over the no-host line would be a bench appearing to work.
+  if (hostless) return;
   held = false;
   asked = performance.now();
   forget(KEYS.hang);
@@ -1438,6 +1469,7 @@ function tabFor(doc: Doc, label: string): HTMLButtonElement {
   tab.setAttribute("aria-selected", String(tabId(doc) === tabId(front)));
   tab.id = tabId(doc);
   if (doc.kind === "script" && failingLine !== null) tab.dataset["flag"] = "error";
+  if (doc.kind === "values" && opened(workspace).kept.unreadable !== undefined) tab.dataset["flag"] = "error";
   const text = document.createElement("span");
   text.className = "name";
   text.textContent = label;
@@ -1572,7 +1604,7 @@ function showReferenceSelection(file: string | null): void {
 }
 
 function insertSelected(): void {
-  if (picked === null) return;
+  if (picked === null || hostless) return;
   // The ref goes into the script, so the script is what has to be in front to see it land.
   showDocument(SCRIPT);
   code.insertRef(picked);
@@ -1879,6 +1911,13 @@ async function boot(): Promise<void> {
   const read = restored(kept);
   fresh = read === null;
   show(read === null ? firstWorkspace() : reopened(read));
+  if (fresh) {
+    // "saved to host" would be true of no edits and false of the project on screen, which is
+    // on no disk yet. The outbox's next state - the first write - says the rest.
+    ui.reach.textContent = "not on host yet";
+    ui.reach.title = "this example is written to the host the first time something in it is changed";
+    ui.reach.dataset.state = "boot";
+  }
   showOverrides(opened(workspace).overrides);
   showSelection(null);
 

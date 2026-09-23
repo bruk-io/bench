@@ -211,8 +211,20 @@ describe("workspaceFrom", () => {
   });
 
   it("opens a project whose bench.toml cannot be read on its script's defaults", () => {
-    const space = workspaceFrom(root({ cabinet: { "cabinet.py": "c", [BENCH]: "[values]\nw = [1, 2]\n" } }));
-    expect(space?.projects[0]).toEqual(project("cabinet", "c"));
+    const text = "[values]\nw = [1, 2]\n";
+    const space = workspaceFrom(root({ cabinet: { "cabinet.py": "c", [BENCH]: text } }));
+    const unreadable = { text, problem: "line 2: w is not a number, a string or true/false" };
+    expect(space?.projects[0]).toEqual({ ...project("cabinet", "c"), kept: { ...NOTHING_KEPT, unreadable } });
+  });
+
+  it("never writes over a bench.toml it could not read, whatever the panel does", () => {
+    const text = '[values]\nw = [1, 2]\n\n[[measured]]\nname = "wall"\n';
+    const space = workspaceFrom(root({ cabinet: { "cabinet.py": "c", [BENCH]: text } }));
+    if (space === null) throw new Error("the project did not open");
+    const turned = { ...space, projects: space.projects.map((one) => ({ ...one, overrides: { w: 4 } })) };
+    expect(writesFor(space, turned)).toEqual([]);
+    // Written as it was, and only as it was, where it is new - a project adopted with one.
+    expect(writesFor(null, turned).find((w) => w.file === BENCH)?.text).toBe(text);
   });
 
   it("round-trips through filesFor: reading what was written gives back what was written", () => {

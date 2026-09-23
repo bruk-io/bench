@@ -77,9 +77,9 @@ export interface Outbox {
    * reconstructing what the host does not have yet needs (`store-host.ts`'s `load()`). */
   pending(): Promise<ReadonlyMap<string, Pending>>;
   /** Whether this outbox is holding anything at all, landed or not - a browser that has ever
-   * used the host store, even one with nothing left to send right now. `main.ts` reads this
-   * before it will let a store choice fall back to the browser's own store (AC#8): a host that
-   * merely answers slowly must not look the same as one this browser never used. */
+   * used the host store, even one with nothing left to send right now. task-52's store choice
+   * read this; since task-46 there is no browser store to fall back to, and `main.ts` waits on
+   * `pending()` instead - only unreached writes are a reason not to say there is no host. */
   hasRows(): Promise<boolean>;
   /** Tell this outbox `project`/`file` is really at `base`, holding `text` - what `load()`
    * does for every file it reads. A row with nothing pending just has its cached base

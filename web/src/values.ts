@@ -88,6 +88,10 @@ export interface Kept {
   readonly root: readonly string[];
   readonly project: readonly string[];
   readonly tables: readonly string[];
+  /** A document `fromToml` could not read at all - a value this version has no reader for, a
+   * hand edit with a typo - kept whole, with why, so it is never regenerated over: nothing
+   * above can say which of its lines it would be losing. Absent for one that was read. */
+  readonly unreadable?: { readonly text: string; readonly problem: string };
 }
 
 /** A document with nothing in it but what this version reads. */
