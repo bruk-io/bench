@@ -71,6 +71,10 @@ export interface RunRequest {
    * that table's own `file` names, so the mesh is placed before the script sees it. Absent
    * for the same reason `stl` can be: decision-4's "no table, no move". */
   table?: string;
+  /** The open project's other scripts, as JSON (`{name: text}`) - absent for a project of one
+   * script, which is most of them (task-50). `bench.worker.start`'s runner mounts them for
+   * the source to import; the app never mounts them itself. */
+  modules?: string;
 }
 
 /** Measure a body dropped on the view and write the survey out as a report. Asked once per
@@ -208,6 +212,7 @@ type Runner = (
   modeller?: Modeller,
   stl?: string,
   table?: string,
+  modules?: string,
 ) => PyAnswer;
 
 /** `SURVEY`, seen from here: a base64 STL and, when there is one, its `[reference]` table as
@@ -359,7 +364,14 @@ function ran(entry: Entry, job: RunRequest): void {
   const answer = timed(
     "bench.worker.run",
     () =>
-      entry.run(job.source, JSON.stringify(job.overrides), modeller ?? undefined, job.stl, job.table),
+      entry.run(
+        job.source,
+        JSON.stringify(job.overrides),
+        modeller ?? undefined,
+        job.stl,
+        job.table,
+        job.modules,
+      ),
     attributes,
   );
   try {
