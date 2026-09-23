@@ -49,6 +49,16 @@ export type ReferenceValue = Scalar | Triple;
  * module's business only as far as their TOML shape, never their meaning. */
 export type ReferenceTable = Readonly<Record<string, ReferenceValue>>;
 
+/** The keys that make a `[reference]` table a *placement* rather than only a name. */
+const PLACING = ["origin", "up", "along"] as const;
+
+/** Whether `table` places its body, or only names which of a project's meshes is the active one
+ * (task-49: `[reference]` is one table naming the active mesh, and a mesh chosen but not yet
+ * placed is handed over exactly as exported). A table with any of `origin`, `up` or `along` is
+ * a placement, and a partial one is still refused by `bench.placement.placement` naming what is
+ * missing; `tools/build.py`'s `_placing` reads the same three keys the same way. */
+export const placing = (table: ReferenceTable): boolean => PLACING.some((key) => key in table);
+
 const SCRIPT = ".py";
 const DOCUMENT = ".toml";
 

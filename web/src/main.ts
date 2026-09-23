@@ -103,7 +103,16 @@ import type { ProjectStore } from "./store";
 import { hostStore } from "./store-host";
 import { localStore } from "./store-local";
 import { type Level, attach, consoleSink, isLevel, log, timed, userTimingSink } from "./telemetry";
-import { BENCH, type ReferenceTable, type ReferenceValue, fromToml, keptOf, stemOf, tomlName } from "./values";
+import {
+  BENCH,
+  type ReferenceTable,
+  type ReferenceValue,
+  fromToml,
+  keptOf,
+  placing,
+  stemOf,
+  tomlName,
+} from "./values";
 // A type only: `viewer3d` itself is fetched when the first scene lands (`deferred3d`), and a
 // type import is erased, so naming the shape a pick comes back as costs the bundle nothing.
 import type { DetectHit } from "./viewer3d";
@@ -157,6 +166,7 @@ const ui = {
   examples: need<BenchExamplesMenu>("examples-menu"),
   refsTree: need<BenchRefsTree>("refs-tree"),
   refsCount: need<HTMLSpanElement>("refs-count"),
+  referencesSaid: need<HTMLParagraphElement>("references-said"),
   sheetsList: need<BenchSheets>("sheets-list"),
   sheetCount: need<HTMLSpanElement>("sheet-count"),
   noHost: need<HTMLDivElement>("no-host"),
@@ -911,14 +921,14 @@ function showPickState(): void {
   }
 }
 
-/** The open project's `[reference]` table, matched against the body dropped on the view - or
- * `null` when there is nothing dropped, the open project has no placement, or the placement
- * is for a file that is not the one dropped. decision-4's rule: a placement for one file is
- * never applied because a different one happened to be dropped. */
+/** The open project's `[reference]` table as a placement of the body on the view - or `null`
+ * when there is no body, the project places nothing, the table only names which mesh is active
+ * (`placing`), or it is about a file that is not the one on the view. decision-4's rule: a
+ * placement for one file is never applied because a different one happens to be on the view. */
 function matchedReference(): ReferenceTable | null {
   if (referenceName === "") return null;
   const table = opened(workspace).reference;
-  if (table === null || table["file"] !== referenceName) return null;
+  if (table === null || table["file"] !== referenceName || !placing(table)) return null;
   return table;
 }
 
@@ -938,14 +948,53 @@ const modulesJson = (): string | undefined => {
   return Object.keys(modules).length === 0 ? undefined : JSON.stringify(modules);
 };
 
-/** The dropped bodies as the refs container lists them.
- *
- * One today, because a drop replaces what was there; the tree takes a list because a project
- * is going to hold several (task-49) and the container should not have to change shape again
- * to show them.
- */
+/** The references as the refs container lists them: every mesh the open project holds, and
+ * the body on the view when it is not one of them (a drop a reader made, or one the host would
+ * not take) - with the one on the view marked active, since that is the one everything that
+ * measures is about (task-49). */
 function showReferenceRows(): void {
-  ui.refsTree.references = referenceName === "" ? [] : [referenceName];
+  const held = meshesOf === workspace.current ? meshes : [];
+  ui.refsTree.references = referenceName === "" || held.includes(referenceName) ? held : [...held, referenceName];
+  ui.refsTree.activeReference = referenceName === "" ? null : referenceName;
+}
+
+/** Make `file`, one of the open project's meshes, the active reference in its `[reference]`
+ * table - one table naming the active mesh, decision-4's grammar (task-49) - so a reload, and
+ * `tools.build`, bring back the same one. A reader chooses on its own view and writes nothing.
+ *
+ * A table that *placed* another mesh is replaced by one that names this one and places nothing
+ * yet: `[reference]` has room for one body, and the placement was of the other. Said, in the
+ * refs container, rather than done quietly. */
+function activate(file: string): void {
+  const table = opened(workspace).reference;
+  if (table?.["file"] === file || !writable()) return;
+  const was = table?.["file"];
+  const placed = table !== null && placing(table) && typeof was === "string";
+  keep(withReference(workspace, { file }));
+  ui.referencesSaid.hidden = !placed;
+  ui.referencesSaid.textContent = placed
+    ? `[reference] names ${file} now, placed nowhere yet: the placement it held was of ${was}, and went with it.`
+    : "";
+  log("info", "bench.reference", "a reference was made the active one", {
+    "bench.reference.name": file,
+    "bench.project": workspace.current,
+  });
+}
+
+/** Put the open project's mesh `file` on the view and make it the active reference: read from
+ * the project's directory, surveyed, run against. `quietly` keeps its report behind the chip,
+ * for a row chosen in the refs container rather than a file opened from the tree. */
+async function chooseReference(file: string, quietly: boolean): Promise<void> {
+  const project = workspace.current;
+  const got = await client?.read(project, file).catch(() => null);
+  if (got === undefined || got === null || !got.ok) {
+    showFailure(`${file} could not be read from ${project}${got?.ok === false ? `: ${got.refusal.message}` : ""}.`);
+    return;
+  }
+  if (workspace.current !== project) return; // another project opened while this was read
+  hold(file, got.value.bytes, quietly);
+  activate(file);
+  showReferenceSelection(file);
 }
 
 /** The chip beside the view: the file's name, `placed` once its project's `[reference]` names
@@ -1016,7 +1065,7 @@ function hold(name: string, bytes: Uint8Array, quietly: boolean): void {
   picks = [];
   space.detect(null);
   showPickState();
-  log("info", "bench.reference", quietly ? "the placed body was read back from the project" : "a body was dropped on the view", {
+  log("info", "bench.reference", quietly ? "a reference was read back from the project" : "a body was put on the view", {
     "bench.reference.name": name,
     "bench.reference.bytes": bytes.length,
   });
@@ -1053,8 +1102,8 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
  * name is not written over: the drop only ever creates, and the chip says the body is not kept
  * rather than a stale-looking success, because the project's copy may be one a placement was
  * measured against. */
-async function keepBody(project: string, name: string, bytes: Uint8Array): Promise<void> {
-  if (reach === null || client === null) return;
+async function keepBody(project: string, name: string, bytes: Uint8Array): Promise<boolean> {
+  if (reach === null || client === null) return false;
   let problem: string;
   try {
     const sent = await reach.sendThrough(project, name, bytes);
@@ -1064,11 +1113,11 @@ async function keepBody(project: string, name: string, bytes: Uint8Array): Promi
         "bench.project": project,
       });
       if (workspace.current === project) await readMeshes();
-      return;
+      return true;
     }
     if (sent.refusal.refused === "exists") {
       const there = await client.read(project, name);
-      if (there.ok && sameBytes(there.value.bytes, bytes)) return;
+      if (there.ok && sameBytes(there.value.bytes, bytes)) return true;
       problem = `${project} already holds a different ${name}, and a drop does not write over it`;
     } else {
       problem = sent.refusal.message;
@@ -1081,9 +1130,10 @@ async function keepBody(project: string, name: string, bytes: Uint8Array): Promi
     "bench.project": project,
     "bench.store.problem": problem,
   });
-  if (referenceName !== name) return; // replaced on the view while this was being refused
+  if (referenceName !== name) return false; // replaced on the view while this was being refused
   bodyProblem = problem;
   showReferenceChip();
+  return false;
 }
 
 /** Put back on the view the body the open project's `[reference]` names, read from the
@@ -1114,7 +1164,9 @@ ui.canvas3d.addEventListener("drop", (event: DragEvent) => {
     const bytes = new Uint8Array(await file.arrayBuffer());
     hold(file.name, bytes, false);
     if (keeping) {
-      await keepBody(project, file.name, bytes);
+      // Kept beside the others, never over them, and made the active one (task-49): a second
+      // drop adds a row rather than replacing the first.
+      if ((await keepBody(project, file.name, bytes)) && workspace.current === project) activate(file.name);
       return;
     }
     // Read-only here: the body is on the view to be measured, and is not put in a project
@@ -1803,7 +1855,7 @@ function showReferenceSelection(file: string | null): void {
     ui.refsTree.selected = null;
     space.select(null);
   }
-  ui.selection.textContent = file === null ? HOW_TO_SELECT : `dropped body: ${file}`;
+  ui.selection.textContent = file === null ? HOW_TO_SELECT : `reference: ${file}`;
   ui.selection.classList.toggle("is-set", file !== null);
   ui.insert.disabled = true;
   ui.refsTree.selectedReference = file;
@@ -1826,8 +1878,15 @@ ui.refsTree.addEventListener("ref-pick", (event) => {
 
 // A dropped body is selected the same way, and lights up the same way - it just has no ref to
 // insert, so the bar names the file and the button stays off.
+// Choosing another reference's row makes it the active one (task-49): on the view, surveyed,
+// and named by `[reference]`. The row of the one already active selects it, as before.
 ui.refsTree.addEventListener("reference-pick", (event) => {
-  showReferenceSelection(pickedReference === event.detail.file ? null : event.detail.file);
+  const { file } = event.detail;
+  if (file !== referenceName) {
+    void chooseReference(file, true);
+    return;
+  }
+  showReferenceSelection(pickedReference === file ? null : file);
 });
 
 // ---- wiring ------------------------------------------------------------------
@@ -1950,6 +2009,9 @@ function showFiles(): void {
   ui.explorer.files = { scripts: scriptsOf(one), entry: one.entry, meshes: meshesOf === one.name ? meshes : [] };
   ui.explorer.front = front.kind === "values" ? BENCH : front.kind === "script" ? workspace.script : "";
   ui.explorer.root = projectsRoot;
+  const named = one.reference?.["file"];
+  ui.explorer.active = typeof named === "string" ? named : null;
+  showReferenceRows();
 }
 
 /** Ask the route which meshes the open project's directory holds, and show them. A project not
@@ -2037,21 +2099,9 @@ ui.explorer.addEventListener("file-open", (event) => {
     else openScript(name);
     showFiles();
   } else if (isMesh(name)) {
-    void openMesh(name);
+    void chooseReference(name, false);
   }
 });
-
-/** Put the open project's mesh `name` on the view, read from its directory. */
-async function openMesh(name: string): Promise<void> {
-  const project = workspace.current;
-  const got = await client?.read(project, name).catch(() => null);
-  if (got === undefined || got === null || !got.ok) {
-    showFailure(`${name} could not be read from ${project}${got?.ok === false ? `: ${got.refusal.message}` : ""}.`);
-    return;
-  }
-  if (workspace.current !== project) return;
-  hold(name, got.value.bytes, false);
-}
 
 ui.explorer.addEventListener("file-rename", (event) => {
   keep(scriptRenamed(workspace, event.detail.from, event.detail.to));
@@ -2101,6 +2151,11 @@ async function deleteMesh(name: string): Promise<void> {
     return;
   }
   sayMoved(name, said.value.trashed);
+  // The table naming it goes with it - placement and all - as the question said it would:
+  // nothing is placed that is not there (decision-4).
+  if (opened(workspace).reference?.["file"] === name && workspace.current === project) {
+    keep(withReference(workspace, null));
+  }
   if (referenceName === name) forgetBody();
   await readMeshes();
 }

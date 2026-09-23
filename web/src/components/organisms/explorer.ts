@@ -306,6 +306,10 @@ export class BenchExplorer extends LitElement {
   /** Whether the open project is only being read here (task-47). */
   @property({ attribute: false }) readOnly = false;
 
+  /** The mesh the open project's `[reference]` names - its active reference (task-49) - which
+   * a delete of it says is cleared along with it. */
+  @property({ attribute: false }) active: string | null = null;
+
   /** The host's projects root, which a delete names before it moves anything into its trash. */
   @property({ attribute: false }) root = "";
 
@@ -570,7 +574,10 @@ export class BenchExplorer extends LitElement {
         ? html`Delete <strong>${target.name}</strong>? Its directory moves on the host into ${trash}, with
             every file in it - its scripts, <code>bench.toml</code> and any meshes.`
         : html`Delete <strong>${target.name}</strong> from ${this.current}? It moves on the host into ${trash},
-            in a folder named for the time and the project.`;
+            in a folder named for the time and the project.${target.name === this.active
+              ? html` It is the active reference, so <code>[reference]</code> is cleared with it -
+                  its placement too.`
+              : nothing}`;
     return html`
       <div class="ask">
         <p id="file-delete-what">${what}</p>

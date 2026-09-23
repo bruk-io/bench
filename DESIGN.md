@@ -812,7 +812,11 @@ Interactions that define the product:
   dropped into it - each opening in the editor group on a click, with rename, duplicate and
   delete on the row they act on. A delete moves a file or a whole directory into `.trash/`
   under the root and says so first; a browser holding projects from before is asked, once,
-  whether to write them to the host.
+  whether to write them to the host. Every mesh dropped on the view is kept in the project's
+  directory, and one of them is active (task-49): the References rows in the refs container
+  choose it, `[reference]` names it - `file` alone until a pick places it - and the survey,
+  *detect faces* and the pick panel are about it. `tools.build` hands a mesh that is only named
+  over as exported.
   An examples menu opens bundled scripts, each as a file of its own so it never
   replaces the one being written, from `examples/*.py` at the repository root - the prebuild script bundles the directory,
   so the five printed parts appear in the menu beside the two flat ones with nothing in

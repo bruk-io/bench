@@ -7,6 +7,7 @@ import {
   type ReferenceTable,
   fromToml,
   keptOf,
+  placing,
   stemOf,
   toml,
   tomlName,
@@ -341,5 +342,15 @@ describe("values, [project] and what this version does not read", () => {
 
   it("names the one document a project directory holds", () => {
     expect(BENCH).toBe("bench.toml");
+  });
+});
+
+describe("placing", () => {
+  it("tells a table that places its body from one that only names the active mesh", () => {
+    expect(placing({ file: "foot.stl" })).toBe(false);
+    expect(placing({ file: "foot.stl", origin: "low", up: "+Z", along: "+X" })).toBe(true);
+    // A partial placement is still a placement - and still refused by the run, naming what is
+    // missing, rather than quietly read as no placement at all.
+    expect(placing({ file: "foot.stl", origin: "low" })).toBe(true);
   });
 });

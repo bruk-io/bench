@@ -151,6 +151,12 @@ export class BenchRefsTree extends LitElement {
         font-size: 10px;
       }
 
+      .active {
+        margin-left: 6px;
+        color: var(--accent);
+        font-size: 10px;
+      }
+
       .empty {
         margin: 0;
         padding: 4px 10px;
@@ -191,6 +197,11 @@ export class BenchRefsTree extends LitElement {
    * nothing under it - decision-8's imported mesh "names nothing under it the way a hull does",
    * and decision-7 refused pointing at a survey's own indexing, so there is nothing to nest. */
   @property({ attribute: false }) references: readonly string[] = [];
+
+  /** The one of `references` that is active - the body on the view, and the one `survey`,
+   * *detect faces* and the pick panel are about (decision-9, task-49). Choosing a row is what
+   * makes it so; the page decides, and marks it here. */
+  @property({ attribute: false }) activeReference: string | null = null;
 
   /** What is selected, wherever it was clicked. */
   @property() selected: string | null = null;
@@ -261,11 +272,13 @@ export class BenchRefsTree extends LitElement {
               tabindex="0"
               aria-current=${file === this.selectedReference ? "true" : "false"}
               data-reference=${file}
+              data-active=${file === this.activeReference ? "true" : "false"}
               @click=${() => this.pickReference(file)}
               @keydown=${(event: KeyboardEvent) => this.keyedReference(event, file)}
             >
               <span class="twist" data-leaf="true" aria-hidden="true"></span>
               <span class="name">${file}</span>
+              ${file === this.activeReference ? html`<span class="active">active</span>` : nothing}
             </div>
           `,
         )}
