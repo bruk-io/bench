@@ -57,6 +57,19 @@ def _plain(name: str) -> bool:
     )
 
 
+def project_dir(project: str, environ: Mapping[str, str] | None = None) -> Path:
+    """The directory the project called ``project`` is, under the root - one plain name, the
+    same rule ``project_file`` checks it by.
+
+    Raises:
+        ValueError: if ``project`` is not one plain name, or the root is refused.
+    """
+    if not _plain(project):
+        msg = f"{project!r} is not a plain name"
+        raise ValueError(msg)
+    return projects_root(environ) / project
+
+
 def project_file(project: str, file: str, environ: Mapping[str, str] | None = None) -> Path:
     """The file called ``file`` in the project called ``project``, under the root - both one
     plain name each, the same rule the route keeps, so the command line reaches exactly what
@@ -65,8 +78,7 @@ def project_file(project: str, file: str, environ: Mapping[str, str] | None = No
     Raises:
         ValueError: if either is not one plain name, or the root is refused.
     """
-    for name in (project, file):
-        if not _plain(name):
-            msg = f"{name!r} is not a plain name"
-            raise ValueError(msg)
-    return projects_root(environ) / project / file
+    if not _plain(file):
+        msg = f"{file!r} is not a plain name"
+        raise ValueError(msg)
+    return project_dir(project, environ) / file

@@ -11,6 +11,7 @@ import {
   duplicated,
   freeName,
   merged,
+  modulesOf,
   nameProblem,
   normalized,
   openSource,
@@ -89,6 +90,15 @@ describe("files, a project of several scripts", () => {
   it("lists its scripts entry first, the rest by name", () => {
     const more = { ...pair(), scripts: { ...pair().scripts, "a.py": "" } };
     expect(scriptsOf(more)).toEqual(["main.py", "a.py", "parts.py"]);
+  });
+
+  it("hands a run every other script of the open project, not the one it is running", () => {
+    expect(modulesOf(space())).toEqual({ "parts.py": "WIDTH = 3" });
+    expect(modulesOf(withScript(space(), "parts.py"))).toEqual({ "main.py": "import parts" });
+  });
+
+  it("is empty for a project of one script, which is most of them", () => {
+    expect(modulesOf(three())).toEqual({});
   });
 });
 

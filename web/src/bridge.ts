@@ -53,8 +53,16 @@ export interface Bridge {
    * `stl` is a body to hand the script as `reference`, base64 encoded. Left off when there
    * is nothing to hand it. `table` is the open project's `[reference]` table, as JSON - left
    * off unless `stl` is the very body that table's own `file` names, so the mesh is placed
-   * before the script sees it. */
-  request(source: string, overrides: Record<string, unknown>, stl?: string, table?: string): void;
+   * before the script sees it. `modules` is the open project's other scripts, as JSON
+   * (`{name: text}`) - left off for a project of one script, which is most of them - so
+   * `source` can import them (task-50). */
+  request(
+    source: string,
+    overrides: Record<string, unknown>,
+    stl?: string,
+    table?: string,
+    modules?: string,
+  ): void;
   /** Ask for the survey of `stl`, a body as base64; supersedes any survey not yet answered.
    *
    * Not a run: it is outside the watchdog, because a survey is bounded by the triangles it
@@ -265,7 +273,7 @@ export function connect(handlers: BridgeHandlers, options: BridgeOptions = {}): 
   }
 
   return {
-    request(source, overrides, stl, table) {
+    request(source, overrides, stl, table, modules) {
       latest = next++;
       asked = now();
       window.clearTimeout(timer);
@@ -280,11 +288,12 @@ export function connect(handlers: BridgeHandlers, options: BridgeOptions = {}): 
         type: "run",
         source,
         overrides,
-        // Spread rather than `stl`/`table`, because `exactOptionalPropertyTypes` is on and
-        // means it: a run with nothing dropped, or nothing to place it with, leaves the
-        // property off rather than setting it undefined.
+        // Spread rather than `stl`/`table`/`modules`, because `exactOptionalPropertyTypes`
+        // is on and means it: a run with nothing dropped, nothing to place it with, or no
+        // sibling module leaves the property off rather than setting it undefined.
         ...(stl === undefined ? {} : { stl }),
         ...(table === undefined ? {} : { table }),
+        ...(modules === undefined ? {} : { modules }),
       } satisfies Request);
     },
     survey(stl, table) {

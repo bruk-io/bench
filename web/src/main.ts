@@ -56,6 +56,7 @@ import {
   document as projectDocument,
   duplicated,
   merged,
+  modulesOf,
   openSource,
   opened,
   pristine,
@@ -755,6 +756,14 @@ const referenceTableJson = (): string | undefined => {
   return table === null ? undefined : JSON.stringify(table);
 };
 
+/** `modulesOf(workspace)`, as the JSON text the worker takes - `undefined` for a project of
+ * one script, which is most of them, so a run with nothing beside the open script mounts
+ * nothing (task-50). */
+const modulesJson = (): string | undefined => {
+  const modules = modulesOf(workspace);
+  return Object.keys(modules).length === 0 ? undefined : JSON.stringify(modules);
+};
+
 /** The dropped bodies as the refs container lists them.
  *
  * One today, because a drop replaces what was there; the tree takes a list because a project
@@ -1246,7 +1255,7 @@ function runNow(): void {
   if (booting) setState("boot", ui.status.textContent ?? "starting…");
   else setState("running", "running…");
   sentWith = overrides;
-  bridge.request(code.text(), overrides, reference ?? undefined, referenceTableJson());
+  bridge.request(code.text(), overrides, reference ?? undefined, referenceTableJson(), modulesJson());
 }
 
 function received(next: Scene): void {
