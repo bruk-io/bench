@@ -8,8 +8,30 @@ adapter layer's, against a real kernel.
 
 import pytest
 
-from bench import Point, Ref, Sampled, Severity, Violation, cuboid, cut, cylinder, fill, rect
-from bench.checks import clearance_between, contact_between, fits, overhangs, sampling, wall
+from bench import (
+    CONTACT,
+    Fit,
+    Fitted,
+    Point,
+    Ref,
+    Sampled,
+    Severity,
+    Violation,
+    cuboid,
+    cut,
+    cylinder,
+    fill,
+    rect,
+)
+from bench.checks import (
+    clearance_between,
+    contact_between,
+    fit_between,
+    fits,
+    overhangs,
+    sampling,
+    wall,
+)
 from bench.library.print import H2D, PLA, Orient, Volume
 
 pytestmark = pytest.mark.unit
@@ -124,4 +146,42 @@ def test_a_motion_nothing_could_measure_says_that_and_not_how_it_sampled() -> No
     )
     assert said == (
         "the motion was not measured: there is no kernel in this run, so nothing measured it"
+    )
+
+
+# ---- a pair put together at a fit --------------------------------------------------------
+
+
+def test_a_fit_with_no_kernel_is_unchecked_and_says_what_it_asked() -> None:
+    """The answer still says what was asked, so a browser before the modeller has loaded
+    reads the fit the script meant even though nothing measured it."""
+    fitted = fit_between(cuboid(10, 10, 10), cuboid(10, 10, 10), Fit.SLIDE, 0.2, kernel=None)
+    assert fitted.gap is None
+    assert fitted.finding is not None
+    assert fitted.finding.severity is Severity.UNCHECKED
+    assert str(fitted).startswith("asked 0.200 (slide), not measured:")
+    assert str(fit_between(cuboid(1, 1, 1), cuboid(1, 1, 1), CONTACT, 0.0, kernel=None)).startswith(
+        "asked contact, not measured:"
+    )
+
+
+def test_a_fit_says_what_it_measured_against_what_it_asked() -> None:
+    """The sentence a maker reads, pass or fail: the measured gap beside the asked one."""
+    assert str(Fitted(Fit.SLIDE, 0.2, 0.2, None)) == "clear by 0.200 mm, asked 0.200 (slide)"
+    assert str(Fitted(Fit.SLIDE, 0.2, 1.2, None)) == (
+        "clear by more than 1.200 mm, asked 0.200 (slide)"
+    )
+    tight = Violation("fit", "too close", Severity.ERROR)
+    assert str(Fitted(Fit.SLIDE, 0.2, 0.15, tight)) == (
+        "clear by 0.150 mm, asked 0.200 (slide): too close"
+    )
+
+
+def test_a_contact_says_whether_it_touched_overlapped_or_never_met() -> None:
+    overlap = Violation("contact", "shares material", Severity.ERROR)
+    apart = Violation("fit", "stands apart", Severity.WARNING)
+    assert str(Fitted(CONTACT, 0.0, 0.0, None)) == "touch, asked contact"
+    assert str(Fitted(CONTACT, 0.0, 0.0, overlap)) == "overlap, asked contact: shares material"
+    assert str(Fitted(CONTACT, 0.0, 3.0, apart)) == (
+        "stand 3.000 mm apart, asked contact: stands apart"
     )

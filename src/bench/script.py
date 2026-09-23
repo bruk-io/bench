@@ -54,19 +54,23 @@ from typing import NamedTuple, TypeIs, assert_never
 
 from . import views
 from .checks import (
+    Fitted,
     Sampled,
     Severity,
     Violation,
     clearance_between,
     contact_between,
+    fit_between,
     fits,
     overhangs,
     sampling,
     unchecked,
     wall,
 )
-from .geometry import XY
+from .fasteners import CONTACT, Contact, Fit
+from .geometry import XY, Vector
 from .kernel import Kernel, Mesh
+from .mate import UNMOVED, Mate, gap_of, mating
 from .missing import explained
 from .model import (
     Assembly,
@@ -125,6 +129,7 @@ class _Recorder:
     declared: list[ParamView] = field(default_factory=list)
     values: dict[str, Scalar] = field(default_factory=dict)
     findings: list[Finding] = field(default_factory=list)
+    mates: list[tuple[Solid, Solid]] = field(default_factory=list)
     shown: _Show | None = None
 
 
@@ -294,9 +299,17 @@ def _within(
     root: Assembly,
     exclude: Sequence[tuple[str | Label, str | Label]],
     asking: str = "check_clearance_within",
+    *,
+    mated: Sequence[tuple[Solid, Solid]] = (),
 ) -> tuple[_Pair, ...]:
-    """Every pair of ``root``'s parts save the ones ``exclude`` names, as the two bodies a
-    clearance is measured between, in the order the assembly holds them.
+    """Every pair of ``root``'s parts save the ones ``exclude`` names and the ones ``mated``
+    holds, as the two bodies a clearance is measured between, in the order the assembly
+    holds them.
+
+    ``mated`` is the pairs a ``mated`` call has already put together and measured at the fit
+    it was asked for - the very bodies, either way round, matched by identity like every
+    finding - so a mated pair is declared by the call that made it and never asked a second,
+    wrong question here.
 
     A pair is named by the two parts' own labels and either way round, and the bodies handed
     back are the parts' own shapes - the very objects - so a finding measured between them
@@ -310,9 +323,14 @@ def _within(
     out: list[_Pair] = []
     for place, (label, body) in enumerate(bodies):
         for other, against in bodies[place + 1 :]:
-            if frozenset((label, other)) not in skip:
+            if frozenset((label, other)) not in skip and not _mated(body, against, mated):
                 out.append(_Pair(label, other, body, against))
     return tuple(out)
+
+
+def _mated(a: Solid, b: Solid, mated: Sequence[tuple[Solid, Solid]]) -> bool:
+    """Whether ``a`` and ``b`` - these very objects, either way round - are a mated pair."""
+    return any((a is one and b is other) or (a is other and b is one) for one, other in mated)
 
 
 def _declared(
@@ -507,9 +525,10 @@ def _namespace(
     tracer: Tracer,
 ) -> dict[str, object]:
     """A fresh module-like namespace with the real builtins and the names a script starts
-    with: ``show``, which it talks to the runtime through, the six checks and the ``require`` that
-    makes one fatal, ``ref``, the package so ``from bench import *`` works, and whatever
-    modules the host pre-bound in ``extras``.
+    with: ``show``, which it talks to the runtime through, the checks and the ``require`` that
+    makes one fatal, ``mated``, which puts one part's face on another's and checks the pair,
+    ``ref``, the package so ``from bench import *`` works, and whatever modules the host
+    pre-bound in ``extras``.
 
     Every one of them is a closure over ``recorder`` - and, for the checks, over this run's
     ``kernel`` - so they are this run's own and nothing has to be installed anywhere to
@@ -583,6 +602,11 @@ def _namespace(
         label that is not a part of this assembly, and a part with no body to measure, both
         stop the run naming what was wrong rather than quietly checking something else.
 
+        A pair ``mated`` put together is left out without being named here: the call that
+        put it there declared it and measured it at the fit it asked for, and asking it again
+        whether the two stand ``least`` apart would fail a contact that is right. That is by
+        identity - the bodies ``mated`` handed back - so it holds whichever call came first.
+
         Every pair unless excluded, which is ``n(n-1)/2`` measurements: sixty-six for
         twelve bodies, and a bigger assembly than that has not been tried.
         """
@@ -593,7 +617,7 @@ def _namespace(
                     clearance_between(pair.a, pair.b, least, kernel=kernel),
                     (pair.a, pair.b),
                 )
-                for pair in _within(assembly, exclude)
+                for pair in _within(assembly, exclude, mated=recorder.mates)
             )
         return tuple(one for one in found if one is not None)
 
@@ -694,6 +718,55 @@ def _namespace(
             measured=True,
         )
 
+    def mated(
+        fixed: Solid | Part,
+        at: str | Ref,
+        moving: Part,
+        onto: str | Ref,
+        *,
+        fit: Fit | Contact = CONTACT,
+        offset: Vector = UNMOVED,
+        spin: float = 0.0,
+    ) -> Mate:
+        """Put ``moving``'s face ``onto`` on ``fixed``'s face ``at`` at ``fit``, measure the
+        pair at the fit it was asked for, and record what it finds.
+
+        The placing is :func:`bench.mate.mating` - read it for ``offset``, ``spin`` and why
+        the part's way up turns with it. The measuring is
+        :func:`bench.checks.fit_between`, so the call that puts the two together is the one
+        that checks them: a contact that turns out to overlap, or a fit that comes in
+        tighter than it was asked, is recorded as a finding on the moved part - whose shape
+        is the one a script shows, so the finding reaches it by identity. What comes back
+        is the :class:`~bench.mate.Mate`: its ``part`` is what to put in the assembly, and
+        printed it is the sentence - what was measured against what was asked.
+        """
+        with timed(tracer, "bench.check.mate"):
+            mate = mating(fixed, at, moving, onto, fit=fit, offset=offset, spin=spin)
+            body = mate.part.shape
+            assert isinstance(body, Solid)  # mating refuses a part that is not a body
+            fitted = fit_between(body, mate.on, fit, mate.gap, kernel=kernel)
+            recorded = _recorded(recorder, fitted.finding, (body, mate.on))
+            recorder.mates.append((body, mate.on))
+            return replace(mate, fitted=replace(fitted, finding=recorded or fitted.finding))
+
+    def check_fit(
+        a: Solid, b: Solid, fit: Fit | Contact, material: Material | None = None
+    ) -> Fitted:
+        """Measure how ``a`` and ``b`` sit against the ``fit`` they are meant to have in
+        ``material``, and record what it finds.
+
+        The second pair of a mate: a mate puts a part in place by one pair of faces, and a
+        groove round a collar beside it is not solved for - it is checked here, where the
+        answer says how far apart the two really are against the fit's own gap. Printed,
+        what comes back is that sentence; a fit tighter than asked is a finding on ``a``. A
+        fit with no material to read its gap from stops the run, as
+        :func:`bench.mate.gap_of` says.
+        """
+        with timed(tracer, "bench.check.fit"):
+            fitted = fit_between(a, b, fit, gap_of(fit, material), kernel=kernel)
+            recorded = _recorded(recorder, fitted.finding, (a, b))
+            return replace(fitted, finding=recorded or fitted.finding)
+
     def check_wall(solid: Solid, least: float) -> Violation | None:
         """Check that every wall of ``solid`` is at least ``least`` millimetres thick, and
         record what it finds."""
@@ -735,6 +808,8 @@ def _namespace(
         "check_clearance_within": check_clearance_within,
         "check_clearance_through": check_clearance_through,
         "check_contact": check_contact,
+        "check_fit": check_fit,
+        "mated": mated,
         "check_wall": check_wall,
         "check_overhangs": check_overhangs,
         "require": require,
