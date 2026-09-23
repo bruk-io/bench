@@ -22,6 +22,12 @@ A body is not flat, and the two formats a printer reads are bytes rather than te
 :func:`stl` and :func:`three_mf` take the :class:`~bench.kernel.Mesh` a kernel built - this
 module never builds one and imports no kernel, only the record - and hand back the file. Both
 are pure functions: writing them to disk is :mod:`bench.script`'s job, or a browser's.
+
+A mesh a kernel built is in the assembly's pose - wherever the script, or :mod:`bench.mate`,
+put the part - and decision-10 keeps that apart from how a part prints: :func:`as_printed`
+turns one back to lying on the bed the way its :class:`~bench.model.Orient` says, which is
+what :mod:`bench.views` writes into every STL and every 3MF object rather than the posed mesh
+itself.
 """
 
 import math
@@ -32,7 +38,7 @@ from dataclasses import dataclass, replace
 from io import BytesIO
 from typing import Literal, NamedTuple, assert_never
 
-from .geometry import TOL, Plane, Point, Vector, translation
+from .geometry import ORIGIN, TOL, Plane, Point, Transform, Vector, plane, to_local, translation
 from .kernel import Mesh
 from .model import Part, Ref, Text, moved_part
 from .nest import Sheet
@@ -533,6 +539,46 @@ def _dxf_num(value: float) -> str:
 
 
 # ---- what a printer reads --------------------------------------------------------------
+
+
+def as_printed(mesh: Mesh, up: Vector, bed_along: Vector | None = None) -> Mesh:
+    """``mesh`` turned to lie on the bed the way ``up`` says it prints, not however an
+    assembly posed it: rotated so ``up`` becomes +Z, then moved so its lowest point sits at
+    z = 0. This is what :mod:`bench.views` writes into every STL and 3MF object instead of
+    the posed mesh a kernel actually built - a part mated upside down still prints the way it
+    was authored to (decision-10; :func:`bench.mate.oriented` is what keeps ``up`` itself
+    honest through a move).
+
+    ``bed_along`` is the X of the face an :class:`~bench.model.Orient`'s ``bed_face`` names,
+    when there is one - the turn about ``up`` that rotating ``up`` to +Z leaves free, settled
+    by the face the part was authored to stand on rather than left to whichever perpendicular
+    :func:`~bench.geometry.plane` would otherwise pick, so the same part turns out the same
+    way every run it is exported. ``None`` leaves that turn to ``plane``'s own choice, which
+    is deterministic too.
+
+    X and Y are centred on the origin rather than left wherever the rotation put them: a
+    build plate's own origin is its centre on nearly every slicer, and centring needs no
+    bed size to be true, the way keeping a corner at the origin would.
+
+    Pure: an assembly's pose never reaches this, only the direction a part prints in.
+    """
+    turned = _moved_mesh(mesh, to_local(plane(ORIGIN, up, bed_along)))
+    if not turned.vertices:
+        return turned
+    xs, ys, zs = turned.vertices[0::3], turned.vertices[1::3], turned.vertices[2::3]
+    shift = Vector(-(min(xs) + max(xs)) / 2.0, -(min(ys) + max(ys)) / 2.0, -min(zs))
+    return _moved_mesh(turned, translation(shift))
+
+
+def _moved_mesh(mesh: Mesh, t: Transform) -> Mesh:
+    """``mesh`` under a rigid transform: only the vertices move, so every triangle still
+    answers to the same ref and the same two other corners."""
+    vertices = mesh.vertices
+    moved: list[float] = []
+    for i in range(0, len(vertices), 3):
+        p = t @ Point(vertices[i], vertices[i + 1], vertices[i + 2])
+        moved.extend((p.x, p.y, p.z))
+    return replace(mesh, vertices=tuple(moved))
 
 
 def stl(mesh: Mesh) -> bytes:

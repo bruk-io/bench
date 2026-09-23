@@ -270,7 +270,12 @@ and says in its own text what it could not do and why.
   refs; `part_svg`, `sheet_svg` and `sheet_dxf` write the files, in millimetres
   with the workpiece reading origin bottom-left. `stl(mesh)` is a binary STL and
   `three_mf(objects)` a 3MF package - one object per part, `unit="millimeter"`, and no
-  slicer settings of anybody's. Both are pure functions returning bytes.
+  slicer settings of anybody's. `as_printed(mesh, up, bed_along)` is the mesh a kernel
+  built - in the assembly's pose - turned to lie on the bed the way `up` says instead:
+  rotated so `up` is +Z, `bed_along` (a `bed_face`'s own X, when a part names one) settling
+  the turn about it that leaves free, then moved so the lowest point is z = 0 and the
+  footprint centred on the origin. `views._files` is the only caller, on every printed
+  part's body, so an STL or a 3MF is never the posed mesh. All four are pure functions.
 - `params.py` - a script's settings as one frozen dataclass. `knob(default, *, label, min,
   max, step)` puts the panel's hints on a field without changing its type, and a `Literal`
   field is a menu. `declared(cls)` reads the class into the panel's `ParamView`s before
