@@ -12,10 +12,11 @@ comes back, and the violation is collected the way :func:`bench.nest.nest` alrea
 a part that will not fit on the bed. A script that wants to stop says so itself, with
 ``require(...)``, which is injected into it beside ``show``.
 
-Two tiers, and the signature says which: :func:`fits` reads the tree's own
-:func:`~bench.topology.bounds` and runs anywhere, including in a browser with no kernel at
-all. :func:`clearance_between`, :func:`contact_between`, :func:`wall` and :func:`overhangs`
-are measurements of a built body, and without a modeller they answer ``UNCHECKED``.
+Two tiers, and the signature says which: :func:`fits` and :func:`exportable` read the tree's
+own :func:`~bench.topology.bounds` and shape and run anywhere, including in a browser with no
+kernel at all. :func:`clearance_between`, :func:`contact_between`, :func:`wall` and
+:func:`overhangs` are measurements of a built body, and without a modeller they answer
+``UNCHECKED``.
 
 :func:`clearance_between` and :func:`contact_between` are the two halves of one question and
 a pair gets exactly one of them. Bodies that are meant to stay apart are asked how far apart
@@ -92,7 +93,7 @@ def unchecked(check: str) -> Violation:
 def fits(shape: Shape, volume: Volume) -> Violation | None:
     """Whether ``shape`` fits in ``volume`` as it stands, or ``None`` when it does.
 
-    The one check that needs no kernel: :func:`~bench.topology.bounds` answers it from the
+    One of the two checks that need no kernel: :func:`~bench.topology.bounds` answers it from the
     tree, and is conservative under a cut - a bound that is too big never passes a part that
     will not fit, which is the direction a build-volume check has to err in.
 

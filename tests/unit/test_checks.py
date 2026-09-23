@@ -1,9 +1,9 @@
 """Unit: :mod:`bench.checks` alone - what a check answers with nothing to measure with.
 
-Four of the five checks need a solid modeller, and this layer has none: what is asserted
-here is that they say so, in a record, rather than raising or quietly passing. The fifth
-reads the tree's own bounds and is answered in full. The measurements themselves are the
-adapter layer's, against a real kernel.
+Four of the six checks need a solid modeller, and this layer has none: what is asserted here
+is that they say so, in a record, rather than raising or quietly passing. The other two -
+``fits`` and ``exportable`` - read the tree's own bounds and shape, and are answered in full.
+The measurements themselves are the adapter layer's, against a real kernel.
 """
 
 import pytest
