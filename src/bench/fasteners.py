@@ -48,6 +48,25 @@ class Fit(StrEnum):
     LOOSE = "loose"
 
 
+class Contact(StrEnum):
+    """The one way two parts go together that is not a gap: they touch.
+
+    Beside :class:`Fit` rather than a seventh arm of it, because every arm of :class:`Fit`
+    is a number somewhere - a column of :class:`Screw` that :func:`bore` reads, a row of
+    every material's clearance table - and a touch is neither: there is no hole a screw
+    makes to touch, and no plastic that needs a gap of nothing written down. A pair that is
+    put face to face says ``Fit | Contact``, and :data:`CONTACT` is the arm a script
+    writes.
+    """
+
+    CONTACT = "contact"
+
+
+CONTACT = Contact.CONTACT
+"""Two faces put together that touch - what :func:`bench.mate.mating` does when no
+:class:`Fit` is asked for."""
+
+
 @dataclass(frozen=True, slots=True)
 class Screw:
     """One metric size, with every hole it can ask for.

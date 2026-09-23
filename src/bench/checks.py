@@ -24,13 +24,20 @@ asked whether they share material, because a touch and a collision are both zero
 apart and no distance threshold will ever separate them. Which one a pair gets is the
 script's to say and is never read off the geometry: inferring that a zero gap must have been
 intentional would pass the one thing a clearance check exists to catch.
+
+:func:`fit_between` is the pair that *was* put together, at a fit somebody asked for: it asks
+the one of those two questions the fit says, and answers with a :class:`Fitted` whose sentence
+is the measured gap beside the asked one, because a fit that passes is half of what a maker
+wants to read.
 """
 
 import math
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import assert_never
 
 from .facets import Triangle, area, normal, thinnest, triangles
+from .fasteners import Contact, Fit
 from .geometry import TOL, Point, Vector, unit
 from .kernel import Kernel
 from .model import Material, Orient, Ref, Volume
@@ -293,6 +300,133 @@ def _contact_area(kernel: Kernel, overlap: Solid) -> float:
     """
     mesh = kernel.mesh(overlap)
     return sum(area(t) for t in triangles(mesh)) / 2.0
+
+
+# ---- a pair put together at a fit ----------------------------------------------------
+
+
+_REACH = 1.0
+"""How far past the asked gap a fit's measurement keeps looking, in millimetres.
+
+:meth:`~bench.kernel.Kernel.min_gap` stops at ``upto`` and answers ``upto`` for anything
+further, so a fit measured with ``upto`` at the asked gap could only ever say "at least what
+was asked" - never the number a maker wants beside it. A millimetre past the ask is enough to
+read every fit in the table in any plastic it holds, and a pair that is further apart than
+that is not at the fit it was asked for in any sense worth a decimal place.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class Fitted:
+    """What a pair put together at a fit measured, beside what it was asked for.
+
+    A record rather than a bare violation because a fit that passes is half of what a maker
+    wants to read: "clear by 0.203 mm, asked 0.200 (slide)" says the groove is where the
+    table said it should be, where no violation at all says only that nothing went wrong.
+    :meth:`__str__` is that sentence, written once here; ``finding`` is what went wrong,
+    ``None`` when nothing did.
+
+    ``gap`` is the measured distance between the two bodies and ``asked`` the one the fit
+    means, both in millimetres; ``gap`` is ``None`` when there was no kernel to measure with,
+    and then ``finding`` is the ``UNCHECKED`` answer. A gap that reached :data:`_REACH` past
+    the ask reads as "more than", because the search stopped there.
+    """
+
+    fit: Fit | Contact
+    asked: float
+    gap: float | None
+    finding: Violation | None
+
+    def __str__(self) -> str:
+        if self.gap is None:
+            return f"asked {_asked(self.fit, self.asked)}, not measured: {_UNCHECKED}"
+        match self.fit:
+            case Contact() if self.gap > _GAP_SLACK:
+                said = f"stand {self.gap:.3f} mm apart"
+            case Contact():
+                said = "touch" if self.finding is None else "overlap"
+            case Fit():
+                more = "more than " if self.gap >= self.asked + _REACH - _GAP_SLACK else ""
+                said = f"clear by {more}{self.gap:.3f} mm"
+            case _:
+                assert_never(self.fit)
+        told = f"{said}, asked {_asked(self.fit, self.asked)}"
+        return told if self.finding is None else f"{told}: {self.finding.message}"
+
+
+def _asked(fit: Fit | Contact, asked: float) -> str:
+    """What a fit asks for, in the words :class:`Fitted` reports it with."""
+    match fit:
+        case Contact():
+            return "contact"
+        case Fit():
+            return f"{asked:.3f} ({fit})"
+        case _:
+            assert_never(fit)
+
+
+def fit_between(
+    a: Solid, b: Solid, fit: Fit | Contact, asked: float, *, kernel: Kernel | None
+) -> Fitted:
+    """How ``a`` and ``b`` - which somebody has put together at ``fit`` - actually sit, and
+    whether that is the fit that was asked for.
+
+    ``asked`` is the gap ``fit`` means, in millimetres per side: zero for :data:`CONTACT`,
+    the material's own figure for a :class:`Fit` - this module reads no material table, so
+    the caller that knows the plastic says the number.
+
+    A contact is asked :func:`contact_between`'s question, unchanged - do the two share
+    material - and then one more a put-together pair can answer where a bare declaration
+    cannot: whether they meet at all. Two faces laid on each other and then slid off the
+    edge by an ``offset`` share nothing and pass ``contact_between``; they are not in
+    contact, and that is a warning here.
+
+    A fit is measured, not merely thresholded: the gap is read up to :data:`_REACH` past the
+    ask, so the sentence can say how far apart the two really are. Coming in under the ask
+    by more than :data:`_GAP_SLACK` is an error, exactly as :func:`clearance_between` would
+    call it; standing further off than asked is not, because the ask is the least a fit
+    needs, and the sentence already says by how much. Whole bodies again, as every check
+    here is: the gap reported is the nearest the two come anywhere, which on a groove round
+    a collar is the groove.
+    """
+    if kernel is None:
+        return Fitted(fit, asked, None, unchecked("fit"))
+    match fit:
+        case Contact():
+            overlap = contact_between(a, b, kernel=kernel)
+            gap = kernel.min_gap(a, b, upto=_REACH)
+            return Fitted(fit, asked, gap, overlap or _apart(gap))
+        case Fit():
+            gap = kernel.min_gap(a, b, upto=asked + _REACH)
+            return Fitted(fit, asked, gap, _tight(fit, asked, gap))
+        case _:
+            assert_never(fit)
+
+
+def _apart(gap: float) -> Violation | None:
+    """The warning a declared contact earns when its two bodies do not meet."""
+    if gap <= _GAP_SLACK:
+        return None
+    more = "more than " if gap >= _REACH - _GAP_SLACK else ""
+    return Violation(
+        check="fit",
+        message=f"the two bodies were put together to touch, and stand {more}{gap:.3f} mm apart",
+        severity=Severity.WARNING,
+    )
+
+
+def _tight(fit: Fit, asked: float, gap: float) -> Violation | None:
+    """The error a fit earns when its two bodies come closer than the fit allows."""
+    if gap >= asked - _GAP_SLACK:
+        return None
+    return Violation(
+        check="fit",
+        message=(
+            f"the two bodies come within {gap:.3f} mm of each other, and a {fit} fit asks"
+            f" {asked:.3f}"
+        ),
+        severity=Severity.ERROR,
+    )
 
 
 # ---- a motion, which is poses and not a sweep ----------------------------------------

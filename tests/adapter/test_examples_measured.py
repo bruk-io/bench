@@ -56,6 +56,7 @@ NAMES = (
     "depth_stop_collar.py",
     "hinge.py",
     "fulcrum_hinge.py",
+    "wall_vent.py",
 )
 
 PROGRAM = """\
@@ -469,3 +470,23 @@ def test_the_fulcrum_links_are_one_part_three_times_and_the_shaft_keys_in_a_d(
     want = drawn / 2 + flat
     assert want - _shortfall(drawn) - _TINY <= _span(keyed, diagonal) <= want + _TINY
     assert _span(keyed, Vector(1.0, 0.0, 1.0) / math.sqrt(2.0)) > _span(keyed, diagonal)
+
+
+# ---- (g) the wall vent -----------------------------------------------------------------
+
+
+def test_the_vents_attachment_touches_the_flange_and_clears_the_collar_at_a_slide(
+    measured: dict[str, Any],
+) -> None:
+    """The mate's own sentence says the back face touches the flange, which is what it was
+    asked; the groove, checked where the mate put it, clears the collar by at least the slide
+    the table asks - by the concave allowance more, because its corners are internal arcs
+    and it is drawn at ``clearance(..., concave=True)`` - and no more than that."""
+    said = _scene(measured, "wall_vent.py")["stdout"].splitlines()
+    assert said[0] == "attachment/base/bottom on frame/flange/top: touch, asked contact"
+    groove = said[1]
+    assert groove.startswith("attachment/groove round frame/collar: clear by ")
+    assert groove.endswith(", asked 0.200 (slide)")
+    measured_gap = float(groove.split("clear by ")[1].split(" mm")[0])
+    slide = clearance(Fit.SLIDE, PLA)
+    assert slide <= measured_gap <= clearance(Fit.SLIDE, PLA, concave=True) + _TINY

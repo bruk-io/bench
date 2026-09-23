@@ -2,7 +2,7 @@
 
 Geometry (where things are), topology (how they connect), model (what is named),
 ops (what you can draw), solids (what a body is), features (the hole a fastener asks for),
-joints (how panels hold together), nest (how parts sit on a
+mate (one part's face put on another's), joints (how panels hold together), nest (how parts sit on a
 sheet), kernel (the seam a solid modeller is plugged into), export (the text and bytes a
 machine reads), scene (what a run hands back) and script (the runtime that runs one).
 
@@ -11,11 +11,13 @@ nothing installed but Python. An implementation lives under :mod:`bench.adapters
 handed to :func:`bench.script.run`."""
 
 from .checks import (
+    Fitted,
     Sampled,
     Severity,
     Violation,
     clearance_between,
     contact_between,
+    fit_between,
     fits,
     overhangs,
     wall,
@@ -33,6 +35,7 @@ from .export import (
     three_mf,
 )
 from .fasteners import (
+    CONTACT,
     COUNTERSINK,
     INSERT_M3,
     INSERT_M4,
@@ -47,6 +50,7 @@ from .fasteners import (
     M8,
     MAGNET_6X2,
     SCREWS,
+    Contact,
     Fit,
     Insert,
     Magnet,
@@ -109,6 +113,7 @@ from .joints import (
     partition,
 )
 from .kernel import Kernel, Mesh
+from .mate import UNMOVED, Mate, gap_of, mating, oriented, placing
 from .model import (
     Assembly,
     Build,
@@ -247,6 +252,7 @@ from .transport import binary, scene_json
 
 __all__ = [
     "CHORD",
+    "CONTACT",
     "COUNTERSINK",
     "INSERT_M3",
     "INSERT_M4",
@@ -265,6 +271,7 @@ __all__ = [
     "SCREWS",
     "SHORT_SPAN",
     "TOL",
+    "UNMOVED",
     "XY",
     "Arc",
     "Assembly",
@@ -276,6 +283,7 @@ __all__ = [
     "Box",
     "Build",
     "Circle",
+    "Contact",
     "Curve",
     "Curved",
     "Edge",
@@ -286,6 +294,7 @@ __all__ = [
     "Face",
     "FaceRole",
     "Fit",
+    "Fitted",
     "Flat",
     "Insert",
     "Interval",
@@ -293,6 +302,7 @@ __all__ = [
     "Label",
     "Line",
     "Magnet",
+    "Mate",
     "Material",
     "Mesh",
     "MeshView",
@@ -377,10 +387,12 @@ __all__ = [
     "faces_of",
     "female_intervals",
     "fill",
+    "fit_between",
     "fits",
     "flat_faces",
     "flat_intervals",
     "foot_chamfer",
+    "gap_of",
     "grid",
     "hole",
     "holed",
@@ -399,6 +411,7 @@ __all__ = [
     "line",
     "loft",
     "male_intervals",
+    "mating",
     "mesh_from_stl",
     "midpoint",
     "mirror",
@@ -409,6 +422,7 @@ __all__ = [
     "nut_trap",
     "offset",
     "open_box",
+    "oriented",
     "overhangs",
     "part",
     "part_paths",
@@ -420,6 +434,7 @@ __all__ = [
     "perpendicular",
     "placed",
     "placement",
+    "placing",
     "plane",
     "plane_of",
     "pocket",

@@ -426,6 +426,7 @@ class Violation: check: str; message: str; severity: Severity
 
 fits(shape, volume) -> Violation | None
 clearance_between(a, b, least, *, kernel) -> Violation | None
+fit_between(a, b, fit: Fit | Contact, asked, *, kernel) -> Fitted   # measured beside asked
 wall(solid, least, *, kernel) -> Violation | None
 overhangs(solid, orient, material, *, kernel) -> Violation | None
 ```
@@ -456,8 +457,8 @@ maker actually draws at the limit - a chamfer, a teardrop's flank, a countersink
 passes deterministically rather than on the day.
 
 `script.run` injects `check_fits`, `check_clearance`, `check_clearance_within`,
-`check_clearance_through`, `check_contact`, `check_wall` and
-`check_overhangs` as
+`check_clearance_through`, `check_contact`, `check_fit`, `check_wall`,
+`check_overhangs` and `mated` as
 per-run closures over the notebook and this run's kernel, exactly as `show` is a closure
 over the notebook: they record a `Violation` **with the line number of the script's
 own frame** and return it. `require(violation)` is how a script turns one into a stopped
@@ -466,6 +467,63 @@ refuse to draw itself in the one place it most needs to. A failed check never ab
 by itself: the geometry, the refs and the sheets all still come back, and the violation sits
 beside them in `scene["violations"]`, the way `nest` already reports a part too big for the
 bed as a warning.
+
+## mate.py [new] - one part's face put on another's
+
+```python
+class Contact(StrEnum): CONTACT             # fasteners.py, beside Fit - the fit that is no gap
+@dataclass(frozen=True, slots=True)
+class Mate: part: Part; on: Solid; fit: Fit | Contact; gap: float
+            faces: tuple[str, str]; fitted: Fitted | None = None
+
+placing(fixed: Plane, moving: Plane, *, gap, offset, spin) -> Transform
+gap_of(fit, material | None) -> float        # 0 for CONTACT, material.clearances[fit] else
+oriented(stock, t) -> Stocked                # a print's way up turned with the body
+mating(fixed: Solid | Part, at, moving: Part, onto, *, fit=CONTACT, offset, spin) -> Mate
+```
+
+decision-10's planar half. `plane_of` already answers the frame a face was *authored* in, so
+one face on each part places a part fully: the moving face's frame laid on the fixed face's,
+normals opposed, `gap` along the fixed normal - `to_world(seat) @ turned_over @
+to_local(face)`, rigid and nothing else. `offset` (in the fixed face's X and Y) and `spin`
+(about its normal, counter-clockwise from outside) are the correction when the two parts were
+not drawn from the same corner; nothing snaps to a face's centre. A round face is refused where
+`plane_of` refuses it - bore-and-shaft pairs are their own step.
+
+**The script's `mated` is one call that places and checks.** It runs `mating`, measures the
+pair with `fit_between` - `contact_between`'s question unchanged, plus whether the two meet at
+all, for `CONTACT`; the gap read up to a millimetre past the ask for a `Fit` - records a finding
+on the moved part, and hands back the `Mate` with `fitted` filled in, the way a `Violation`'s
+`line` is filled in at the edge. Printed, it is the sentence: `plate/bottom on base/top: clear by
+0.200 mm, asked 0.200 (slide)`. A second pair is never solved for; `check_fit(a, b, fit,
+material)` is how a script checks it, with the same record. `check_clearance_within` leaves out
+every pair a `mated` call put together, by the identity of the two bodies, so a mated pair is
+declared once - by the call that made it - and never asked the wrong question a second time.
+
+**The mate returns a record, not a bare body**, because a fit that passes is half of what a
+maker wants to read, and a body has nowhere to say it. `Mate.part` is the moved part, and its
+shape is the very object the scene's part holds, so a finding reaches it by identity. The
+moving side is a `Part` rather than a `Solid` for three reasons: it is what a click inserts a
+ref under (`attachment/base/bottom`), it knows its filament (which a `Fit`'s gap is read in), and
+it knows its way up (which has to turn with it). The fixed side may be either.
+
+**`CONTACT` is not a seventh `Fit`.** Every `Fit` arm is a number somewhere - a `Screw` column
+`bore()` matches exhaustively, a row of every material's clearance table - and a touch is
+neither, so `Contact` sits beside `Fit` in `fasteners.py` and a pair says `Fit | Contact`.
+
+**Where a part sits is not how it prints - the rule, written down.** Today every printed part's
+STL and 3MF is `kernel.mesh(part.shape)` written verbatim, in world coordinates, wherever the
+script put the body (`views._files`, `export.stl`, `export.three_mf`); nothing on the way out
+reads `Orient`. `Orient.up` is "in the part's own coordinates", and only the checks
+(`overhangs`) and the features (a teardrop, a bridged top) read it. So moving a body without
+turning `up` would silently change how it prints: a part mated upside down would read as
+printed on its other face. `mating` therefore turns `up` by the mate's rotation (`oriented`):
+the same face lies on the bed and every overhang measures what it did as authored - the
+adapter test mates a ridge crown-down and measures it both ways. What it does **not** do is
+turn the exported file: the STL of a mated part is the posed mesh, exactly as a lid that prints
+upside down (`Orient(up=-Z)`) is exported the way it is drawn today, and laying it along `up`
+for the slicer is the maker's. Exporting each printed part in its print frame would be the
+real fix for both, and it is a change to `views`/`export`, not to the mate.
 
 ## kernel.py [new] and adapters/ [new] - the seam a solid modeller is plugged into
 

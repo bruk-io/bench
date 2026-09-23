@@ -70,7 +70,9 @@ export = ["geometry", "topology", "model", "ops", "nest", "kernel"]
 # checks take the kernel as a parameter, exactly as kernel.py takes no implementation: a
 # check that cannot be measured answers UNCHECKED instead of passing. They read the records
 # (a material, an orientation, a build volume) off `model`, so they need no library either.
-checks = ["geometry", "topology", "model", "kernel", "facets"]
+# `fasteners` is for the `Fit | Contact` a pair put together at is asked about, and nothing
+# else: a fit's gap in some plastic is the caller's number to hand in.
+checks = ["geometry", "topology", "model", "fasteners", "kernel", "facets"]
 # meshing is the half of building a body that needs no modeller: which named face each
 # triangle of a fresh primitive lies on, and what each triangle of a result answers to. Flat
 # numbers in and out, so a kernel adapter builds and this decides; it imports no modeller.
@@ -167,6 +169,11 @@ views = [
     "telemetry",
     "transport",
 ]
+# mate puts one part's face on another's: the two faces' frames from `solids`' plane_of, the
+# move in `geometry`, the fit's gap off the part's own `model` record, and the `Fitted` record
+# from `checks` that the edge fills in once a kernel has measured the pair. It measures nothing
+# itself, so it needs no kernel.
+mate = ["geometry", "topology", "model", "fasteners", "solids", "checks"]
 # script runs a user's script; it does not know which library that script reaches for, so it
 # imports none of them. A host that wants one pre-bound passes it to run(..., extras=...).
 # The same goes for the kernel: script names the Protocol and is handed an implementation,
@@ -175,6 +182,8 @@ script = [
     "geometry",
     "topology",
     "model",
+    "fasteners",
+    "mate",
     "nest",
     "kernel",
     "checks",
