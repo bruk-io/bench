@@ -1,9 +1,10 @@
 ---
 id: task-56
 title: An import of a module the project does not have says so in the project's terms
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-23 05:25'
+updated_date: '2026-09-23 12:06'
 labels: []
 milestone: m-6
 dependencies:
