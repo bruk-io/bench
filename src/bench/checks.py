@@ -38,10 +38,10 @@ from typing import assert_never
 
 from .facets import Triangle, area, normal, thinnest, triangles
 from .fasteners import Contact, Fit
-from .geometry import TOL, Point, Vector, unit
-from .kernel import Kernel
+from .geometry import TOL, Plane, Point, Vector, plane, unit
+from .kernel import Kernel, Mesh
 from .model import Material, Orient, Ref, Volume
-from .topology import Intersection, Shape, Solid, bounds
+from .topology import Extrude, Intersection, Shape, Solid, bounds, face, polygon
 
 _ORIGIN = Point(0.0, 0.0, 0.0)
 """Where a point is measured from when it has to become a vector to be projected."""
@@ -255,13 +255,8 @@ def contact_between(a: Solid, b: Solid, *, kernel: Kernel | None) -> Violation |
     """
     if kernel is None:
         return unchecked("contact")
-    overlap = Solid(Intersection(a, b))
-    shared = kernel.volume(overlap)
-    if shared <= _SHARED_SLACK:
-        return None
-    met_over = _contact_area(kernel, overlap)
-    depth = shared / met_over if met_over > 0.0 else math.inf
-    if depth <= _DEPTH_SLACK:
+    shared = _overlap(a, b, kernel)
+    if shared is None:
         return None
     return Violation(
         check="contact",
@@ -271,6 +266,19 @@ def contact_between(a: Solid, b: Solid, *, kernel: Kernel | None) -> Violation |
         ),
         severity=Severity.ERROR,
     )
+
+
+def _overlap(a: Solid, b: Solid, kernel: Kernel) -> float | None:
+    """How much material ``a`` and ``b`` share, in cubic millimetres, or ``None`` when what
+    they share is no more than two faces meeting reads as - :data:`_SHARED_SLACK` outright,
+    or :data:`_DEPTH_SLACK` deep over the area they share."""
+    overlap = Solid(Intersection(a, b))
+    shared = kernel.volume(overlap)
+    if shared <= _SHARED_SLACK:
+        return None
+    met_over = _contact_area(kernel, overlap)
+    depth = shared / met_over if met_over > 0.0 else math.inf
+    return None if depth <= _DEPTH_SLACK else shared
 
 
 def _contact_area(kernel: Kernel, overlap: Solid) -> float:
@@ -365,8 +373,30 @@ def _asked(fit: Fit | Contact, asked: float) -> str:
             assert_never(fit)
 
 
+@dataclass(frozen=True, slots=True)
+class RoundPair:
+    """The two round faces a pair was put together by - a pin's and its bore's - and the
+    axis they share, which is what a round fit's gap is measured along.
+
+    ``axis`` is the frame :func:`~bench.solids.axis_of` answers for the fixed face, its
+    normal the axis; after a round mate the moving face runs on the same line. ``faces`` is
+    the face on the first body :func:`fit_between` is handed and then the one on the second,
+    each as that body's own mesh tags it - the ref :func:`bench.model.refs` hands out for the
+    bare body, with no part's label in front.
+    """
+
+    axis: Plane
+    faces: tuple[Ref, Ref]
+
+
 def fit_between(
-    a: Solid, b: Solid, fit: Fit | Contact, asked: float, *, kernel: Kernel | None
+    a: Solid,
+    b: Solid,
+    fit: Fit | Contact,
+    asked: float,
+    *,
+    kernel: Kernel | None,
+    pair: RoundPair | None = None,
 ) -> Fitted:
     """How ``a`` and ``b`` - which somebody has put together at ``fit`` - actually sit, and
     whether that is the fit that was asked for.
@@ -388,6 +418,12 @@ def fit_between(
     needs, and the sentence already says by how much. Whole bodies again, as every check
     here is: the gap reported is the nearest the two come anywhere, which on a groove round
     a collar is the groove.
+
+    **Except round a pin.** Given the :class:`RoundPair` a round mate was put together by,
+    a fit is measured over the length the two round faces share and nowhere else - see
+    :func:`_round_fit` - because a pin's head or a shaft's shoulder seats on the bore's plate
+    and comes within nothing of it there, and that zero is the seat's, not the fit's. The
+    seat is a second pair, a contact, and the script checks it as one.
     """
     if kernel is None:
         return Fitted(fit, asked, None, unchecked("fit"))
@@ -396,11 +432,144 @@ def fit_between(
             overlap = contact_between(a, b, kernel=kernel)
             gap = kernel.min_gap(a, b, upto=_REACH)
             return Fitted(fit, asked, gap, overlap or _apart(gap))
+        case Fit() if pair is not None:
+            return _round_fit(a, b, fit, asked, pair, kernel)
         case Fit():
             gap = kernel.min_gap(a, b, upto=asked + _REACH)
             return Fitted(fit, asked, gap, _tight(fit, asked, gap))
         case _:
             assert_never(fit)
+
+
+_INSET = 0.01
+"""How far inside each end of the length two round faces share their gap is measured from,
+in millimetres.
+
+What it keeps out is the seat: a pin's head sits on its plate exactly where the bore ends,
+so the head's underside lies *on* the end of the shared length, and a region ending there
+leaves the head a sliver of no thickness that only the modeller's handling of coincident
+faces keeps out of the measurement. Stepping in makes that not a question. On the modeller
+the app ships, a headed pin in a bore drawn with the concave slide reads 0.2445 mm at every
+inset tried - 0, 0.0001, 0.001, 0.01 and 0.1 mm - equal to twelve places, and one in a bore
+drawn with the plain slide 0.1956 mm at all five, so the figure is chosen and not fitted:
+far enough in that no rounding reaches the seat, and a hundredth of the 5 mm the plates
+there share with their pins.
+"""
+
+
+def _round_fit(
+    a: Solid, b: Solid, fit: Fit, asked: float, pair: RoundPair, kernel: Kernel
+) -> Fitted:
+    """How a round pair sits at ``fit``: the gap round the pin, over the length the two round
+    faces share, and whether the two bodies share any material anywhere.
+
+    The kernel measures bodies, never one face against another, so the faces are made into
+    bodies of their own: each body is cut down to a square prism round the axis that runs
+    the shared length - :data:`_INSET` short of either end - and reaches :data:`_REACH` past
+    the ask beyond the wider face, and the gap is the nearest the two cut bodies come. A head
+    or a shoulder is past the end of the shared length and is not in it; a flange elsewhere
+    on the plate is past the prism's side. Where the two faces share no length - a pin slid
+    out of its bore - there is no fit round it to measure, and that is the finding, beside
+    the nearest the whole bodies come.
+
+    A gap measured over part of a pair cannot see the rest, so the whole bodies are also
+    asked :func:`contact_between`'s question: a clearance fit round a pin shares no material
+    anywhere, so a head driven into the plate by the wrong ``along`` is still found. That is
+    not a contact read off the geometry - it asks nothing to touch, only nothing to overlap,
+    which every body at a clearance fit already promises. A fit tighter than asked is the
+    finding before it.
+    """
+    upto = asked + _REACH
+    shared = _shared_length(a, b, pair, kernel)
+    if shared is None:
+        gap = kernel.min_gap(a, b, upto=upto)
+        return Fitted(fit, asked, gap, _overlapping(fit, a, b, kernel) or _unshared())
+    low, high, radius = shared
+    sleeve = _sleeve(pair.axis, low + _INSET, high - _INSET, radius + upto)
+    gap = kernel.min_gap(Solid(Intersection(a, sleeve)), Solid(Intersection(b, sleeve)), upto=upto)
+    return Fitted(fit, asked, gap, _tight(fit, asked, gap) or _overlapping(fit, a, b, kernel))
+
+
+def _shared_length(
+    a: Solid, b: Solid, pair: RoundPair, kernel: Kernel
+) -> tuple[float, float, float] | None:
+    """Where along ``pair``'s axis both round faces run - from, to, and the farther of the two
+    from the axis - read off each body's own mesh, or ``None`` when they share no length.
+
+    Read off the mesh and not the tree because the tree says how far a face was swept and
+    not how much of it is left: a bore :func:`bench.features.hole` cuts runs a hundredth
+    proud of its plate, and only the triangles tagged with its name know where the plate
+    stops it.
+    """
+    moving, fixed = (
+        _span(kernel.mesh(body), face_ref, pair.axis)
+        for body, face_ref in zip((a, b), pair.faces, strict=True)
+    )
+    if moving is None or fixed is None:
+        return None
+    low, high = max(moving[0], fixed[0]), min(moving[1], fixed[1])
+    if high - low <= 2.0 * _INSET:
+        return None
+    return low, high, max(moving[2], fixed[2])
+
+
+def _span(mesh: Mesh, at: Ref, axis: Plane) -> tuple[float, float, float] | None:
+    """How far along ``axis`` the triangles of the face ``at`` run, from and to, and how far
+    from the axis they reach - or ``None`` when no triangle carries the name."""
+    points = [
+        p - axis.origin
+        for t, ref in zip(triangles(mesh), mesh.refs, strict=True)
+        if ref == at
+        for p in t
+    ]
+    if not points:
+        return None
+    along = [v @ axis.normal for v in points]
+    reach = max(abs(v - axis.normal * d) for v, d in zip(points, along, strict=True))
+    return min(along), max(along), reach
+
+
+def _sleeve(axis: Plane, low: float, high: float, half: float) -> Solid:
+    """A square prism round ``axis``, ``half`` either side of it, from ``low`` to ``high``
+    along it - the region a round fit is measured in.
+
+    Square rather than round because a round one would be meshed into chords like any other
+    circle, and its sides are only ever meant to stand well clear of the gap it holds.
+    """
+    base = plane(axis.origin + axis.normal * low, axis.normal, axis.x_dir)
+    square = polygon(
+        (Point(-half, -half), Point(half, -half), Point(half, half), Point(-half, half))
+    )
+    return Solid(Extrude(face(square, on=base), high - low))
+
+
+def _unshared() -> Violation:
+    """The warning a round pair earns when its two faces share no length along their axis."""
+    return Violation(
+        check="fit",
+        message=(
+            "the two round faces share no length along their axis, so there is no fit round"
+            " the one inside the other to measure, and the gap said is the nearest the two"
+            " bodies come anywhere"
+        ),
+        severity=Severity.WARNING,
+    )
+
+
+def _overlapping(fit: Fit, a: Solid, b: Solid, kernel: Kernel) -> Violation | None:
+    """The error a round pair earns when its two bodies share material anywhere, which no
+    clearance fit does."""
+    shared = _overlap(a, b, kernel)
+    if shared is None:
+        return None
+    return Violation(
+        check="fit",
+        message=(
+            f"the two bodies share {shared:.3f} mm3 of material, and a {fit} fit round a pin"
+            " shares none"
+        ),
+        severity=Severity.ERROR,
+    )
 
 
 def _apart(gap: float) -> Violation | None:

@@ -10,10 +10,12 @@ import pytest
 
 from bench import (
     CONTACT,
+    XY,
     Fit,
     Fitted,
     Point,
     Ref,
+    RoundPair,
     Sampled,
     Severity,
     Violation,
@@ -163,6 +165,19 @@ def test_a_fit_with_no_kernel_is_unchecked_and_says_what_it_asked() -> None:
     assert str(fit_between(cuboid(1, 1, 1), cuboid(1, 1, 1), CONTACT, 0.0, kernel=None)).startswith(
         "asked contact, not measured:"
     )
+
+
+def test_a_round_fit_with_no_kernel_is_unchecked_before_anything_is_meshed() -> None:
+    """The gap round a pin is read off the mesh of its faces, and with no kernel there is no
+    mesh: the answer is the same ``UNCHECKED`` a flat fit's is, not a failure to find the
+    faces."""
+    pair = RoundPair(XY, (Ref("side-0"), Ref("bore")))
+    fitted = fit_between(
+        cylinder(2.0, 12.0), cuboid(10, 10, 10), Fit.SLIDE, 0.2, kernel=None, pair=pair
+    )
+    assert fitted.gap is None
+    assert fitted.finding is not None
+    assert fitted.finding.severity is Severity.UNCHECKED
 
 
 def test_a_fit_says_what_it_measured_against_what_it_asked() -> None:

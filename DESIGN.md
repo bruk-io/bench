@@ -439,7 +439,8 @@ class Violation: check: str; message: str; severity: Severity
 
 fits(shape, volume) -> Violation | None
 clearance_between(a, b, least, *, kernel) -> Violation | None
-fit_between(a, b, fit: Fit | Contact, asked, *, kernel) -> Fitted   # measured beside asked
+fit_between(a, b, fit: Fit | Contact, asked, *, kernel, pair: RoundPair | None = None) -> Fitted
+                                             # measured beside asked; a pair: over its shared length
 wall(solid, least, *, kernel) -> Violation | None
 overhangs(solid, orient, material, *, kernel) -> Violation | None
 ```
@@ -488,6 +489,7 @@ class Contact(StrEnum): CONTACT             # fasteners.py, beside Fit - the fit
 @dataclass(frozen=True, slots=True)
 class Mate: part: Part; on: Solid; fit: Fit | Contact; gap: float
             faces: tuple[str, str]; fitted: Fitted | None = None
+            pair: RoundPair | None = None    # a round pair's faces and axis, for the measuring
 
 placing(fixed: Plane, moving: Plane, *, gap, offset, spin) -> Transform
 gap_of(fit, material | None) -> float        # 0 for CONTACT, material.clearances[fit] else
@@ -512,6 +514,18 @@ on the moved part, and hands back the `Mate` with `fitted` filled in, the way a 
 material)` is how a script checks it, with the same record. `check_clearance_within` leaves out
 every pair a `mated` call put together, by the identity of the two bodies, so a mated pair is
 declared once - by the call that made it - and never asked the wrong question a second time.
+
+**A round pair's gap is measured over the length the pin and its bore share** (task-66). The
+kernel measures bodies, not faces, so `fit_between` given the mate's `RoundPair` reads each round
+face's extent along the axis off the mesh - the triangles tagged with its name, because a
+`hole()` cutter runs a hundredth proud of the plate and only the mesh knows where the plate stops
+it - and cuts both bodies down to a square prism round the axis over that length, 0.01 mm in from
+either end, before `min_gap`. A pin's head or a screw's shoulder that seats on the plate is past
+the end and does not read as the shank's zero; a headed pin reads 0.245 mm in a bore drawn with
+the concave slide, as a headless one does. The seat is a second pair, and the script declares it
+with `check_fit(pin, plate, CONTACT)` - it is never inferred from the geometry. The whole bodies
+are still asked whether they share material, which no clearance fit does, so a head driven into
+the plate by a wrong `along` is still found; faces that share no length at all are a warning.
 
 **The mate returns a record, not a bare body**, because a fit that passes is half of what a
 maker wants to read, and a body has nowhere to say it. `Mate.part` is the moved part, and its
