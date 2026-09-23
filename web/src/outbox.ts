@@ -52,6 +52,9 @@ interface Row extends Pending {
   readonly dirty: boolean;
   readonly refused: boolean;
   readonly message: string | null;
+  /** The route's own word for why it was refused - absent from a row kept before it was
+   * recorded, which is read as a reason nothing retries. */
+  readonly reason?: string | null;
 }
 
 /** The coalescing cadence: several edits to the same file before the first of them lands
@@ -96,6 +99,11 @@ export interface Outbox {
   /** Try to send everything pending, now rather than waiting out any backoff - the `online`
    * event and a fresh boot both want this. */
   drain(): void;
+  /** Send `project`'s writes the route refused as `leased` again, now that this tab holds its
+   * lease: they were refused for who was asking, not for what they held, so asking again is
+   * fair - and still safe, since each goes with the base it was made from, and a file somebody
+   * else changed in the meantime is refused as `moved` rather than written over. */
+  retryLeased(project: string): Promise<void>;
 }
 
 const STORE = "pending";
@@ -237,7 +245,7 @@ export function outbox(client: Host, name = "bench-outbox"): Outbox {
         failedThisRound = true;
         return;
       }
-      await put(key, { ...now, refused: true, message: answer.refusal.message });
+      await put(key, { ...now, refused: true, message: answer.refusal.message, reason: answer.refusal.refused });
     });
   }
 
@@ -379,6 +387,16 @@ export function outbox(client: Host, name = "bench-outbox"): Outbox {
       return () => listeners.delete(fn);
     },
     drain() {
+      schedule(0);
+    },
+    async retryLeased(project) {
+      await locked(async () => {
+        for (const [key, row] of await all()) {
+          if (row.project !== project || !row.refused || row.reason !== "leased") continue;
+          await put(key, { ...row, refused: false, message: null, reason: null });
+        }
+      });
+      await recompute();
       schedule(0);
     },
   };

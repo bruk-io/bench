@@ -1,7 +1,34 @@
 import { describe, expect, it } from "vitest";
 
 import type { SummaryView } from "./scene";
-import { failing, noBodiesReason, tally } from "./status";
+import { failing, noBodiesReason, readOnlyWords, roughly, tally } from "./status";
+
+describe("readOnlyWords", () => {
+  const desk = { label: "Chrome on a Mac", address: "192.168.1.10", forMs: 300_000, heardAgoMs: 4000 };
+
+  it("says whose the project is, where, for how long, and what a reader can and cannot do", () => {
+    const said = readOnlyWords("cabinet", desk, false);
+    expect(said.title).toBe("cabinet is open for writing in Chrome on a Mac at 192.168.1.10, so it is read-only here.");
+    expect(said.text).toContain("held it for 5 minutes");
+    expect(said.text).toContain("last heard from a moment ago");
+    expect(said.text).toContain("nothing you change is kept");
+    expect(said.chip).toBe("read-only");
+  });
+
+  it("says it was taken over, when it was this tab's", () => {
+    expect(readOnlyWords("cabinet", desk, true).title).toBe(
+      "Chrome on a Mac at 192.168.1.10 took over writing cabinet. It is read-only here now.",
+    );
+  });
+
+  it("puts a span of time roughly", () => {
+    expect(roughly(1200)).toBe("a moment");
+    expect(roughly(40_000)).toBe("40 seconds");
+    expect(roughly(60 * 60_000)).toBe("60 minutes");
+    expect(roughly(3 * 60 * 60_000)).toBe("3 hours");
+    expect(roughly(60_000 * 1.2)).toBe("72 seconds");
+  });
+});
 
 const summary = (fields: Partial<SummaryView> = {}): SummaryView => ({
   parts: 1,

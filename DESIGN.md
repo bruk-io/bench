@@ -803,7 +803,9 @@ Interactions that define the product:
   values as the TOML `tools/build.py` reads, the `[reference]` placement, and whatever else a
   newer bench wrote there, kept - shown as a tab beside the script and written on every panel
   edit with what the run built (decision-3). Which project, and which of its scripts, a browser
-  has open is that browser's own. The Projects container makes one - starting as
+  has open is that browser's own, and one tab at a time writes a project: it holds the
+  project's write lease, and every other tab on it reads - runs, exports, turns knobs that are
+  not kept - and is told whose it is, and can take it over (task-47). The Projects container makes one - starting as
   `templates/untitled.py` - and opens, renames, deletes, duplicates, downloads (its scripts and
   a `.toml` in one archive) and opens them from disk; a browser holding projects from before
   is asked, once, whether to write them to the host.

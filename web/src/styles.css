@@ -526,6 +526,10 @@ kbd {
   margin: 0;
 }
 
+.notice-actions[hidden] {
+  display: none;
+}
+
 /* The values file and a survey's report are documents to read, in the same face and on the
    same ground as the script they sit beside. A report runs to hundreds of lines, so the panel
    scrolls and the text is never wrapped: a line of it is one measurement. */

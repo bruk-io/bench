@@ -38,7 +38,29 @@ export const KEYS = {
   panel: "bench.panel",
   /** The console's log level. */
   log: "bench.log",
+  /** The id this tab holds a project's write lease under (`leasing.ts`) - in `sessionStorage`,
+   * never `localStorage`: it has to survive a reload of this tab, so the reload reclaims its
+   * own lease at once, and must not be shared with any other tab, which is another writer. */
+  holder: "bench.holder",
 } as const;
+
+/** What this tab alone remembers - `sessionStorage`, which a reload keeps and another tab does
+ * not see. `null` when there is nothing, or the browser refuses. */
+export function tabRemembered(key: string): string | null {
+  try {
+    return window.sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function tabRemember(key: string, value: string): void {
+  try {
+    window.sessionStorage.setItem(key, value);
+  } catch {
+    // as `remember`: the tab still works; a reload is just a new client to the host
+  }
+}
 
 export function remembered(key: string): string | null {
   try {

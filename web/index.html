@@ -127,6 +127,9 @@
           <div class="container-body">
             <bench-params id="params"></bench-params>
           </div>
+          <p id="params-unkept" class="container-foot" hidden>
+            Read-only here: these knobs turn and the model runs, but nothing turned is kept.
+          </p>
         </section>
 
         <section id="container-sheets" class="container" aria-labelledby="head-sheets" hidden>
@@ -168,6 +171,23 @@
                 <button id="adopt-yes" type="button" class="primary">Write them to the host</button>
                 <button id="adopt-no" type="button">Leave them in this browser</button>
               </p>
+            </div>
+            <!-- The open project is being written somewhere else (task-47): said here, with
+                 whose it is, and the one way to make it yours without waiting - in the page,
+                 never a browser dialog, and asked twice, because it takes it from somebody. -->
+            <div id="lease" class="notice" role="status" aria-labelledby="lease-title" hidden>
+              <p id="lease-title" class="notice-title"></p>
+              <p id="lease-why" class="notice-text"></p>
+              <p id="lease-ask" class="notice-actions">
+                <button id="lease-take" type="button">Take over writing…</button>
+              </p>
+              <div id="lease-confirm" hidden>
+                <p id="lease-confirm-text" class="notice-text"></p>
+                <p class="notice-actions">
+                  <button id="lease-take-yes" type="button" class="primary">Take it over</button>
+                  <button id="lease-take-no" type="button">Leave it with them</button>
+                </p>
+              </div>
             </div>
             <div id="editor-tabs" class="tabs" role="tablist" aria-label="Open documents"></div>
             <div id="panel-script" class="tab-panel" role="tabpanel">
@@ -292,6 +312,7 @@
       <span id="status" class="status">loading Python…</span>
       <span id="stale-bundle" class="state" data-state="error" hidden>stale examples</span>
       <span id="reach" class="state" data-state="ok" hidden></span>
+      <span id="standing" class="state" data-state="warn" hidden></span>
       <span class="spacer"></span>
       <span id="timing" class="timing"></span>
     </footer>
