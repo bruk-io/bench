@@ -67,6 +67,35 @@ show(assembly("slid", (Placed(base, XY), Placed(fitted.part, XY)), posed=True))
 """A plate mated onto a base at a slide fit, with nothing else between them: the gap the
 mate measures is the table's own, exactly."""
 
+PINNED = """\
+from bench import *
+from bench.library.print import PLA, clearance
+
+pla = Printed(PLA)
+bore = {bore}
+profile = cut(fill(rect(20, 20)), circle(bore, Point(10, 10)), label="bore")
+plate = part("plate", extrude(profile, 5.0), pla)
+pin = part("pin", {pin}, pla)
+fitted = mated(plate, "plate/bore", pin, "pin/{face}", fit=Fit.SLIDE, along={along})
+print(fitted)
+show(assembly("pinned", (Placed(plate, XY), Placed(fitted.part, XY)), posed=True))
+"""
+"""A pin of radius 2 put into a bore drawn in a 5 mm plate, at a slide: ``bore`` is the
+bore's radius, as a script would write it, and ``pin`` the pin's body."""
+
+_PIN = "cylinder(2.0, 12.0)"
+
+_HEADED = (
+    'union(cylinder(4.0, 2.0, label="head"),'
+    ' extrude(fill(circle(2.0), on=raised(XY, 2.0)), 10.0, label="shank"))'
+)
+"""A pin with a head it stands on: the shank swept up from the head, so it goes in shank
+first and, at ``along=0``, the head sits on the plate's bottom."""
+
+
+def _pinned(bore: str, *, pin: str = _PIN, face: str = "side-0", along: float = -3.0) -> str:
+    return PINNED.format(bore=bore, pin=pin, face=face, along=along)
+
 
 def _vent(source: str) -> Mapping[str, object]:
     """The example vent's own functions, read out of its source with ``show`` stubbed - the
@@ -179,4 +208,16 @@ def measured(kernel: Kernel, vent: str) -> dict[str, object]:
         "pegged": run(PEGGED, kernel=kernel),
         "slid": run(SLID, kernel=kernel),
         "turned": _turned_over(kernel),
+        "pin_concave": run(_pinned("2.0 + clearance(Fit.SLIDE, PLA, concave=True)"), kernel=kernel),
+        "pin_plain": run(_pinned("2.0 + clearance(Fit.SLIDE, PLA)"), kernel=kernel),
+        "pin_fat": run(_pinned("1.9"), kernel=kernel),
+        "pin_headed": run(
+            _pinned(
+                "2.0 + clearance(Fit.SLIDE, PLA, concave=True)",
+                pin=_HEADED,
+                face="shank/side-0",
+                along=0.0,
+            ),
+            kernel=kernel,
+        ),
     }

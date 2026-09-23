@@ -71,6 +71,21 @@ print(check_fit(a, move(a, Vector(10.2, 0, 0)), Fit.SLIDE, PLA))
 show(part("a", a, Printed(PLA)))
 """
 
+PINNED = """\
+from bench import *
+from bench.library.print import PLA
+
+pla = Printed(PLA)
+profile = cut(fill(rect(20, 20)), circle(2.25, Point(10, 10)), label="bore")
+plate = part("plate", extrude(profile, 5.0), pla)
+pin = part("pin", cylinder(2.0, 12.0), pla)
+fitted = mated(plate, "plate/bore", pin, "pin/side-0", fit=Fit.SLIDE, along=-3.0)
+print(fitted)
+show(assembly("pinned", (Placed(plate, XY), Placed(fitted.part, XY)), posed=True))
+"""
+"""A pin put into a bore drawn in its plate's profile, three millimetres short of the bore's
+mouth: the round pair a script writes."""
+
 
 def _ok(scene: Scene) -> OkScene:
     if not scene["ok"]:
@@ -158,3 +173,21 @@ def test_check_fit_says_what_it_asked_even_when_nothing_measured_it() -> None:
     scene = _ok(run(FIT))
     assert scene["stdout"].startswith("asked 0.200 (slide), not measured")
     assert [one["check"] for one in scene["violations"]] == ["fit"]
+
+
+def test_a_pin_mated_into_its_bore_is_shown_on_the_bores_axis_and_asks_the_fits_gap() -> None:
+    """The pin's box in the scene is centred on the bore, slid ``along`` its axis; with no
+    kernel the gap round it is asked and not measured, on the line of the mate."""
+    scene = _ok(run(PINNED))
+    pin = next(view for view in scene["parts"] if view["label"] == "pin")
+    assert pin["bbox"] == pytest.approx([8.0, 8.0, 12.0, 12.0])
+    said = scene["stdout"].strip()
+    assert said.startswith("pin/side-0 on plate/bore: asked 0.200 (slide), not measured")
+    [found] = scene["violations"]
+    assert (found["check"], found["severity"], found["line"]) == ("fit", Severity.UNCHECKED, 8)
+
+
+def test_a_round_face_put_on_a_flat_one_stops_the_run_naming_both() -> None:
+    error = _error(run(PINNED.replace('"plate/bore"', '"plate/top"')))
+    assert "pin/side-0 is round and plate/top is not" in error["message"]
+    assert error["line"] == 8
