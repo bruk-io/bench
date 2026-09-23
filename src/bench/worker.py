@@ -5,10 +5,11 @@
 refused call to the modeller raises - Pyodide's ``JsException``, imported on that side so
 nothing here needs Pyodide. What comes back is the runner the worker calls for every run: a
 source, its overrides as JSON, the modeller (or ``None``), a dropped body (or ``None``) and
-its `[reference]` table (or ``None``) in, and the scene as :func:`bench.transport.scene_wire`
-writes it out. :func:`surveyed` and :func:`detected` are the worker's other calls into
-Python, both under the same placement: the survey of a body dropped on the view, and which
-of its triangles belong to which detected face.
+its `[reference]` table (or ``None``), the open project's other scripts as JSON (or ``None``)
+in, and the scene as :func:`bench.transport.scene_wire` writes it out. :func:`surveyed` and
+:func:`detected` are the worker's other calls into Python, both under the same placement: the
+survey of a body dropped on the view, and which of its triangles belong to which detected
+face.
 
 This used to be a string of Python inside the TypeScript, where no linter, type checker or
 test could reach it. It is the most important edge in the app, so it lives here.
@@ -16,13 +17,32 @@ test could reach it. It is the most important edge in the app, so it lives here.
 It is a host, not a layer of the vocabulary: it routes :mod:`logging` to a handler, which is
 configuration. It does that when :func:`start` is called and never on import, and a second
 call replaces its handler rather than adding another.
+
+**Project modules (task-50, decision-9 step 9).** ``web/src/worker.ts`` already writes
+``bench`` into ``/lib`` from the bundle; a project's own ``.py`` files - everything beside the
+entry that is not the entry itself - are mounted the same move, into :data:`_PROJECT_DIR`,
+beside ``/lib`` and never inside it, so an entry that says ``import parts`` reaches a
+``parts.py`` a maker wrote beside it and a project file is never mistaken for a package
+module. Doing this in Python rather than in the worker's own TypeScript keeps it linted,
+type-checked and tested like the rest of a run - the reason this whole module exists.
+:func:`_mounted` wipes the mount directory and rebuilds it on *every* run, whether or not
+this one has any modules of its own: the worker is one long-lived process, and a project
+switched away from must not leave a sibling for the next one to import by accident.
+:func:`bench.shadow.shadowed` refuses a project file that would replace the standard library
+or ``bench`` itself, the same refusal :mod:`tools.build` makes on the command line.
 """
 
 import base64
+import importlib
 import json
 import logging
+import shutil
+import sys
+import tempfile
 from array import array
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from . import script, transport
@@ -31,8 +51,50 @@ from .kernel import Mesh
 from .library import gridfinity
 from .placement import named_origins, placed, placement
 from .report import report
+from .shadow import shadowed
 from .survey import ROUND, flat_faces, mesh_from_stl, survey
 from .telemetry import FIELDS, Span, timed
+
+_PROJECT_DIR = Path(tempfile.gettempdir()) / "bench-project"
+"""Where a project's other scripts are mounted for a run to import - under the runtime's own
+temporary directory rather than a path invented at the filesystem's root, which only a
+sandboxed browser owns: Pyodide's MEMFS has one ready-made and writable, and so does the real
+machine :mod:`tests.functional.test_worker` runs this same code on directly, with no Pyodide
+underneath it at all."""
+
+
+def _mounted(modules: str | None) -> None:
+    """The mount directory rebuilt from ``modules`` - the open project's other ``.py`` files,
+    as ``{name: text}`` JSON, or ``None`` for a project with none - and every module Python
+    cached from the last one it held popped out of ``sys.modules``.
+
+    Called on every run, not only a run with modules of its own: without the pop, a project
+    switched away from would leave its ``parts`` importable by the next one, which is worse
+    than a missing module because it does not fail.
+
+    Raises:
+        ValueError: one of ``modules``'s names would shadow the standard library or ``bench``
+            itself (:func:`bench.shadow.shadowed`), named, before anything is written.
+    """
+    table: Mapping[str, str] = {} if modules is None else json.loads(modules)
+    bad = shadowed(table.keys())
+    if bad is not None:
+        msg = f"{bad} in the project would shadow the standard library or bench"
+        raise ValueError(msg)
+    if _PROJECT_DIR.exists():
+        shutil.rmtree(_PROJECT_DIR)
+    if table:
+        _PROJECT_DIR.mkdir(parents=True, exist_ok=True)
+        for name, text in table.items():
+            (_PROJECT_DIR / name).write_text(text)
+    resolved = _PROJECT_DIR.resolve()
+    for name in list(sys.modules):
+        at = getattr(sys.modules[name], "__file__", None)
+        if at is not None and Path(at).resolve().is_relative_to(resolved):
+            del sys.modules[name]
+
+    importlib.invalidate_caches()
+
 
 Wire = tuple[str, list[array[float] | array[int]]]
 """What a run hands the worker: the scene's JSON and the buffers its meshes were taken out
@@ -41,19 +103,20 @@ into."""
 
 class Runner(Protocol):
     """What :func:`start` gives back: a source, its overrides as JSON, the modeller or
-    ``None``, a reference body as base64 STL or ``None``, and the project's `[reference]`
-    table as JSON or ``None``.
+    ``None``, a reference body as base64 STL or ``None``, the project's `[reference]` table as
+    JSON or ``None``, and the project's other scripts as JSON (``{name: text}``) or ``None``.
 
-    A Protocol rather than a :class:`~collections.abc.Callable` alias because the last three
+    A Protocol rather than a :class:`~collections.abc.Callable` alias because the last four
     arguments have defaults and a ``Callable`` cannot say so - it would make every caller
-    that wants none of a modeller, a reference or a placement pass three ``None``s to satisfy
-    a type rather than a runtime.
+    that wants none of a modeller, a reference, a placement or a sibling module pass four
+    ``None``s to satisfy a type rather than a runtime.
 
     The reference crosses as text rather than as bytes because a string is the one thing both
     runtimes agree about without a proxy in the middle - and a body dropped on the view is
     read once per run, not per frame, so the copy costs nothing anybody can feel. ``table`` is
     ``None`` without a ``stl``, or with one that has nothing said about it - decision-4's
-    "no table, no move".
+    "no table, no move". ``modules`` is ``None`` for a project of one script, exactly as
+    ``tools.build``'s import path holds one entry alone when there is nothing beside it.
     """
 
     def __call__(
@@ -63,6 +126,7 @@ class Runner(Protocol):
         modeller: Modeller | None = None,
         stl: str | None = None,
         table: str | None = None,
+        modules: str | None = None,
         /,
     ) -> Wire: ...
 
@@ -159,8 +223,9 @@ def start(telemetry: Telemetry, refused: type[Exception]) -> Runner:
 
     A host that hands over something which is not a binary STL, or a ``table`` that is not a
     readable `[reference]`, gets the reader's own ``ValueError`` back out of the runner, and
-    the page shows that as the run failing with the reason the reader gave. Nothing is raised
-    from here: this only builds the runner.
+    the page shows that as the run failing with the reason the reader gave. A ``modules`` name
+    that would shadow the standard library or ``bench`` fails the same way
+    (:func:`_mounted`). Nothing is raised from here: this only builds the runner.
     """
     logger = logging.getLogger("bench")
     for old in [one for one in logger.handlers if isinstance(one, _Records)]:
@@ -168,6 +233,9 @@ def start(telemetry: Telemetry, refused: type[Exception]) -> Runner:
     logger.addHandler(_Records(telemetry))
     logger.setLevel(logging.DEBUG)
     tracer = _Spans(telemetry)
+    sys.dont_write_bytecode = True
+    if str(_PROJECT_DIR) not in sys.path:
+        sys.path.insert(1, str(_PROJECT_DIR))  # after /lib, so bench is always found first
 
     def run(
         source: str,
@@ -175,7 +243,9 @@ def start(telemetry: Telemetry, refused: type[Exception]) -> Runner:
         modeller: Modeller | None = None,
         stl: str | None = None,
         table: str | None = None,
+        modules: str | None = None,
     ) -> Wire:
+        _mounted(modules)
         scene = script.run(
             source,
             json.loads(overrides),

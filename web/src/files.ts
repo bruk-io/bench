@@ -101,6 +101,19 @@ export function opened(space: Workspace): Project {
 /** The text of the script that is open - the one a run runs. */
 export const openSource = (space: Workspace): string => opened(space).scripts[space.script] ?? "";
 
+/** The open project's other scripts, by name - everything :func:`openSource` is not. What a
+ * run hands the worker (task-50, decision-9 step 9) so the open script can import them, and
+ * what `tools/build.py` puts on the import path beside the entry it runs. Empty for a project
+ * of one script, which is most of them - a run with nothing here mounts nothing. */
+export function modulesOf(space: Workspace): Readonly<Record<string, string>> {
+  const project = opened(space);
+  const out: Record<string, string> = {};
+  for (const [name, text] of Object.entries(project.scripts)) {
+    if (name !== space.script) out[name] = text;
+  }
+  return out;
+}
+
 /** A project's scripts, its entry first and the rest by name - the order their tabs take. */
 export const scriptsOf = (one: Project): readonly string[] => [
   one.entry,

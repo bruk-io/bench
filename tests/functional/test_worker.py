@@ -313,3 +313,59 @@ def test_starting_again_replaces_the_handler_rather_than_doubling_every_record()
 )
 def test_logging_levels_are_spelled_the_way_the_page_reads_them(name: str, spelled: str) -> None:
     assert level(name) == spelled
+
+
+# ---- a project's other scripts, mounted for a run to import (task-50) --------------------
+
+_ENTRY = (
+    "from bench import *\nimport parts\n\n"
+    "show(part('p', fill(rect(parts.W, parts.W)), Stock(3, 'ply')))\n"
+)
+
+
+def test_an_entry_imports_a_module_the_project_hands_over_beside_it() -> None:
+    text, _ = start(_Telemetry(), _Refused)(
+        _ENTRY, "{}", None, None, None, json.dumps({"parts.py": "W = 12.0\n"})
+    )
+    scene = json.loads(text)
+    assert scene["ok"] is True, scene
+
+
+def test_a_module_the_project_does_not_hold_fails_by_name_not_by_trace() -> None:
+    """AC#5: not a raw `ModuleNotFoundError` buried in stderr - the run catches it as any
+    other exception a script raises and the message names the module."""
+    text, _ = start(_Telemetry(), _Refused)(_ENTRY, "{}", None)
+    scene = json.loads(text)
+    assert scene["ok"] is False
+    assert "No module named 'parts'" in scene["error"]["message"]
+
+
+def test_switching_projects_does_not_leak_the_first_ones_module_into_the_second() -> None:
+    """The worker is one long-lived process: a run with no modules of its own must not still
+    see the previous run's `parts`, and a second project's own `parts` must not answer with
+    the first project's number."""
+    runner = start(_Telemetry(), _Refused)
+    first, _ = runner(_ENTRY, "{}", None, None, None, json.dumps({"parts.py": "W = 10.0\n"}))
+    assert json.loads(first)["ok"] is True
+
+    without_modules, _ = runner(_ENTRY, "{}", None)
+    assert json.loads(without_modules)["ok"] is False, "the first project's parts must be gone"
+
+    second, _ = runner(_ENTRY, "{}", None, None, None, json.dumps({"parts.py": "W = 20.0\n"}))
+    scene = json.loads(second)
+    assert scene["ok"] is True
+    assert scene["values"] == {}, "parts.W is not a declared setting, only read by the script"
+
+
+def test_a_project_module_that_would_shadow_the_standard_library_is_refused() -> None:
+    with pytest.raises(ValueError, match="shadow"):
+        start(_Telemetry(), _Refused)(
+            EXAMPLE.read_text(), "{}", None, None, None, json.dumps({"os.py": "X = 1\n"})
+        )
+
+
+def test_a_project_module_named_bench_is_refused_too() -> None:
+    with pytest.raises(ValueError, match="shadow"):
+        start(_Telemetry(), _Refused)(
+            EXAMPLE.read_text(), "{}", None, None, None, json.dumps({"bench.py": "X = 1\n"})
+        )

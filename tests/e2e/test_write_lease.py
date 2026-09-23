@@ -243,6 +243,8 @@ def test_the_first_to_open_writes_and_the_second_reads_is_told_why_and_keeps_not
         assert str(held["address"]) in title
         assert "nothing you change is kept" in tablet.locator("#lease-why").inner_text()
         assert tablet.locator("#standing").inner_text() == "read-only"
+        # And nothing claims its work was saved to the host: it has none.
+        assert tablet.locator("#reach").is_hidden()
         # It runs: the view is the project's own two plates.
         assert _bodies(tablet) == 2
         before = (root / "plates" / "bench.toml").read_text()

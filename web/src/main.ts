@@ -56,6 +56,7 @@ import {
   document as projectDocument,
   duplicated,
   merged,
+  modulesOf,
   openSource,
   opened,
   pristine,
@@ -393,8 +394,21 @@ function reachWords(state: OutboxState): { text: string; title: string; kind: "o
   }
 }
 
+/** Whether the reach chip is away because this tab is only reading (`showReach`). */
+let reachPutAway = false;
+
 function showReach(state: OutboxState): void {
   const { text, title, kind } = reachWords(state);
+  // A reader keeps nothing, so "saved to host" would be about nothing it did: the chip is put
+  // away while reading - unless it is saying that something this tab wrote before it lost the
+  // lease has not landed, which is still true and still worth knowing.
+  const standing = lease?.standing() ?? null;
+  const reading = standing?.kind === "reader" && standing.project === workspace.current;
+  reachPutAway = reading && (state.kind === "clear" || state.kind === "sending");
+  if (reachPutAway) {
+    ui.reach.hidden = true;
+    return;
+  }
   ui.reach.hidden = false;
   ui.reach.textContent = text;
   ui.reach.title = title;
@@ -507,6 +521,7 @@ function showStanding(): void {
     ui.lease.hidden = true;
     ui.leaseConfirm.hidden = true;
     ui.standing.hidden = true;
+    if (reach !== null && reachPutAway) showReach(reach.state());
     return;
   }
   const words = readOnlyWords(reading.project, reading.holder, reading.lost);
@@ -519,6 +534,7 @@ function showStanding(): void {
     "can keep nothing: an edit it has not saved yet is refused, and it is told you took it over. " +
     "Do this when that one is somewhere you cannot reach.";
   ui.standing.hidden = false;
+  if (reach !== null) showReach(reach.state());
   ui.standing.textContent = words.chip;
   ui.standing.title = words.chipTitle;
 }
@@ -912,6 +928,14 @@ function matchedReference(): ReferenceTable | null {
 const referenceTableJson = (): string | undefined => {
   const table = matchedReference();
   return table === null ? undefined : JSON.stringify(table);
+};
+
+/** `modulesOf(workspace)`, as the JSON text the worker takes - `undefined` for a project of
+ * one script, which is most of them, so a run with nothing beside the open script mounts
+ * nothing (task-50). */
+const modulesJson = (): string | undefined => {
+  const modules = modulesOf(workspace);
+  return Object.keys(modules).length === 0 ? undefined : JSON.stringify(modules);
 };
 
 /** The dropped bodies as the refs container lists them.
@@ -1427,7 +1451,7 @@ function runNow(): void {
   if (booting) setState("boot", ui.status.textContent ?? "starting…");
   else setState("running", "running…");
   sentWith = overrides;
-  bridge.request(code.text(), overrides, reference ?? undefined, referenceTableJson());
+  bridge.request(code.text(), overrides, reference ?? undefined, referenceTableJson(), modulesJson());
 }
 
 function received(next: Scene): void {
