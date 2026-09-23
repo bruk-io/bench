@@ -90,7 +90,7 @@ def scene(
     the work is a span on ``tracer``.
     """
     parts = tuple(placed.part for placed in assembly.parts)
-    refused, unexportable = _export_findings(parts)
+    refused = _export_findings(parts)
     violations = tuple(_qualified(one, parts) for one in (*findings, *refused))
     counts = tuple(quantities.get(Ref(part.label), 1) for part in parts)
     cut_list: tuple[PartSpec, ...] = tuple(zip(parts, counts, strict=True))
@@ -115,7 +115,7 @@ def scene(
         for part, body in zip(parts, bodies, strict=True)
     )
     with timed(tracer, "bench.scene.files"):
-        files = _files(nested, parts, printed, extra, str(assembly.label), unexportable)
+        files = _files(nested, parts, printed, extra, str(assembly.label))
     return OkScene(
         ok=True,
         params=list(params),
@@ -223,7 +223,6 @@ def _files(
     printed: tuple[Mesh | None, ...],
     extra: Mapping[str, str],
     name: str,
-    unexportable: set[Label],
 ) -> dict[str, str]:
     """Everything a run offers to download: both formats of every sheet, whatever the
     build brought with it, one SVG per part for cutting a single panel again, an STL for
@@ -235,12 +234,12 @@ def _files(
     own; the 3MF is the whole print job with every part named inside it, and is written only
     when there is a body to put in it.
 
-    ``unexportable`` is every part's label :func:`_export_findings` refused - a solid on sheet
-    stock, or a solid marked :data:`~bench.model.Process.CNC` - and none of them gets a
-    ``part-*.svg``:
-    :func:`bench.export.part_paths` draws nothing for a solid, so the file would be a page
-    with no path on it, the empty file this whole check exists to stop writing. The part's
-    violation, not a blank download, is what says the part exists.
+    A part whose shape is a :class:`~bench.topology.Solid` gets no ``part-*.svg`` at all,
+    ordinary printed part or a part :func:`bench.checks.exportable` refuses alike:
+    :func:`bench.export.part_paths` draws nothing for a solid - a body is shown by building
+    it, which is a kernel's business, not a cutter's - so the file would be a page with no
+    path on it, the empty file this whole task exists to stop writing rather than a blank
+    download that looks like a real one.
     """
     files: dict[str, str] = {}
     for view, one in nested:
@@ -248,9 +247,13 @@ def _files(
         files[f"{view['name']}.dxf"] = sheet_dxf(one)
     files.update(extra)
     for part in parts:
-        if part.label in unexportable:
-            continue
-        files[f"part-{part.label}.svg"] = part_svg(part)
+        match part.shape:
+            case Face():
+                files[f"part-{part.label}.svg"] = part_svg(part)
+            case Solid():
+                continue
+            case _:
+                assert_never(part.shape)
     built = tuple(
         (str(part.label), body)
         for part, body in zip(parts, printed, strict=True)
@@ -371,14 +374,12 @@ def _stock_view(stock: Stocked) -> StockView:
             assert_never(stock)
 
 
-def _export_findings(parts: Sequence[Part]) -> tuple[tuple[Finding, ...], set[Label]]:
+def _export_findings(parts: Sequence[Part]) -> tuple[Finding, ...]:
     """Every part :func:`bench.checks.exportable` refuses - a solid on sheet stock, or a
     solid marked :data:`~bench.model.Process.CNC` - as one :class:`Finding` each, so the
     reason reaches the scene's violations (the app's Problems panel and :mod:`tools.build`)
-    exactly as a script's own checks do, without a script having to ask for it; and the set
-    of their labels, so :func:`_files` can leave a blank ``part-*.svg`` unwritten for them.
-    A part built the wrong way is not something a maker should have to notice from an empty
-    download.
+    exactly as a script's own checks do, without a script having to ask for it. A part built
+    the wrong way is not something a maker should have to notice from an empty download.
 
     The refs are the part's own label, put there directly rather than left for
     :func:`_qualified` to find by matching ``part.shape``'s identity: two parts made from the
@@ -387,13 +388,11 @@ def _export_findings(parts: Sequence[Part]) -> tuple[tuple[Finding, ...], set[La
     subjects are carried, so :func:`_qualified` leaves these refs exactly as they arrive.
     """
     found: list[Finding] = []
-    labels: set[Label] = set()
     for part in parts:
         violation = exportable(part.shape, part.stock, part.process)
         if violation is not None:
             found.append(Finding(replace(violation, refs=(Ref(str(part.label)),)), ()))
-            labels.add(part.label)
-    return tuple(found), labels
+    return tuple(found)
 
 
 def _qualified(finding: Finding, parts: Sequence[Part]) -> Violation:

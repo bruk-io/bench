@@ -188,6 +188,15 @@ def test_a_printed_part_with_no_kernel_is_unbuilt() -> None:
     assert (scene["summary"]["solid"], scene["summary"]["unbuilt"]) == (0, 1)
 
 
+def test_an_ordinary_printed_part_gets_no_blank_part_svg_either() -> None:
+    """A printed body has no flat outline to draw - :func:`bench.export.part_paths` draws
+    nothing for a solid - so it never had a violation to say why; the same rule that stops a
+    refused part getting an empty ``part-*.svg`` (task-58) stops one here too."""
+    scene = _ok(run(PRINTED))
+    assert scene["violations"] == []
+    assert "part-block.svg" not in scene["files"]
+
+
 def test_the_summary_counts_what_the_run_made() -> None:
     scene = _ok(run(CABINET.read_text()))
     summary = scene["summary"]
