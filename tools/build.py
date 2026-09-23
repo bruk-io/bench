@@ -244,9 +244,20 @@ def _mounted(directory: Path) -> Iterator[None]:
         sys.dont_write_bytecode = was_bytecode
 
 
-def _reference_placed(script: Path, table: dict[str, object]) -> tuple[Mesh, Plane]:
+_PLACING = ("origin", "up", "along")
+"""The keys that make a ``[reference]`` table a placement rather than only a name - the app's
+``placing`` in ``web/src/values.ts`` reads the same three."""
+
+
+def _placing(table: dict[str, object]) -> bool:
+    """Whether ``table`` places its body, or only names which of a project's meshes is the
+    active one (task-49), which is handed over exactly as exported."""
+    return any(key in table for key in _PLACING)
+
+
+def _reference_placed(script: Path, table: dict[str, object]) -> tuple[Mesh, Plane | None]:
     """The STL ``table['file']`` names, beside ``script``, read and placed by the rest of
-    ``table``.
+    ``table`` - or as exported, with no frame, when the table only names it.
 
     Raises:
         ValueError: if ``table`` has no readable ``file``, the file it names is not there, or
@@ -266,6 +277,8 @@ def _reference_placed(script: Path, table: dict[str, object]) -> tuple[Mesh, Pla
         msg = f"reference names {at}, and there is no file there"
         raise ValueError(msg)
     mesh = mesh_from_stl(at.read_bytes())
+    if not _placing(table):
+        return mesh, None
     frame = placement(table, mesh)
     return placed(mesh, frame), frame
 
@@ -413,7 +426,10 @@ def main(argv: tuple[str, ...] | None = None, environ: Mapping[str, str] | None 
                 print(f"failed: {exc}", file=sys.stderr)
                 return 1
             name = str(reference_table.get("file"))
-            print(_frame_said(_document_path(script), name, frame))
+            if frame is None:
+                print(f"{_document_path(script).name}: reference={name} as exported, not placed")
+            else:
+                print(_frame_said(_document_path(script), name, frame))
 
         scene: Any = run(script.read_text(), values, reference=reference)
     for line in _said(scene):

@@ -108,9 +108,12 @@
             <span id="refs-count" class="container-count"></span>
           </div>
           <bench-refs-tree id="refs-tree"></bench-refs-tree>
+          <!-- What choosing another reference did to [reference], when it did more than name
+               it (task-49): one table has room for one placement. -->
+          <p id="references-said" class="container-foot" role="status" hidden></p>
           <p class="container-foot">
-            Click a face to reveal its ref here; click a row - a ref, or a body dropped on the
-            view - to light it up there.
+            Click a face to reveal its ref here, or a row to light it up there. Clicking another
+            reference makes it the active one - the body surveyed and placed.
           </p>
         </section>
 
@@ -245,7 +248,7 @@
                     id="reference-clear"
                     type="button"
                     class="reference-clear"
-                    title="Forget the dropped body"
+                    title="Take this body off the view - a mesh in the project stays there"
                   >
                     ✕
                   </button>

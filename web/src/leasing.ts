@@ -120,6 +120,10 @@ export function leasing(client: Host): Leasing {
   /** Bumped whenever the project changes, so an answer about the one before is dropped. */
   let generation = 0;
   let renewMs = RETRY_MS;
+  /** The ask on its way, so letting go can call it back: a renewal still in flight when the
+   * page goes would otherwise be able to land *after* the release and take the lease again for
+   * a tab that is no longer there. */
+  let asking: AbortController | null = null;
   const listeners = new Set<(standing: Standing) => void>();
 
   function set(next: Standing): void {
@@ -137,11 +141,14 @@ export function leasing(client: Host): Leasing {
 
   async function ask(project: string, act: "take" | "take-over", asked: number): Promise<void> {
     let answer: Awaited<ReturnType<Host["lease"]>> | null;
+    const mine = new AbortController();
+    asking = mine;
     try {
-      answer = await client.lease(project, act);
+      answer = await client.lease(project, act, false, mine.signal);
     } catch {
       answer = null;
     }
+    if (mine.signal.aborted) return; // let go of while this was asked
     if (asked !== generation) return; // another project was opened while this was asked
     if (answer === null || !answer.ok) {
       schedule(project, Math.min(renewMs, RETRY_MS));
@@ -173,6 +180,7 @@ export function leasing(client: Host): Leasing {
     },
     release() {
       clearTimeout(timer);
+      asking?.abort();
       if (current?.kind !== "writer") return;
       void client.lease(current.project, "release", true).catch(() => undefined);
     },

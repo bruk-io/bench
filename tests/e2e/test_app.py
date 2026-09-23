@@ -1996,7 +1996,10 @@ def test_a_placement_is_written_in_one_act_and_can_be_cleared_again(
     page.click("#pick-write")
     refused = page.locator("#pick-why").inner_text()
     assert "along" in refused, refused
-    assert "reference" not in page.locator("#values-text").inner_text()
+    # `[reference]` names the active mesh from the moment it was dropped (task-49), and places
+    # nothing until the whole placement is written.
+    table = tomllib.loads(page.locator("#values-text").inner_text()).get("reference", {})
+    assert not {"origin", "up", "along"} & set(table), table
 
     page.fill("#pick-along", "+X")
     page.click("#pick-write")

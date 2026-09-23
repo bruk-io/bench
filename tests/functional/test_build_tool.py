@@ -216,6 +216,28 @@ def test_a_reference_table_places_the_stl_and_prints_the_frame(
     assert "along=(1.000, 0.000, 0.000)" in out
 
 
+def test_a_reference_table_that_only_names_the_active_mesh_hands_it_over_as_exported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """task-49: `[reference]` names the project's active mesh whether or not it is placed yet,
+    and one that is only named is the mesh as exported - not a placement missing its keys."""
+    script = _project(tmp_path, '[reference]\nfile = "obj_2.stl"\n')
+    _foot_stl(script.parent / "obj_2.stl")
+
+    assert build.main((str(script),)) == 0
+    out = capsys.readouterr().out
+    assert "panel.toml: reference=obj_2.stl as exported, not placed" in out
+
+
+def test_a_reference_table_placing_only_in_part_is_still_refused(tmp_path: Path) -> None:
+    """Naming is the table with no placing key at all; one with some of them is a placement,
+    and `placement` refuses it for what it lacks."""
+    script = _project(tmp_path, '[reference]\nfile = "obj_2.stl"\norigin = "low"\n')
+    _foot_stl(script.parent / "obj_2.stl")
+
+    assert build.main((str(script),)) == 1
+
+
 def test_a_reference_naming_a_file_that_is_not_there_is_refused(tmp_path: Path) -> None:
     """`placement`'s own `ValueError` is caught the same way a value a field cannot read is -
     named and answered `1`, not traced."""

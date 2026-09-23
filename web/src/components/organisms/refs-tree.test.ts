@@ -17,7 +17,7 @@ const CABINET = [
 ];
 
 type Fields = Partial<
-  Pick<BenchRefsTree, "refs" | "selected" | "flagged" | "references" | "selectedReference">
+  Pick<BenchRefsTree, "refs" | "selected" | "flagged" | "references" | "selectedReference" | "activeReference">
 >;
 
 async function mounted(fields: Fields = {}): Promise<BenchRefsTree> {
@@ -277,6 +277,15 @@ const referenceRow = (tree: BenchRefsTree, file: string): HTMLElement => {
 const BRACKET = "bracket.stl";
 
 describe("bench-refs-tree, the bodies somebody else made", () => {
+  it("lists every body the project holds, and marks the one that is active", async () => {
+    const tree = await mounted({ references: [BRACKET, "foot.stl"], activeReference: "foot.stl" });
+    expect(references(tree)).toEqual([BRACKET, "foot.stl"]);
+    expect(referenceRow(tree, "foot.stl").dataset["active"]).toBe("true");
+    expect(referenceRow(tree, "foot.stl").querySelector(".active")?.textContent).toBe("active");
+    expect(referenceRow(tree, BRACKET).dataset["active"]).toBe("false");
+    expect(referenceRow(tree, BRACKET).querySelector(".active")).toBeNull();
+  });
+
   it("lists a dropped body in a group of its own", async () => {
     const tree = await mounted({ refs: CABINET, references: [BRACKET] });
     expect(references(tree)).toEqual([BRACKET]);
