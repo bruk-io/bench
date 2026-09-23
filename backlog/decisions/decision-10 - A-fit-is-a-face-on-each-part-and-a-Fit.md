@@ -14,6 +14,14 @@ print orientation kept apart from where it sits in an assembly. Built as milesto
 task-57 first, then task-59 (planar mates), task-60 (round mates), task-61 (picking two faces
 in the app), task-62 (section view) and task-63 (colouring a built part's faces).
 
+Built (2026-09-23), every step, as m-8: `mated()` for flat pairs (task-59) and round pairs
+(task-60), a round fit measured on the length the faces share so a pin's head seating does not
+fail it (task-66), a two-face pick that draws both frames and inserts the line (task-61), a
+section view (task-62) and colour faces (task-63); task-57 fixed the contact check first. Two
+gaps it found are m-7's: a posed part still exports in its assembly pose (task-64), and faces a
+cut leaves now point out of the material (task-65, done). `mated` returns a `Mate` record, not
+the bare body - see task-59's notes.
+
 Asked for while modelling a wall vent (projects/frame, 2026-09-23): "select two faces, pass
 them to a fit function, which arranges the objects and shows if there are any fit issues."
 
