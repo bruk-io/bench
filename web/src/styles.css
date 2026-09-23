@@ -822,9 +822,9 @@ kbd {
 }
 
 /* A row of its own under `.viewer-bar` - that bar's own content already runs a small window's
-   width once a body is dropped on it, whose buttons never shrink, so a colour toggle squeezed
-   onto the same line would overlap it rather than wrap. Quiet, the same pill shape as
-   `.reference-detect`, so it reads as one more thing the view can be asked to do. */
+   width once a body is dropped on it, whose buttons never shrink, so a section and a colour
+   toggle squeezed onto the same line would overlap it rather than wrap. Quiet, the same pill
+   shape as `.reference-detect`, so both read as one more thing the view can be asked to do. */
 .viewbar-tools {
   display: flex;
   align-items: center;
@@ -833,6 +833,37 @@ kbd {
   padding: 0 6px 0 10px;
   background: var(--chrome);
   border-bottom: 1px solid var(--line);
+}
+
+.sectionbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.section-axis {
+  height: 18px;
+  min-width: 0;
+  padding: 0 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border: none;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--fg-dim);
+}
+
+.section-axis:disabled {
+  color: var(--fg-faint);
+}
+
+.section-position {
+  width: 90px;
+  accent-color: var(--accent);
+}
+
+.section-position:disabled {
+  opacity: 0.4;
 }
 
 /* − Fit + as one control. */

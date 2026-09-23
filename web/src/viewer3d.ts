@@ -26,7 +26,8 @@
  * the container: `data-bodies` and `data-triangles` for what was drawn, `data-bounds` for the
  * box it fills, `data-selected` and `data-pointed` for the refs lit, `data-lit` for how many
  * triangles are painted as selected, `data-distance` for how far the camera stands from what
- * it looks at, `data-datum` for how long the origin's own X/Y/Z arms are drawn, and
+ * it looks at, `data-datum` for how long the origin's own X/Y/Z arms are drawn,
+ * `data-section` for the axis and position a section is clipping at (empty when off) and
  * `data-colour-faces` for whether every named face is painted its own colour (empty when off).
  */
 import * as THREE from "three";
@@ -49,6 +50,15 @@ const CLICK_SLOP = 4; // px of pointer travel that is still a click, not a drag
 const LINE_PICK = 0.8; // mm either side of an engraved line that still picks it
 const LETTER_PX = 64; // the height lettering is rendered at before it is laid on its box
 
+/** Which axis a section clips along, and where along it. `position` is an absolute
+ * millimetre in the scene's own coordinates - the stage's, not a fraction of the box - so a
+ * section stands still while a pose knob moves the geometry through it. */
+export type SectionAxis = "x" | "y" | "z";
+export interface SectionState {
+  readonly axis: SectionAxis;
+  readonly position: number;
+}
+
 /** The four states a face can be in, and the ink an engraving is drawn in when it is in none
  * of them. */
 const BASE = new THREE.Color(0x9fb0c0);
@@ -56,6 +66,11 @@ const INK = new THREE.Color(0x2f353b);
 const HOVER = new THREE.Color(0xc8d6e2);
 const SELECTED = new THREE.Color(0x00aaaa);
 const CURSOR = new THREE.Color(0xe38b00);
+
+/** What a cut face is painted, unlit - a section is not lighting, and reading it as one more
+ * shaded surface among the part's own would hide the one thing it is there to say: this is
+ * open material, not a face the part actually has. */
+const CUT = new THREE.Color(0xb23a2e);
 
 /** The origin, as a constant rather than a fresh vector at every call - every arrow of the
  * datum starts here and nowhere else. */
@@ -101,6 +116,13 @@ export interface Viewer3D {
    * `onDetectPick`. `null` turns detection off: the backdrop goes back to its plain ghost
    * and stops answering clicks, exactly as before this existed. */
   detect(flatIndex: readonly (number | null)[] | null): void;
+  /** Clip every part at a plane along `axis`, at `position` millimetres in the scene's own
+   * coordinates - three.js clipping planes, drawing only, nothing computed here that Python
+   * has not already placed. Cut faces are painted `CUT` so a gap between two parts at the
+   * section is a gap, not one more shaded surface. `null` turns the section off. Untouched by
+   * `show()` - it stays exactly as set across a re-run or a knob change, which is what lets
+   * dragging a pose knob sweep the section through the geometry. Off by default. */
+  section(state: SectionState | null): void;
   /** Colour every named face of every built part in its own pastel from the same palette
    * `detect` uses - one index run across every part in the scene, so two faces never share a
    * hue even across a seam between parts. `on` toggles it; off restores the plain base
@@ -142,6 +164,12 @@ export interface Viewer3DHooks {
  * colours painted on them. */
 interface Body {
   readonly mesh: THREE.Mesh;
+  /** The same triangles again, painted `CUT` and drawn from the back - the section's cut
+   * face. Shares `mesh`'s own geometry (one buffer, two views onto it), visible only while a
+   * section is on, so nothing here computes a cross-section: what shows through where the
+   * front skin was clipped away is the part's own inside surface, tinted so it reads as cut
+   * rather than as one more lit face. */
+  readonly cap: THREE.Mesh;
   readonly refs: readonly string[];
   readonly index: Uint32Array;
   readonly colors: THREE.BufferAttribute;
@@ -289,6 +317,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       empty: () => true,
       say: () => {},
       detect: () => {},
+      section: () => {},
       colourFaces: () => {},
       markReference: () => {},
     };
@@ -419,6 +448,43 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
   let hovered: string | null = null;
   let frame = 0;
 
+  // ---- section --------------------------------------------------------------------
+  //
+  // One plane, shared by every body's front and cap material - moving it moves every part's
+  // section at once, and is the only thing changing it ever does, so no material is rebuilt
+  // when the axis, the position or the on/off state changes. Clipping is enabled or disabled
+  // for the whole renderer instead of by emptying `clippingPlanes`, which is what keeps a
+  // toggle from asking three.js to recompile every part's shader.
+  view.localClippingEnabled = false;
+  const clipPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
+  let section: SectionState | null = null;
+
+  function planeFor(state: SectionState): void {
+    switch (state.axis) {
+      case "x":
+        clipPlane.normal.set(-1, 0, 0);
+        clipPlane.constant = state.position;
+        break;
+      case "y":
+        clipPlane.normal.set(0, 1, 0);
+        clipPlane.constant = -state.position;
+        break;
+      case "z":
+        clipPlane.normal.set(0, 0, -1);
+        clipPlane.constant = state.position;
+        break;
+    }
+  }
+
+  function applySection(state: SectionState | null): void {
+    section = state;
+    if (state !== null) planeFor(state);
+    view.localClippingEnabled = state !== null;
+    for (const body of bodies) body.cap.visible = state !== null;
+    container.dataset["section"] = state === null ? "" : `${state.axis}:${state.position.toFixed(2)}`;
+    draw();
+  }
+
   // ---- colour faces -----------------------------------------------------------------
   //
   // Which pastel each named face is painted, one index run across every body in the scene so
@@ -495,9 +561,13 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
 
   function clear(): void {
     for (const body of bodies) {
+      // `cap` shares `mesh`'s own geometry - one buffer, two meshes - so it is disposed once,
+      // through whichever of the pair does it first.
       body.mesh.geometry.dispose();
       const material = body.mesh.material;
       if (material instanceof THREE.Material) material.dispose();
+      const capMaterial = body.cap.material;
+      if (capMaterial instanceof THREE.Material) capMaterial.dispose();
     }
     for (const one of scored) {
       one.lines.geometry.dispose();
@@ -704,10 +774,22 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       roughness: 0.62,
       metalness: 0.04,
       flatShading: true,
+      clippingPlanes: [clipPlane],
     });
     const mesh = new THREE.Mesh(geometry, surface);
     parts.add(mesh);
-    return { mesh, refs, index, colors, part };
+    // Same geometry, drawn from the back and tinted flat: where the section clips the front
+    // skin away, this is what shows through - the part's own inside surface, painted `CUT`
+    // rather than left to read as one more lit face. `BackSide` alone would show it whenever
+    // the camera looks into the part from outside, which never happens on a body nothing has
+    // clipped; the plane is what actually opens it up.
+    const cap = new THREE.Mesh(
+      geometry,
+      new THREE.MeshBasicMaterial({ color: CUT, side: THREE.BackSide, clippingPlanes: [clipPlane] }),
+    );
+    cap.visible = section !== null;
+    parts.add(cap);
+    return { mesh, cap, refs, index, colors, part };
   }
 
   function scoredOf(part: PartView, marks: MarksView): Scored {
@@ -715,7 +797,10 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     geometry.setAttribute("position", new THREE.BufferAttribute(marks.segments, 3));
     const colors = new THREE.BufferAttribute(new Float32Array(marks.segments.length), 3);
     geometry.setAttribute("color", colors);
-    const drawn = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ vertexColors: true }));
+    const drawn = new THREE.LineSegments(
+      geometry,
+      new THREE.LineBasicMaterial({ vertexColors: true, clippingPlanes: [clipPlane] }),
+    );
     parts.add(drawn);
     return { lines: drawn, refs: marks.refs, index: marks.ref_index, colors, part };
   }
@@ -732,6 +817,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
+      clippingPlanes: [clipPlane],
     });
     const quad = new THREE.Mesh(geometry, material);
     parts.add(quad);
@@ -891,7 +977,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
   /** What one hit of the ray answers to, or `null` when it is nothing of ours. A triangle, a
    * segment or a line of lettering with no name of its own answers to its part. */
   function foundBy(hit: THREE.Intersection): Found | null {
-    const body = bodies.find((one) => one.mesh === hit.object);
+    const body = bodies.find((one) => one.mesh === hit.object || one.cap === hit.object);
     if (body !== undefined) {
       const triangle = hit.faceIndex ?? -1;
       return { ref: refIn(body.refs, body.index, triangle) ?? body.part.ref, part: body.part };
@@ -916,6 +1002,11 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     );
     caster.setFromCamera(where, camera);
     for (const hit of caster.intersectObjects(parts.children, false)) {
+      // The raycaster knows nothing of clipping planes - it would happily hand back a
+      // triangle the section has clipped away, since that clip only ever happened in the
+      // fragment shader. So a section on filters the same way it paints: a hit on the wrong
+      // side of the plane is not under the pointer at all.
+      if (section !== null && clipPlane.distanceToPoint(hit.point) < 0) continue;
       const found = foundBy(hit);
       if (found !== null) return found;
     }
@@ -1014,6 +1105,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       note.textContent = text;
     },
     detect,
+    section: applySection,
     colourFaces(on) {
       colouring = on;
       paint();
