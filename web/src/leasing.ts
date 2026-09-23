@@ -7,12 +7,15 @@
  * into an editor that takes typing or does not, knobs that are kept or are not, and a notice
  * saying who holds the project.
  *
- * **A reader keeps asking.** Every answer says how soon to ask again (`renewMs`, the server's
- * own), and a reader asks on the same cadence as a holder renews - with the same `take` - so a
- * lease that lapses, or is let go, is picked up by whoever is still looking at the project with
- * nobody having to press anything (AC#3). That also means a tab left open on a project somebody
- * else is writing becomes its writer the moment they stop, which is what "becomes writable again
- * without anyone intervening" asks for.
+ * **A reader keeps asking, a holder renews.** Every answer says how soon to ask again
+ * (`renewMs`, the server's own). A reader asks `take` on that cadence, so a lease that lapses,
+ * or is let go, is picked up by whoever is still looking at the project with nobody having to
+ * press anything (AC#3) - a tab left open on a project somebody else is writing becomes its
+ * writer the moment they stop. A holder asks `renew` instead: `renew` only ever extends a lease
+ * this tab still holds, never creates one, so a renewal already on the wire when the tab closes
+ * cannot land after the release and hand the lease back to a tab that is gone (task-55). A
+ * `renew` answered "not yours" is read as: held by somebody else now - become their reader; or
+ * free - take it, the same as a reader would.
  *
  * **Not being able to ask changes nothing.** A lease request that does not get an answer - the
  * network, a restart mid-renewal - leaves the standing as it was and asks again sooner: a holder
@@ -25,7 +28,7 @@
  * rather than wrong (decision-9).
  */
 import type { Host, Identity } from "./host";
-import type { Held } from "./lease";
+import type { Act, Held } from "./lease";
 import { KEYS, tabRemember, tabRemembered } from "./storage";
 
 /** Where this tab stands on the project it has open. */
@@ -121,8 +124,9 @@ export function leasing(client: Host): Leasing {
   let generation = 0;
   let renewMs = RETRY_MS;
   /** The ask on its way, so letting go can call it back: a renewal still in flight when the
-   * page goes would otherwise be able to land *after* the release and take the lease again for
-   * a tab that is no longer there. */
+   * page goes is now harmless on the server even if it lands after the release (task-55 -
+   * `renew` never creates a lease), but sending it anyway would only be answered "you do not
+   * hold it" for a tab that is no longer there to hear it, so it is aborted as a courtesy. */
   let asking: AbortController | null = null;
   const listeners = new Set<(standing: Standing) => void>();
 
@@ -131,15 +135,20 @@ export function leasing(client: Host): Leasing {
     for (const fn of listeners) fn(next);
   }
 
-  function schedule(project: string, delay: number): void {
+  /** `take` for a tab that does not hold the lease - opening, reclaiming its own after a
+   * reload, or a reader noticing it might have come free - `renew` for one that does: a holder
+   * schedules its own next ask as `renew`, never `take`, so a renewal already on its way to the
+   * server when this tab closes can only ever extend the lease this tab holds, never re-create
+   * it for a tab that is gone (task-55). */
+  function schedule(project: string, delay: number, act: "take" | "renew"): void {
     clearTimeout(timer);
     const asked = generation;
     timer = setTimeout(() => {
-      void ask(project, "take", asked);
+      void ask(project, act, asked);
     }, delay);
   }
 
-  async function ask(project: string, act: "take" | "take-over", asked: number): Promise<void> {
+  async function ask(project: string, act: Act, asked: number): Promise<void> {
     let answer: Awaited<ReturnType<Host["lease"]>> | null;
     const mine = new AbortController();
     asking = mine;
@@ -151,19 +160,30 @@ export function leasing(client: Host): Leasing {
     if (mine.signal.aborted) return; // let go of while this was asked
     if (asked !== generation) return; // another project was opened while this was asked
     if (answer === null || !answer.ok) {
-      schedule(project, Math.min(renewMs, RETRY_MS));
+      schedule(project, Math.min(renewMs, RETRY_MS), act === "renew" ? "renew" : "take");
       return;
     }
     const said = answer.value;
     renewMs = said.renewMs;
-    const was = current;
     if (said.yours) {
       set({ kind: "writer", project });
-    } else if (said.holder !== null) {
+      schedule(project, renewMs, "renew");
+      return;
+    }
+    if (act === "renew" && said.holder === null) {
+      // This tab's lease lapsed - a laptop that slept through a renewal or two - and nobody
+      // has taken it in between: free is free, so it is taken again, the same as a reader
+      // would. What `renew` must never do on its own is hand the lease back once somebody else
+      // holds it (`said.holder !== null`, below) - that is not this tab's to decide.
+      void ask(project, "take", asked);
+      return;
+    }
+    if (said.holder !== null) {
+      const was = current;
       const lost = was?.project === project && (was.kind === "writer" || (was.kind === "reader" && was.lost));
       set({ kind: "reader", project, holder: said.holder, lost });
     }
-    schedule(project, renewMs);
+    schedule(project, renewMs, "take");
   }
 
   return {
