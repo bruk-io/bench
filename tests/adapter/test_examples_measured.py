@@ -490,3 +490,55 @@ def test_the_vents_attachment_touches_the_flange_and_clears_the_collar_at_a_slid
     measured_gap = float(groove.split("clear by ")[1].split(" mm")[0])
     slide = clearance(Fit.SLIDE, PLA)
     assert slide <= measured_gap <= clearance(Fit.SLIDE, PLA, concave=True) + _TINY
+
+
+# ---- (h) task-61: a picked face's frame sits under the face it names -------------------
+
+_FRAME_TOL = 1e-3
+"""Millimetres. Looser than :data:`bench.geometry.TOL`, which is for arithmetic done in
+Python; a real kernel's own float noise is what this has to clear."""
+
+
+def _framed_points(mesh: MeshView, ref: str) -> tuple[Point, ...]:
+    """Every corner of every triangle answering to exactly ``ref`` - not a prefix match, the
+    way :func:`_points` is, because a frame names one face and nothing under it."""
+    found: set[tuple[float, float, float]] = set()
+    corners = mesh["positions"]
+    for i, place in enumerate(mesh["ref_index"]):
+        if place == 0 or mesh["refs"][place - 1] != ref:
+            continue
+        for k in range(3):
+            at = 9 * i + 3 * k
+            found.add((corners[at], corners[at + 1], corners[at + 2]))
+    return tuple(Point(*one) for one in sorted(found))
+
+
+def test_every_face_frame_lies_on_its_own_triangles(measured: dict[str, Any]) -> None:
+    """The frame :func:`bench.views._frames_view` sends for a ref is exactly what
+    :func:`~bench.solids.plane_of` answers for it, moved by the same stage offset the mesh's
+    own triangles were - so every corner of every triangle a frame names has to satisfy the
+    plane it names: ``|normal . (corner - origin)| < tol``.
+
+    Checked across every example with a printed part, not one shape picked to make it easy,
+    and relationally against the frame's own numbers rather than a hard-coded coordinate - a
+    posed assembly (the vent) and a laid-out one (everything else) put a body at a different
+    offset, and this has to hold either way. Normal *direction* is not asserted - a cut
+    face's own is task-65's open question - only that the plane itself is right.
+    """
+    checked = 0
+    for name in NAMES:
+        scene = _scene(measured, name)
+        for view in scene["parts"]:
+            mesh = view["mesh"]
+            if mesh is None:
+                continue
+            for ref, frame in view["frames"].items():
+                origin = Point(*frame["origin"])
+                normal = Vector(*frame["normal"])
+                for corner in _framed_points(mesh, ref):
+                    off = abs((corner - origin) @ normal)
+                    assert off < _FRAME_TOL, (
+                        f"{name}: {ref}'s frame is {off:.4f} mm off its own face"
+                    )
+                    checked += 1
+    assert checked > 0, "no example gave a face frame to check at all"

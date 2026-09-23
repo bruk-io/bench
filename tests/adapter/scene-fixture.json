@@ -209,7 +209,8 @@
             3.05
           ]
         }
-      ]
+      ],
+      "frames": {}
     },
     {
       "ref": "drawer-front-2",
@@ -294,7 +295,8 @@
             3.05
           ]
         }
-      ]
+      ],
+      "frames": {}
     },
     {
       "ref": "drawer-front-3",
@@ -379,7 +381,8 @@
             3.05
           ]
         }
-      ]
+      ],
+      "frames": {}
     },
     {
       "ref": "drawer-front-4",
@@ -464,7 +467,8 @@
             3.05
           ]
         }
-      ]
+      ],
+      "frames": {}
     },
     {
       "ref": "drawer-front-5",
@@ -549,7 +553,8 @@
             3.05
           ]
         }
-      ]
+      ],
+      "frames": {}
     },
     {
       "ref": "drawer-front-6",
@@ -634,7 +639,8 @@
             3.05
           ]
         }
-      ]
+      ],
+      "frames": {}
     },
     {
       "ref": "drawer-back",
@@ -699,7 +705,8 @@
         ]
       },
       "marks": null,
-      "lettering": []
+      "lettering": [],
+      "frames": {}
     },
     {
       "ref": "drawer-side",
@@ -748,7 +755,8 @@
         ]
       },
       "marks": null,
-      "lettering": []
+      "lettering": [],
+      "frames": {}
     },
     {
       "ref": "drawer-bottom",
@@ -857,7 +865,8 @@
         ]
       },
       "marks": null,
-      "lettering": []
+      "lettering": [],
+      "frames": {}
     },
     {
       "ref": "cabinet-side-left",
@@ -962,7 +971,8 @@
         ]
       },
       "marks": null,
-      "lettering": []
+      "lettering": [],
+      "frames": {}
     },
     {
       "ref": "cabinet-side-right",
@@ -1067,7 +1077,8 @@
         ]
       },
       "marks": null,
-      "lettering": []
+      "lettering": [],
+      "frames": {}
     },
     {
       "ref": "cabinet-top-bottom",
@@ -1144,7 +1155,8 @@
         ]
       },
       "marks": null,
-      "lettering": []
+      "lettering": [],
+      "frames": {}
     },
     {
       "ref": "cabinet-back",
@@ -1301,7 +1313,8 @@
         ]
       },
       "marks": null,
-      "lettering": []
+      "lettering": [],
+      "frames": {}
     },
     {
       "ref": "runner",
@@ -1338,7 +1351,8 @@
         ]
       },
       "marks": null,
-      "lettering": []
+      "lettering": [],
+      "frames": {}
     }
   ],
   "stage": {
