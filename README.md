@@ -66,6 +66,10 @@ teardrop, because the part says which way up it prints and a bore lying on its s
 be printed round. `require()` stops the run on a violation; `check_fits(...)` on its own
 records one and lets the run finish.
 
+[`docs/printing.md`](docs/printing.md) is the longer guide to designing a part for FDM
+printing with bench: orientation, walls, overhangs, holes, fits, fasteners and flexures, each
+rule with its source and how sure anyone is, how to do it here, and what bench checks.
+
 A library like `gridfinity` is not part of `bench` itself: a script imports it
 by name, the same as any other module - `from bench.library import
 gridfinity` - and the browser's editor additionally pre-binds `gridfinity`
