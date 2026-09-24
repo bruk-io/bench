@@ -23,6 +23,7 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
   let section: SectionState | null = null;
   let colouring = false;
   let marked = false;
+  let hidden: readonly string[] = [];
 
   function wake(): void {
     if (asked) return;
@@ -48,6 +49,7 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
         made.section(section);
         made.colourFaces(colouring);
         made.markReference(marked);
+        made.hide(hidden);
         real = made;
       },
       (problem: unknown) => {
@@ -103,6 +105,10 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
     markReference(lit) {
       marked = lit;
       real?.markReference(lit);
+    },
+    hide(refs) {
+      hidden = refs;
+      real?.hide(refs);
     },
   };
 }

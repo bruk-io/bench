@@ -8,6 +8,13 @@
  * click on a face as readily as by a click in here - and setting it opens whatever ancestors
  * were shut and scrolls the row into view. A click on a row goes up as `ref-pick` and nothing
  * more: this component never selects itself, so the two directions cannot fight or loop.
+ *
+ * Visibility is the same shape, one more time (task-67). `hidden` comes down from the page,
+ * every row's own eye draws hidden or not by it, and a click on an eye goes up as
+ * `ref-visibility` - the ref and the state it should now have - never a new `hidden` array:
+ * this component does not know whether hiding one row should turn another back on, so it says
+ * what changed and lets the page decide what the whole set becomes. `ref-isolate` off a
+ * part's own "only" is the same shape at the scale of a whole assembly.
  */
 import { LitElement, type PropertyValues, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
@@ -17,6 +24,18 @@ import { base } from "../styles";
 
 /** Which ref a person picked off the tree. */
 export interface RefPickDetail {
+  readonly ref: string;
+}
+
+/** A row's eye was clicked: `ref` and the state it should now have. The page owns
+ * `hidden` - this never guesses at what the new set should be, only what changed. */
+export interface RefVisibilityDetail {
+  readonly ref: string;
+  readonly hidden: boolean;
+}
+
+/** A part row's "only" was clicked: show `ref` and hide every other part. */
+export interface RefIsolateDetail {
   readonly ref: string;
 }
 
@@ -79,6 +98,10 @@ function ancestors(ref: string): string[] {
  * paints by, so a shut parent still shows that something under it was reported. */
 const within = (ref: string, flagged: string): boolean =>
   ref === flagged || flagged.startsWith(`${ref}/`);
+
+/** Whether `path` is under `ancestor` - the other direction from `within`: is this row
+ * inside a hidden one, rather than does a hidden ref sit inside this row. */
+const under = (path: string, ancestor: string): boolean => path.startsWith(`${ancestor}/`);
 
 @customElement("bench-refs-tree")
 export class BenchRefsTree extends LitElement {
@@ -151,6 +174,71 @@ export class BenchRefsTree extends LitElement {
         font-size: 10px;
       }
 
+      .row[data-hidden="true"] .name {
+        color: var(--fg-faint);
+        font-style: italic;
+      }
+
+      /* The eye is a hit area of its own, the same reason the twisty is: hiding a row and
+         selecting it are two different clicks. Faint until hovered or actually hiding
+         something, so a tree of hundreds of rows does not read as hundreds of eyes. */
+      .eye {
+        flex: none;
+        width: 15px;
+        height: 15px;
+        padding: 0;
+        border: none;
+        background: none;
+        box-shadow: none;
+        color: var(--fg-faint);
+        font-size: 10px;
+        line-height: 1;
+        cursor: pointer;
+        opacity: 0;
+      }
+
+      .row:hover .eye,
+      .row:focus-within .eye,
+      .eye[aria-pressed="true"],
+      .eye[data-inherited="true"] {
+        opacity: 1;
+      }
+
+      .eye[aria-pressed="true"] {
+        color: var(--danger);
+      }
+
+      .eye[data-inherited="true"] {
+        color: var(--fg-faint);
+        cursor: default;
+      }
+
+      .hidden-tag {
+        flex: none;
+        color: var(--fg-faint);
+        font-family: var(--sans);
+        font-size: 9px;
+      }
+
+      .isolate {
+        flex: none;
+        padding: 0 2px;
+        border: none;
+        background: none;
+        box-shadow: none;
+        color: var(--fg-faint);
+        font-family: var(--sans);
+        font-size: 9px;
+        text-decoration: underline;
+        cursor: pointer;
+        opacity: 0;
+      }
+
+      .row:hover .isolate,
+      .row:focus-within .isolate {
+        opacity: 1;
+      }
+
       .active {
         margin-left: 6px;
         color: var(--accent);
@@ -212,6 +300,17 @@ export class BenchRefsTree extends LitElement {
 
   /** The refs a check reported, marked on their own row and on the rows above them. */
   @property({ attribute: false }) flagged: readonly string[] = [];
+
+  /** The rows a person has hidden by their eye, by the exact ref path clicked - the page's
+   * own set, held here only to draw. "Hides everything under it" is read at draw time, the
+   * same way `flagged`'s rows above a finding are: a row is drawn hidden when its own path is
+   * in here or a path above it is.
+   *
+   * Named `hiddenRefs`, not `hidden`: `HTMLElement` already has a `hidden` of its own (shows
+   * or hides the whole element), and shadowing it is exactly the kind of thing that reads
+   * fine here and breaks the day something calls `element.hidden = true` expecting the DOM's
+   * own meaning. */
+  @property({ attribute: false }) hiddenRefs: readonly string[] = [];
 
   /** The branches a person opened by hand. Everything starts shut.
    *
@@ -300,6 +399,13 @@ export class BenchRefsTree extends LitElement {
   private row({ node, depth, open }: Row) {
     const leaf = node.children.length === 0;
     const reported = this.flagged.some((one) => within(node.path, one));
+    // A row reads hidden either because its own eye is shut or because something above it
+    // is - the same "inside" `flagged`'s own marking already reads by, the other way round.
+    const selfHidden = this.hiddenRefs.includes(node.path);
+    const inherited = !selfHidden && this.hiddenRefs.some((one) => under(node.path, one));
+    const effectivelyHidden = selfHidden || inherited;
+    const hasHiddenChild =
+      !effectivelyHidden && this.hiddenRefs.some((one) => one !== node.path && under(one, node.path));
     return html`
       <div
         class="row"
@@ -308,6 +414,7 @@ export class BenchRefsTree extends LitElement {
         aria-current=${node.path === this.selected ? "true" : "false"}
         aria-expanded=${ifDefined(leaf ? undefined : open ? "true" : "false")}
         data-ref=${node.path}
+        data-hidden=${effectivelyHidden ? "true" : "false"}
         style=${`padding-left: ${String(4 + depth * 12)}px`}
         @click=${() => this.pick(node.path)}
         @keydown=${(event: KeyboardEvent) => this.keyed(event, node.path)}
@@ -322,8 +429,40 @@ export class BenchRefsTree extends LitElement {
         >
           ${leaf ? "" : open ? "▾" : "▸"}
         </button>
+        <button
+          class="eye"
+          type="button"
+          tabindex="-1"
+          aria-hidden="true"
+          aria-pressed=${selfHidden ? "true" : "false"}
+          data-inherited=${String(inherited)}
+          title=${inherited
+            ? "hidden - a row above this is hidden"
+            : selfHidden
+              ? "hidden - click to show"
+              : "click to hide"}
+          @click=${(event: Event) => this.toggleVisibility(event, node.path, selfHidden)}
+        >
+          ${effectivelyHidden ? "○" : "◉"}
+        </button>
         <span class="name">${node.name}</span>
         ${reported ? html`<span class="flag" title="a check reported this">⚠</span>` : nothing}
+        ${effectivelyHidden ? html`<span class="hidden-tag">hidden</span>` : nothing}
+        ${hasHiddenChild ? html`<span class="hidden-tag">has hidden</span>` : nothing}
+        ${depth === 0
+          ? html`
+              <button
+                class="isolate"
+                type="button"
+                tabindex="-1"
+                aria-hidden="true"
+                title="show only this part"
+                @click=${(event: Event) => this.isolate(event, node.path)}
+              >
+                only
+              </button>
+            `
+          : nothing}
       </div>
     `;
   }
@@ -336,6 +475,26 @@ export class BenchRefsTree extends LitElement {
     if (next.has(path)) next.delete(path);
     else next.add(path);
     this.opened = next;
+  }
+
+  /** The eye is inside the row too, and hiding a row is not selecting it - the page owns
+   * `hidden` and decides what the new set is; this only ever says which row and which way. */
+  private toggleVisibility(event: Event, ref: string, currentlyHidden: boolean): void {
+    event.stopPropagation();
+    this.dispatchEvent(
+      new CustomEvent<RefVisibilityDetail>("ref-visibility", {
+        bubbles: true,
+        composed: true,
+        detail: { ref, hidden: !currentlyHidden },
+      }),
+    );
+  }
+
+  private isolate(event: Event, ref: string): void {
+    event.stopPropagation();
+    this.dispatchEvent(
+      new CustomEvent<RefIsolateDetail>("ref-isolate", { bubbles: true, composed: true, detail: { ref } }),
+    );
   }
 
   private keyed(event: KeyboardEvent, path: string): void {
@@ -377,5 +536,7 @@ declare global {
   interface HTMLElementEventMap {
     "ref-pick": CustomEvent<RefPickDetail>;
     "reference-pick": CustomEvent<ReferencePickDetail>;
+    "ref-visibility": CustomEvent<RefVisibilityDetail>;
+    "ref-isolate": CustomEvent<RefIsolateDetail>;
   }
 }

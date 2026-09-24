@@ -27,8 +27,10 @@
  * box it fills, `data-selected` and `data-pointed` for the refs lit, `data-lit` for how many
  * triangles are painted as selected, `data-distance` for how far the camera stands from what
  * it looks at, `data-datum` for how long the origin's own X/Y/Z arms are drawn,
- * `data-section` for the axis and position a section is clipping at (empty when off) and
- * `data-colour-faces` for whether every named face is painted its own colour (empty when off).
+ * `data-section` for the axis and position a section is clipping at (empty when off),
+ * `data-colour-faces` for whether every named face is painted its own colour (empty when off)
+ * and `data-hidden` for how many triangles the refs container's eye toggles are hiding right
+ * now.
  */
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -151,6 +153,14 @@ export interface Viewer3D {
    * backdrop is wearing its flats' colours and this does nothing, since being told which body
    * is meant is not a reason to throw away the measurement being looked at. */
   markReference(lit: boolean): void;
+  /** Hide every ref in `refs` and everything under it - a part, a node's faces - and show
+   * everything else: the refs container's own eye toggles, isolate and show-all all resolve
+   * to one call of this, replacing whatever was hidden before. Drawing only: which triangles,
+   * segments and lettering answer to a hidden ref is read off the ref membership the scene
+   * already carries, nothing computed here that Python did not already name. Untouched by
+   * `show()` - it stays exactly as set across a re-run, the same as `section` and
+   * `colourFaces` above. Off (nothing hidden) by default. */
+  hide(refs: readonly string[]): void;
 }
 
 /** Where a click on the backdrop landed, in the dropped body's own coordinates - decision-7's
@@ -341,6 +351,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       section: () => {},
       colourFaces: () => {},
       markReference: () => {},
+      hide: () => {},
     };
   }
 
@@ -608,6 +619,70 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
   // so it survives a re-run exactly the way `chosen` and `pointed` do.
   let colouring = false;
   let faceColour: ReadonlyMap<string, THREE.Color> = new Map();
+
+  // ---- hide/show --------------------------------------------------------------------
+  //
+  // Which rows the refs container has hidden, by their own exact ref path. "Hides everything
+  // under it" is `within` at the moment triangles are filtered - the same prefix check
+  // `shade()` already reads `chosen` and `flagged` by - so hiding a part never has to expand
+  // into the hundreds of face refs under it. Kept in the closure, not sent anywhere:
+  // decision-7 is about a pick; this is view state exactly as `section` and `colouring`
+  // above are, and untouched by `clear()`, so a re-run keeps it.
+  let hiddenRefs: readonly string[] = [];
+
+  const isHidden = (ref: string): boolean => hiddenRefs.some((root) => within(ref, root));
+
+  /** `refs`/`index` filtered to only the entries (triangles at `step` 3, segments at `step`
+   * 2) whose own ref is not hidden, as the vertex numbers into `positions` an indexed
+   * `BufferGeometry` wants - or `null` when nothing is hidden, which puts the geometry back
+   * to its plain, non-indexed form rather than an index that names every entry.
+   *
+   * This is the one rebuild hiding costs: once per toggle, over however many triangles the
+   * scene actually has - never once per frame, and never once per ref. `hiddenRefs` is
+   * ordinarily a handful of rows a person clicked, so the cost here is the scene's own
+   * triangle count, read once, which is what stays cheap on the cabinet's 770 refs: the tree
+   * has 770 names, but a toggle still costs one pass over the triangles, not the names. */
+  function filteredIndex(
+    refs: readonly string[],
+    index: Uint32Array,
+    fallback: string,
+    step: number,
+  ): THREE.BufferAttribute | null {
+    if (hiddenRefs.length === 0) return null;
+    const kept: number[] = [];
+    for (let at = 0; at < index.length; at += 1) {
+      if (isHidden(refIn(refs, index, at) ?? fallback)) continue;
+      for (let corner = 0; corner < step; corner += 1) kept.push(at * step + corner);
+    }
+    return new THREE.BufferAttribute(new Uint32Array(kept), 1);
+  }
+
+  /** Put every body, engraved wire and line of lettering back to what `hiddenRefs` now says.
+   *
+   * The index rebuilt here is what keeps a hidden triangle both undrawn and unpickable in one
+   * move: three.js's own raycast against a `Mesh` or `LineSegments` walks the index when
+   * there is one, so an entry left out of it is never tested, the same way a section's own
+   * clip plane is filtered in `under()` below - except this needs no per-hit test at all,
+   * because the geometry itself no longer carries what is hidden. */
+  function applyHidden(): void {
+    for (const body of bodies) {
+      body.mesh.geometry.setIndex(filteredIndex(body.refs, body.index, body.part.ref, 3));
+    }
+    for (const one of scored) {
+      one.lines.geometry.setIndex(filteredIndex(one.refs, one.index, one.part.ref, 2));
+    }
+    for (const one of lettered) one.quad.visible = !isHidden(one.ref ?? one.part.ref);
+    // For a test to read, the same "for a test to read" convention `data-bodies` etc already
+    // use: how many triangles across every body are hidden right now.
+    let hidden = 0;
+    for (const body of bodies) {
+      for (let at = 0; at < body.index.length; at += 1) {
+        if (isHidden(refIn(body.refs, body.index, at) ?? body.part.ref)) hidden += 1;
+      }
+    }
+    container.dataset["hidden"] = String(hidden);
+    paint();
+  }
 
   /** Draw once, on the next frame; several changes in one tick cost one picture. */
   function draw(): void {
@@ -1013,7 +1088,10 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     if (lostSecond) chosenSecond = null;
     if (pointed !== null && !known(pointed)) pointed = null;
     hovered = null;
-    paint();
+    // Every body, wire and quad above is freshly built and starts plain, so what `hiddenRefs`
+    // says has to be put back on it - the same reason `stand()` repaints a lit reference on
+    // every redraw - and this is what paints, so nothing here calls `paint()` a second time.
+    applyHidden();
     if (lost) hooks.onSelect(null);
     if (lostSecond) hooks.onSelectSecond(null);
     // A dropped body is worth framing even when the script made nothing to stand beside it,
@@ -1095,16 +1173,26 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
   const where = new THREE.Vector2();
 
   /** What one hit of the ray answers to, or `null` when it is nothing of ours. A triangle, a
-   * segment or a line of lettering with no name of its own answers to its part. */
+   * segment or a line of lettering with no name of its own answers to its part.
+   *
+   * Never `hit.faceIndex`/`hit.index` alone: those count a position in whatever three.js just
+   * walked, and hiding gives a body's geometry an index that leaves triangles out, so that
+   * position is not the same number as the triangle's own once anything is hidden. `face.a` -
+   * a triangle's first *vertex* - is not: `bodyOf` lays three unshared vertices per triangle
+   * straight into `positions`, in order, so `face.a / 3` is the triangle's own number whether
+   * the geometry is indexed or not, the same way `index.getX(hit.index)` is a line segment's
+   * first vertex regardless of which entries of the index were kept. */
   function foundBy(hit: THREE.Intersection): Found | null {
     const body = bodies.find((one) => one.mesh === hit.object || one.cap === hit.object);
     if (body !== undefined) {
-      const triangle = hit.faceIndex ?? -1;
+      const triangle = hit.face !== null && hit.face !== undefined ? Math.floor(hit.face.a / 3) : -1;
       return { ref: refIn(body.refs, body.index, triangle) ?? body.part.ref, part: body.part };
     }
     const lines = scored.find((one) => one.lines === hit.object);
     if (lines !== undefined) {
-      const segment = Math.floor((hit.index ?? -2) / 2);
+      const at = hit.index ?? -2;
+      const vertex = lines.lines.geometry.index?.getX(at) ?? at;
+      const segment = Math.floor(vertex / 2);
       return { ref: refIn(lines.refs, lines.index, segment) ?? lines.part.ref, part: lines.part };
     }
     const words = lettered.find((one) => one.quad === hit.object);
@@ -1128,7 +1216,15 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       // side of the plane is not under the pointer at all.
       if (section !== null && clipPlane.distanceToPoint(hit.point) < 0) continue;
       const found = foundBy(hit);
-      if (found !== null) return found;
+      if (found === null) continue;
+      // Belt and braces beside `applyHidden`'s own index rebuild, which is what actually
+      // keeps a hidden triangle out of the raycast: `quad.visible = false` on a line of
+      // lettering does not stop a raycast meeting it (three.js's own raycaster reads no
+      // object's `visible`), so a hidden ref is refused here too, on every kind of hit alike -
+      // and a hit refused here is a hit skipped, which is what lets a click through to
+      // whatever undrawn geometry sits behind it.
+      if (isHidden(found.ref)) continue;
+      return found;
     }
     return null;
   }
@@ -1251,5 +1347,9 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       paint();
     },
     markReference,
+    hide(refs) {
+      hiddenRefs = refs;
+      applyHidden();
+    },
   };
 }
