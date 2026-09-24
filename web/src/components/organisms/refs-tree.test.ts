@@ -4,7 +4,9 @@ import "./refs-tree";
 import {
   type BenchRefsTree,
   type ReferencePickDetail,
+  type RefIsolateDetail,
   type RefPickDetail,
+  type RefVisibilityDetail,
   treeOf,
 } from "./refs-tree";
 
@@ -17,7 +19,10 @@ const CABINET = [
 ];
 
 type Fields = Partial<
-  Pick<BenchRefsTree, "refs" | "selected" | "flagged" | "references" | "selectedReference" | "activeReference">
+  Pick<
+    BenchRefsTree,
+    "refs" | "selected" | "flagged" | "references" | "selectedReference" | "activeReference" | "hiddenRefs"
+  >
 >;
 
 async function mounted(fields: Fields = {}): Promise<BenchRefsTree> {
@@ -361,5 +366,84 @@ describe("bench-refs-tree, the bodies somebody else made", () => {
     );
     await tree.updateComplete;
     expect(seen).toEqual([BRACKET]);
+  });
+});
+
+describe("bench-refs-tree, hiding and showing (task-67)", () => {
+  it("draws every row plain when nothing is hidden", async () => {
+    const tree = await mounted({ refs: CABINET });
+    expect(drawn(tree, "cabinet-side-left").dataset["hidden"]).toBe("false");
+  });
+
+  it("marks a hidden row's own eye and dims the row, but not its siblings", async () => {
+    const tree = await mounted({ refs: CABINET, hiddenRefs: ["cabinet-side-left"] });
+    const row = drawn(tree, "cabinet-side-left");
+    expect(row.dataset["hidden"]).toBe("true");
+    expect(row.querySelector(".eye")?.getAttribute("aria-pressed")).toBe("true");
+    expect(drawn(tree, "drawer-back-3").dataset["hidden"]).toBe("false");
+  });
+
+  it("marks a row hidden by an ancestor's eye, though its own is off", async () => {
+    const tree = await mounted({ refs: CABINET, hiddenRefs: ["drawer-front-1"] });
+    await open(tree, "drawer-front-1");
+    const child = drawn(tree, "drawer-front-1/pull");
+    expect(child.dataset["hidden"]).toBe("true");
+    expect(child.querySelector(".eye")?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("says a shut row has a hidden child, without marking the row itself hidden", async () => {
+    const tree = await mounted({ refs: CABINET, hiddenRefs: ["drawer-front-1/pull"] });
+    const parent = drawn(tree, "drawer-front-1");
+    expect(parent.dataset["hidden"]).toBe("false");
+    expect(parent.querySelector(".hidden-tag")?.textContent).toContain("has hidden");
+  });
+
+  it("sends the row and the state it should now have, and never selects the row", async () => {
+    const tree = await mounted({ refs: CABINET });
+    let heard: RefVisibilityDetail | null = null;
+    tree.addEventListener("ref-visibility", (event: CustomEvent<RefVisibilityDetail>) => {
+      heard = event.detail;
+    });
+    let picked: string | null = null;
+    tree.addEventListener("ref-pick", (event: CustomEvent<RefPickDetail>) => {
+      picked = event.detail.ref;
+    });
+    drawn(tree, "cabinet-side-left").querySelector<HTMLElement>(".eye")?.click();
+    await tree.updateComplete;
+    expect(heard).toEqual({ ref: "cabinet-side-left", hidden: true });
+    expect(picked).toBeNull();
+  });
+
+  it("sends the opposite state off a row already hidden", async () => {
+    const tree = await mounted({ refs: CABINET, hiddenRefs: ["cabinet-side-left"] });
+    let heard: RefVisibilityDetail | null = null;
+    tree.addEventListener("ref-visibility", (event: CustomEvent<RefVisibilityDetail>) => {
+      heard = event.detail;
+    });
+    drawn(tree, "cabinet-side-left").querySelector<HTMLElement>(".eye")?.click();
+    await tree.updateComplete;
+    expect(heard).toEqual({ ref: "cabinet-side-left", hidden: false });
+  });
+
+  it("offers isolate on a top-level row and sends its own ref, never selecting it", async () => {
+    const tree = await mounted({ refs: CABINET });
+    let heard: RefIsolateDetail | null = null;
+    tree.addEventListener("ref-isolate", (event: CustomEvent<RefIsolateDetail>) => {
+      heard = event.detail;
+    });
+    let picked: string | null = null;
+    tree.addEventListener("ref-pick", (event: CustomEvent<RefPickDetail>) => {
+      picked = event.detail.ref;
+    });
+    drawn(tree, "drawer-front-1").querySelector<HTMLElement>(".isolate")?.click();
+    await tree.updateComplete;
+    expect(heard).toEqual({ ref: "drawer-front-1" });
+    expect(picked).toBeNull();
+  });
+
+  it("offers no isolate on a face row - only a part is one action away", async () => {
+    const tree = await mounted({ refs: CABINET });
+    await open(tree, "drawer-front-1");
+    expect(drawn(tree, "drawer-front-1/pull").querySelector(".isolate")).toBeNull();
   });
 });
