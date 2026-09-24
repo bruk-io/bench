@@ -60,9 +60,17 @@ Write one JSON file per video to `<findings-dir>/<video-id>.json`:
   `warping`, `bed-features`, `surfaces`, `mechanisms`, `other`.
 - **`rule`**: paraphrase; never paste more than a dozen words of the transcript.
 - **`numbers`**: every figure the video gives for the rule, with its unit and what it applies to.
-  Empty list if none. Never invent or convert a number the video did not give; if it says "about
-  half a millimetre", write 0.5 and put "about" in `what`.
-- **`at`**: the timestamp where the rule is stated, from the transcript's own `[mm:ss]` marks.
+  Empty list if none. Each number carries a `said` field: the transcript's own words for it, as
+  captioned (e.g. `"about a half a mm to 1 mm"`), and its own `at`. Never invent a number, and
+  **never convert units** - "1/8 inch" stays `0.125 in`, not 3.2 mm. A range stays a range:
+  `"value": [0.5, 1.0]`, never its midpoint or one end. If it says "about half a millimetre",
+  write 0.5 and put "about" in `what`.
+- **Captions are machine-made and garble numbers.** "2/ird" is "two thirds", not "2 mm"; a
+  fraction of a length is not a length. When a number is ambiguous, keep the exact caption
+  words in `said`, set `"value": null`, and say what is unclear in `why`.
+- **`at`**: the timestamp of the line where the rule (or, per number, the number) is actually
+  said, from the transcript's own `[mm:ss]` marks - not where the topic begins. Search forward
+  from where the topic starts; the figure is often 20-60 seconds later.
 - **`evidence`**: `measured` (a test with numbers shown), `demonstrated` (shown working on a
   part), or `claimed` (stated without showing). Be strict: most advice is `claimed`.
 - **`context`**: the conditions the advice assumes - material, nozzle, printer, "print farm",
