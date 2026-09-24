@@ -12,7 +12,8 @@ then walls, overhangs, holes, fits and fasteners, and last how to check the resu
 
 - **Slant 3D.** Twenty videos from one channel. Slant 3D is a print farm that sells
   print-on-demand, so its context is mass-production FDM: a 0.4 mm nozzle, auto-ejecting
-  machines, an 8.5 x 8.5 in plate, and people paid to post-process and assemble. Its rules
+  machines, an 8.5 x 8.5 in plate
+  ([O33g62Kwq9s 02:07](https://www.youtube.com/watch?v=O33g62Kwq9s&t=127s)), and people paid to post-process and assemble. Its rules
   were pulled from the transcripts, checked against them, and merged into 101 rules. Every
   number below links to the second it is said.
 - **bench's own code and docs.** These are the authority for how to do something in bench.
@@ -102,7 +103,7 @@ printable:
 | Cover | its front | the grille lies flush on the bed; printed back down it would be a ceiling across the whole window |
 
 **A note on pins.** `examples/hinge.py` prints its pin standing on end (`Orient(up=X)`),
-which looks like the opposite of Slant's "lie pins flat". The two are about different pins.
+which looks like the opposite of Slant's advice to lie pins flat. The two are about different pins.
 Slant means a locating pin standing out of a part, which would need support. The hinge pin
 is a separate part, and standing up it comes out round.
 
@@ -118,7 +119,7 @@ bears on it.
 | Vent slats with the layers along them | down to **0.5 mm** | [bO39lWkaspA 08:07](https://www.youtube.com/watch?v=bO39lWkaspA&t=487s) | demonstrated, 1 |
 
 Slant also advises against carving pockets out of a part to save plastic, as you would
-for machining or moulding. The thin walls left behind are weak and "unzip" along the
+for machining or moulding. The thin walls left behind are weak and unzip along the
 layers ([1n_R8shlGcs 02:26](https://www.youtube.com/watch?v=1n_R8shlGcs&t=146s); claimed).
 To stiffen a thin compliant part, make it thicker rather than longer
 ([O33g62Kwq9s 02:53](https://www.youtube.com/watch?v=O33g62Kwq9s&t=173s); claimed). The
@@ -348,7 +349,7 @@ pin_d = 4.0
 bore_d = pin_d + 2 * clearance(Fit.SLIDE, PLA)   # 4.40: the bore the pin should turn in
 plate = cuboid(20, 20, 6)
 plate = hole(plate, Point(10, 10), on=plane_of(plate, "top"),
-             diameter=bore_d, printed=pla, label="bore")  # drawn 4.60, prints near 4.40
+             diameter=bore_d, printed=pla, label="bore")  # drawn 4.60, meant to print at 4.40
 print(f"asked {bore_d:.2f}, drawn {bore_d + PLA.hole_compensation:.2f}")
 show(part("plate", plate, pla))
 ```
@@ -357,14 +358,16 @@ So in CAD the hole is the pin + 0.60 mm, meant to print as the pin + 0.40. Slant
 a pin hole is "about a quarter of a millimeter" larger than the pin, up to half a millimetre
 for high-shrink materials ([uMA-Wt-z_BU 01:03](https://www.youtube.com/watch?v=uMA-Wt-z_BU&t=63s),
 [01:05](https://www.youtube.com/watch?v=uMA-Wt-z_BU&t=65s); claimed, 1 recording). Its words
-do not say whether that is across the diameter or per side:
+do not say whether that is across the diameter or per side. Slant's figure is for the CAD
+model, so compare it with bench's drawn hole, pin + 0.60:
 
-| Reading | Hole | Against bench's SLIDE (pin + 0.40 printed) |
+| Reading | Slant's drawn hole | bench's drawn hole (pin + 0.60) |
 |---|---|---|
-| 0.25 across the diameter | pin + 0.25 | bench is 1.6 times looser |
-| 0.25 per side | pin + 0.50 | bench is a little tighter |
+| 0.25 across the diameter | pin + 0.25 | 2.4 times Slant's gap |
+| 0.25 per side | pin + 0.50 | 0.10 mm looser than Slant |
 
-Neither reading is settled. A pin ladder printed on the H2D would settle it.
+Slant's holes also print undersize, so neither side's printed hole is known. Neither reading
+is settled. A pin ladder printed on the H2D would settle it.
 
 ### Concave arcs: `concave=True`
 
@@ -375,8 +378,8 @@ figure then measures slightly short. `clearance(fit, material, concave=True)` ad
 to the figure, so the drawn geometry keeps its fit once it is meshed.
 
 **The wall vent.** The attachment's groove round the frame's collar has rounded corners. Drawn
-at the plain `SLIDE` figure, `check_fit` measured it at 0.199 against 0.200 asked: a hair
-short, by exactly the chord sag. Drawn with `concave=True` (0.25 per side), it measured
+at the plain `SLIDE` figure, `check_fit` measured it at 0.199 against 0.200 asked, a
+thousandth short, because the corners' chords lie inside their arcs. Drawn with `concave=True` (0.25 per side), it measured
 clear by 0.248 against 0.200. `examples/wall_vent.py` draws it the second way.
 
 ### Geometry that carries the fit
@@ -456,8 +459,10 @@ show(part("boss", boss, pla))
 
 `top=Top.ROUND` is needed because a body with no `printed=` cannot choose a top by itself.
 It is only right for an upright bore. A sideways insert bore needs its teardrop asked for,
-and then it needs `printed=`, which adds the compensation back. Take `hole_compensation`
-off the insert's bore by hand in that case.
+and then it needs `printed=`, which adds the compensation back. Give the bore as a plain
+diameter with the compensation taken off first:
+`hole(..., diameter=INSERT_M3.bore - PLA.hole_compensation, printed=pla, ...)`. It is then
+drawn at 4.2 mm, and since 4.2 is over `SHORT_SPAN`, `Top.AUTO` makes it a teardrop.
 
 ### Nuts
 
@@ -798,7 +803,7 @@ In each case neither side has measured anything. The rows are ordered by effect.
 | Rule | Slant 3D | bench today | What it means |
 |---|---|---|---|
 | Small horizontal holes | Point or flatten the top, especially on screw holes ([Bd7Yyn61XWQ 01:22](https://www.youtube.com/watch?v=Bd7Yyn61XWQ&t=82s)) | `SHORT_SPAN` = 4 mm keeps M2-M3 screw holes round on their side | Changes geometry today. Ask for `top=Top.TEARDROP` where it matters |
-| Pin clearance | about 0.25 mm, up to 0.5 ([uMA-Wt-z_BU 01:03](https://www.youtube.com/watch?v=uMA-Wt-z_BU&t=63s)) | `SLIDE` is 0.20 per side: pin + 0.40 printed, + 0.60 drawn | 1.6 times Slant's hole if Slant meant diametral; close if per side |
+| Pin clearance | about 0.25 mm, up to 0.5 ([uMA-Wt-z_BU 01:03](https://www.youtube.com/watch?v=uMA-Wt-z_BU&t=63s)) | `SLIDE` is 0.20 per side: pin + 0.60 drawn, meant to print at pin + 0.40 | Drawn against drawn: 2.4 times Slant's gap if Slant meant diametral, 0.10 mm looser if per side |
 | Bridge span | 1-2 in ([_R2E8VwyNz0 08:06](https://www.youtube.com/watch?v=_R2E8VwyNz0&t=486s)) | `bridge_max` 10/8/6 mm, read only for counterbore tops; no bridge check | No clash yet; a bridge check at these values would flag spans Slant calls routine |
 | Minimum wall | 1 mm ([1n_R8shlGcs 00:13](https://www.youtube.com/watch?v=1n_R8shlGcs&t=13s)) | `min_wall` 0.86 PLA and PETG, 1.2 ASA; `check_wall` takes its threshold from you | 0.86-1.0 mm passes bench, fails Slant |
 | Insert wall | 1-2 mm ([sza8wg5FIxQ 01:51](https://www.youtube.com/watch?v=sza8wg5FIxQ&t=111s)) | 1.6-2 mm in the `Insert` docstring; not checked | bench asks more at the low end |
