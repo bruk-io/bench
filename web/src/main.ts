@@ -39,7 +39,7 @@ import type { BenchExamplesMenu } from "./components/organisms/examples-menu";
 import type { BenchExplorer } from "./components/organisms/explorer";
 import type { BenchPanel } from "./components/organisms/panel";
 import type { BenchParams } from "./components/organisms/params";
-import type { BenchRefsTree } from "./components/organisms/refs-tree";
+import { type BenchRefsTree, treeOf } from "./components/organisms/refs-tree";
 import type { BenchSheets } from "./components/organisms/sheets";
 import { buttons } from "./components/styles";
 import { deferred3d } from "./deferred3d";
@@ -169,6 +169,7 @@ const ui = {
   examples: need<BenchExamplesMenu>("examples-menu"),
   refsTree: need<BenchRefsTree>("refs-tree"),
   refsCount: need<HTMLSpanElement>("refs-count"),
+  refsShowAll: need<HTMLButtonElement>("refs-show-all"),
   referencesSaid: need<HTMLParagraphElement>("references-said"),
   sheetsList: need<BenchSheets>("sheets-list"),
   sheetCount: need<HTMLSpanElement>("sheet-count"),
@@ -1558,6 +1559,15 @@ function received(next: Scene): void {
   ui.refsTree.refs = next.refs;
   ui.refsTree.flagged = next.violations.flatMap((one) => [...one.refs]);
   ui.refsCount.textContent = next.refs.length === 0 ? "" : String(next.refs.length);
+  // Forget a hidden row the newest run no longer names, so "show all" is never left disabled
+  // over a ref that could not come back anyway, and the eye state never grows across runs
+  // beyond what the tree can actually show.
+  if (hiddenRefs.size > 0) {
+    const known = new Set(next.refs);
+    const kept = new Set([...hiddenRefs].filter((ref) => known.has(ref)));
+    if (kept.size !== hiddenRefs.size) hiddenRefs = kept;
+  }
+  applyHidden();
   ui.sheetsList.sheets = next.sheets;
   ui.sheetCount.textContent = next.sheets.length === 0 ? "" : String(next.sheets.length);
   ui.panel.violations = next.violations;
@@ -2024,6 +2034,43 @@ ui.refsTree.addEventListener("reference-pick", (event) => {
     return;
   }
   showReferenceSelection(pickedReference === file ? null : file);
+});
+
+// ---- hide/show (task-67) ------------------------------------------------------
+
+/** Which rows an eye has shut, by their own exact ref path - view state, kept here and never
+ * written to the script or the host (decision-7 is about a pick; this is not one), and per
+ * tab the way every other piece of viewer state already is: nothing here reaches a browser
+ * store, so a second tab starts with everything shown. */
+let hiddenRefs = new Set<string>();
+
+/** Put the tree and the view back in step with `hiddenRefs`, and say on the button whether
+ * there is anything left for "show all" to do. */
+function applyHidden(): void {
+  const list = [...hiddenRefs];
+  ui.refsTree.hiddenRefs = list;
+  ui.refsShowAll.disabled = list.length === 0;
+  space.hide(list);
+}
+
+ui.refsTree.addEventListener("ref-visibility", (event) => {
+  const { ref, hidden } = event.detail;
+  if (hidden) hiddenRefs.add(ref);
+  else hiddenRefs.delete(ref);
+  applyHidden();
+});
+
+// Isolate: every part but this one goes on the hidden set in one move - a part is a root of
+// the tree `ui.refsTree.refs` builds, so the roots are exactly what "every other part" means.
+ui.refsTree.addEventListener("ref-isolate", (event) => {
+  const roots = treeOf(ui.refsTree.refs).map((node) => node.path);
+  hiddenRefs = new Set(roots.filter((root) => root !== event.detail.ref));
+  applyHidden();
+});
+
+ui.refsShowAll.addEventListener("click", () => {
+  hiddenRefs = new Set();
+  applyHidden();
 });
 
 // ---- wiring ------------------------------------------------------------------
