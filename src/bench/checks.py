@@ -952,9 +952,9 @@ def _across(mesh: Mesh, corners_of: Sequence[Triangle], patch: Collection[int]) 
         for u, v in ((a, b), (b, c), (c, a)):
             key = (min(u, v), max(u, v))
             edges[key] = edges.get(key, 0) + 1
-    v = mesh.vertices
+    at = mesh.vertices
     rim = sum(
-        math.dist(v[3 * u : 3 * u + 3], v[3 * w : 3 * w + 3])
+        math.dist(at[3 * u : 3 * u + 3], at[3 * w : 3 * w + 3])
         for (u, w), count in edges.items()
         if count == 1
     )
