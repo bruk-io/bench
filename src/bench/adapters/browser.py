@@ -217,6 +217,11 @@ def _node(js: Modeller, node: Node, under: str, tags: _Tags) -> int:
         case Imported(vertices, triangles):
             return _imported(js, vertices, triangles, under, tags)
         case Moved(inner, at):
+            # A move of a move is one move: the modeller rounds what it moves onto 32-bit
+            # floats (``web/src/modeller.ts``, task-77), so a body turned, shifted and mated
+            # back is rounded once, where it ends, and lands where one move there puts it.
+            while isinstance(inner, Moved):
+                at, inner = at @ inner.at, inner.node
             return js.transform(_node(js, inner, under, tags), meshing.column_major(at))
         case Swept():
             return _carried(js, node, under, tags)

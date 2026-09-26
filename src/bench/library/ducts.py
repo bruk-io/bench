@@ -9,11 +9,15 @@ axis and hollowed with :func:`~bench.shell.shell`, an elbow the wall's own ring 
 a :func:`~bench.sweep.path`. The branch and the square-to-round are two and three pieces, and
 say why they are cut instead.
 
-**Nothing here is two bodies that only touch.** A modeller keeps two solids that meet face to
-face as two - measured on the one the app ships, a spigot hollowed and set on a hollowed loft
-kept its own underside inside the part as a ceiling leaning 90 degrees - and the overhang and
-wall checks read that face as part of the print. So where pieces join they overlap, and a
-hollow is one body cut once or a ring swept whole.
+**Where pieces join they overlap, and a hollow is one body cut once or a ring swept whole.**
+When this was written, two solids set face to face could stay two on the modeller the app
+ships - a spigot hollowed and set on a hollowed loft kept its own underside inside the part as
+a ceiling leaning 90 degrees, and the overhang and wall checks read it as part of the print.
+That was the modeller's bridge rounding one body onto 32-bit floats and not the other, so the
+two landed micrometres apart; task-77 put every body on the one grid, and pieces hollowed one
+by one and unioned now join. The fittings are still built this way because it is the plainer
+construction, not a workaround: one cavity cut once leaves no seam inside the part at all, and
+a ring swept whole is not cut.
 
 **Where a size is measured.** A hose is sold by its inside, a dust port by its outside, and a
 fit goes wrong by exactly the wall between the two if the wrong one is assumed - so a
@@ -403,11 +407,12 @@ def branch(
     :func:`~bench.shell.shell`: two paths crossing are a union, which shell has no one recipe
     to make again.
 
-    The tap sets off *along* the run rather than across it for the printer's sake. A tap
-    drilled straight into a run of its own size meets the run's bore at two points where
-    the two bores are tangent, and the end of the tool that cut it is left there as a
-    sliver leaning ``90 - angle`` degrees - past what ASA holds up. Setting off up the run,
-    the tap's bore begins as a floor instead, which leans nothing.
+    The tap sets off *along* the run rather than across it. A tap drilled straight into a
+    run of its own size meets the run at two points where the two are tangent, and the flat
+    end of the tap is left there as a lip leaning ``90 - angle`` degrees - no wider than the
+    sag of the run's chords, which ``check_overhangs`` has left out since task-77, but a lip
+    all the same. Setting off up the run, the tap's bore begins as a floor instead, which
+    leans nothing, and there is no lip to leave out.
 
     It prints standing on the run's start, where the tap's bend leans as far as it turns:
     up to the material's ``max_overhang`` it holds itself up, and past it
@@ -489,11 +494,13 @@ def square_to_round(
     is never cut off open at the bed with a knife edge for its rim.
 
     **Why it is a cut and not three shells.** Three bodies hollowed and set end to end meet
-    face to face, and a modeller keeps two bodies that only touch as two: measured, the
-    spigot's underside stays in the part as a ceiling leaning 90 degrees and the loft's rim
-    as a wall 0.17 mm thick. So each piece here runs a wall's length on into the next - the
-    loft's both ends straight on, the way the collar and the spigot run - and the outside and
-    the cavity are each one body, the cavity cut out once.
+    face to face, and before task-77 the modeller could keep them as three: measured, the
+    spigot's underside stayed in the part as a ceiling leaning 90 degrees and the loft's rim
+    as a wall 0.17 mm thick. Three shells unioned now join (``tests/adapter/test_seams_measured.py``
+    builds exactly that), but the cut is kept as the plainer body: each piece here runs a
+    wall's length on into the next - the loft's both ends straight on, the way the collar and
+    the spigot run - and the outside and the cavity are each one body, the cavity cut out
+    once, so there is no seam inside the part to be read at all.
 
     **The loft's wall is ``wall`` level with the openings**, as :func:`~bench.shell.shell`
     measures a loft's, so along a side leaning ``a`` it is ``wall * cos(a)`` through; and

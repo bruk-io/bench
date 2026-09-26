@@ -33,6 +33,7 @@ wants to read.
 """
 
 import math
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import assert_never
@@ -43,7 +44,18 @@ from .geometry import TOL, Plane, Point, Vector, plane, unit
 from .kernel import Kernel, Mesh
 from .model import Material, Orient, Part, Printed, Process, Ref, Stock, Stocked, Volume, laid_down
 from .solids import plane_of
-from .topology import Bounds, Extrude, Face, Intersection, Shape, Solid, bounds, face, polygon
+from .topology import (
+    CHORD,
+    Bounds,
+    Extrude,
+    Face,
+    Intersection,
+    Shape,
+    Solid,
+    bounds,
+    face,
+    polygon,
+)
 
 _ORIGIN = Point(0.0, 0.0, 0.0)
 """Where a point is measured from when it has to become a vector to be projected."""
@@ -855,6 +867,18 @@ def overhangs(
     The first layer is not an overhang: a triangle lying on the bed is what the part stands
     on, so everything within one layer height of the lowest point is left out - which is the
     same reason a part with no orientation cannot be checked at all.
+
+    **Nor is a sliver of facets.** Every curve reaches the kernel cut into chords that sit up
+    to :data:`~bench.topology.CHORD` inside it, so where two curved bodies only touch - a tap
+    drilled into a run of its own size, whose flat end is tangent to the run's side - the two
+    sets of chords cross, and a lip of one pokes out of the other no wider than that sag. It
+    is not a shape anybody drew: the true surfaces meet in a line. So the triangles leaning
+    past the limit are taken as patches - the ones that share a corner, together - and a
+    patch narrower across than ``CHORD``, measured as twice its area over its perimeter, is
+    left out (task-77: a 40 degree tap, the same size as its run, read a lip of that kind as
+    a face leaning 50 degrees). One triangle is never judged alone, because a flat ceiling's
+    own triangulation fans out into needles far thinner than that; a patch is as wide as the
+    whole overhang it belongs to.
     """
     if kernel is None:
         return unchecked("overhangs")
@@ -862,14 +886,23 @@ def overhangs(
     up = unit(orient.up)
     corners_of = triangles(mesh)
     floor = min(((p - _ORIGIN) @ up for t in corners_of for p in t), default=0.0)
-    worst = 0.0
-    at: Ref | None = None
+    leaning: dict[int, float] = {}
     for i, corners in enumerate(corners_of):
         if all((p - _ORIGIN) @ up <= floor + material.layer + TOL for p in corners):
             continue
         lean = _lean_of(corners, up)
-        if lean > worst:
-            worst, at = lean, mesh.refs[i]
+        if lean > material.max_overhang + _ANGLE_SLACK:
+            leaning[i] = lean
+    worst = 0.0
+    at: Ref | None = None
+    for i in sorted(
+        i
+        for patch in _patches(mesh, leaning)
+        if _across(mesh, corners_of, patch) >= CHORD
+        for i in patch
+    ):
+        if leaning[i] > worst:
+            worst, at = leaning[i], mesh.refs[i]
     if worst <= material.max_overhang + _ANGLE_SLACK:
         return None
     return Violation(
@@ -884,6 +917,48 @@ def overhangs(
 
 
 # ---- reading a mesh --------------------------------------------------------------------
+
+
+def _patches(mesh: Mesh, chosen: Collection[int]) -> list[list[int]]:
+    """The triangles in ``chosen`` grouped into patches: two are in one patch when they share
+    a corner, directly or through others in ``chosen``."""
+    parent = {i: i for i in chosen}
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    first: dict[int, int] = {}
+    for i in chosen:
+        for corner in mesh.triangles[3 * i : 3 * i + 3]:
+            other = first.setdefault(corner, i)
+            parent[root(i)] = root(other)
+    grouped: dict[int, list[int]] = {}
+    for i in chosen:
+        grouped.setdefault(root(i), []).append(i)
+    return list(grouped.values())
+
+
+def _across(mesh: Mesh, corners_of: Sequence[Triangle], patch: Collection[int]) -> float:
+    """How wide a patch of triangles is: twice its area over the length of its edge - a strip
+    ``w`` wide and much longer measures ``w``."""
+    edges: dict[tuple[int, int], int] = {}
+    surface = 0.0
+    for i in patch:
+        surface += area(corners_of[i])
+        a, b, c = mesh.triangles[3 * i : 3 * i + 3]
+        for u, v in ((a, b), (b, c), (c, a)):
+            key = (min(u, v), max(u, v))
+            edges[key] = edges.get(key, 0) + 1
+    at = mesh.vertices
+    rim = sum(
+        math.dist(at[3 * u : 3 * u + 3], at[3 * w : 3 * w + 3])
+        for (u, w), count in edges.items()
+        if count == 1
+    )
+    return 2.0 * surface / rim if rim > 0.0 else math.inf
 
 
 def _lean_of(t: Triangle, up: Vector) -> float:
