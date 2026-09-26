@@ -10,15 +10,16 @@ for the adapter's own decisions, face naming included, to be read off what comes
 """
 
 import logging
+import math
 from array import array
 from dataclasses import dataclass, field
 
 import pytest
 
-from bench import Ref, Vector, cuboid, cut, cylinder, move, name
+from bench import Point, Ref, Vector, cuboid, cut, cylinder, extrude, fill, move, name, rect
 from bench.adapters.browser import JsKernel
 from bench.telemetry import Span
-from bench.topology import Solid
+from bench.topology import CHORD, Solid
 
 pytestmark = pytest.mark.unit
 
@@ -72,8 +73,8 @@ class _Modeller:
     def section(self, rings: array[float], lengths: array[int], /) -> int:
         return self._call("section", list(lengths))
 
-    def extrude(self, section: int, height: float, /) -> int:
-        return self._call("extrude", height)
+    def extrude(self, section: int, height: float, /, *twisted: float) -> int:
+        return self._call("extrude", height, *twisted)
 
     def revolve(self, section: int, segments: int, degrees: float, /) -> int:
         return self._call("revolve", segments, degrees)
@@ -154,6 +155,37 @@ def test_a_triangle_comes_back_named_by_the_face_it_was_marked_with() -> None:
     assert mesh.refs == (Ref("plate/top"),)
     assert mesh.vertices == (0, 0, 4, 1, 0, 4, 0, 1, 4)
     assert mesh.triangles == (0, 1, 2)
+
+
+def test_a_plain_extrusion_is_asked_for_with_its_height_and_nothing_else() -> None:
+    """Twist and scale are additive: an extrusion with neither crosses exactly as every
+    extrusion did before they existed."""
+    modeller = _Modeller()
+    JsKernel(modeller, _Refused).mesh(_plate())
+    assert [one for one in modeller.asked if one[0] == "extrude"] == [("extrude", 4.0)]
+
+
+def test_a_twisted_extrusion_sends_its_divisions_degrees_and_scale() -> None:
+    """The twist crosses in degrees, the way Manifold reads it, over enough copies of the
+    section that no straight run between two strays further than the chord rule allows."""
+    modeller = _Modeller()
+    square = fill(rect(4, 4, Point(-2, -2)))
+    JsKernel(modeller, _Refused).mesh(extrude(square, 10.0, twist=math.pi, scale=0.5))
+    ((_, height, divisions, degrees, scale),) = [o for o in modeller.asked if o[0] == "extrude"]
+    reach = math.hypot(2, 2)
+    assert (height, degrees, scale) == (10.0, pytest.approx(180.0), 0.5)
+    assert divisions == math.ceil(math.pi / (2 * math.acos(1 - CHORD / reach))) - 1
+
+
+def test_a_twist_hanging_below_its_profile_is_built_upwards_turned_back_and_reflected() -> None:
+    """Manifold only sweeps up, so a negative sweep is built up with the turn reversed and
+    reflected through the profile's plane - the far end below it, turned the asked way."""
+    modeller = _Modeller()
+    JsKernel(modeller, _Refused).mesh(extrude(fill(rect(4, 4)), -10.0, twist=math.pi))
+    ((_, height, _, degrees, _),) = [o for o in modeller.asked if o[0] == "extrude"]
+    assert (height, degrees) == (10.0, pytest.approx(-180.0))
+    reflection = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1]
+    assert ("transform", reflection) in modeller.asked
 
 
 def test_a_boolean_is_asked_for_after_both_of_its_operands() -> None:

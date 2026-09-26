@@ -1,9 +1,10 @@
 ---
 id: task-75
 title: Make fasteners and print docs say what the code does
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-24 19:47'
+updated_date: '2026-09-26 14:59'
 labels: []
 milestone: m-10
 dependencies: []
@@ -24,7 +25,7 @@ Update docs/printing.md where it describes any of these.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each of the five items resolved: code or docstring changed so they agree, with the reason in the task notes
-- [ ] #2 docs/printing.md updated where it described the old behaviour
-- [ ] #3 Tests pin any behaviour that changed
+- [x] #1 Each of the five items resolved: code or docstring changed so they agree, with the reason in the task notes
+- [x] #2 docs/printing.md updated where it described the old behaviour
+- [x] #3 Tests pin any behaviour that changed
 <!-- AC:END -->

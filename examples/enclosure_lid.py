@@ -10,14 +10,14 @@ between a lid whose lip and bosses stand up off the bed and one printed in mid-a
 The insert bores are the one hole here that is *not* compensated for the filament. Every
 other figure in `fasteners` is the nominal metal one and the material adds the printed
 allowance on top; an insert bore is quoted the other way round - 4.2 mm is the hole to
-print for an M3 insert - so it is drawn exactly, with `top=Top.ROUND` saying the bore is
-upright and does not care which way up the part goes.
+print for an M3 insert - so `hole(insert=..., printed=...)` draws it exactly, and `printed=`
+is passed anyway so `top=Top.AUTO` still has an orientation to read, upright here.
 """
 
 from dataclasses import dataclass
 
 from bench import *
-from bench.library.print import PLA, H2D, clearance
+from bench.library.print import H2D, PLA, clearance
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -85,7 +85,7 @@ def build(p: Enclosure) -> Assembly:
             on=plane_of(lid, f"boss-{i + 1}/top"),
             insert=INSERT_M3,
             depth=INSERT_M3.length + 1.0,
-            top=Top.ROUND,
+            printed=lid_stock,
             label=f"insert-{i + 1}",
         )
 

@@ -41,6 +41,7 @@ from bench import (
     refs,
     resolve,
 )
+from bench.fasteners import BUGLE, COUNTERSINK_82, DRYWALL_8, WOOD_8, Screw
 from bench.library.print import PLA
 from bench.nest import Bed
 
@@ -194,6 +195,30 @@ def test_a_countersink_angle_is_exposed_and_a_shallower_cone_sinks_deeper() -> N
     assert deep.z0 == pytest.approx(8.0 - sunk)
 
 
+@pytest.mark.parametrize(("screw", "angle"), [(WOOD_8, COUNTERSINK_82), (DRYWALL_8, BUGLE)])
+def test_a_countersink_is_cut_at_the_screws_own_angle_unless_told_otherwise(
+    screw: Screw, angle: float
+) -> None:
+    """An inch flat head sinks at 82 degrees and a bugle head narrower, so with no ``angle``
+    given each cone sinks as deep as its own angle says - and ``angle=`` still overrides it."""
+    plate = cuboid(60, 40, 8)
+    on = plane_of(plate, "top")
+    wide = screw.normal + PLA.hole_compensation
+    for asked, cone in ((None, angle), (math.radians(90.0), math.radians(90.0))):
+        drilled = hole(
+            plate,
+            Point(20, 20),
+            on=on,
+            screw=screw,
+            countersink=True,
+            angle=asked,
+            printed=PRINT,
+            label="sunk",
+        )
+        head = bounds(_tool(drilled, "sunk/head"))
+        assert head.z0 == pytest.approx(8.0 - (screw.countersink_d - wide) / 2 / math.tan(cone / 2))
+
+
 def test_a_counterbore_is_the_flat_bottomed_hole_a_socket_cap_drops_into() -> None:
     plate = cuboid(60, 40, 10)
     drilled = hole(
@@ -257,6 +282,9 @@ def test_a_printed_bore_is_cut_wider_by_what_the_plastic_takes_back() -> None:
 
 
 def test_an_insert_bore_is_the_inserts_own_hole_and_not_a_fit_of_the_screw() -> None:
+    """task-74: an insert's ``bore`` is already the hole to print, quoted the other way
+    round from a screw's table, so ``printed`` never adds compensation to it - even though
+    it is still given, because ``top=Top.AUTO`` needs it to choose a top by orientation."""
     plate = cuboid(60, 40, 8)
     drilled = hole(
         plate,
@@ -268,8 +296,35 @@ def test_an_insert_bore_is_the_inserts_own_hole_and_not_a_fit_of_the_screw() -> 
         label="insert",
     )
     box = bounds(_tool(drilled, "insert"))
-    assert box.x1 - box.x0 == pytest.approx(INSERT_M3.bore + PLA.hole_compensation)
+    assert box.x1 - box.x0 == pytest.approx(INSERT_M3.bore)
     assert box.z0 == pytest.approx(2.0)
+
+
+def test_an_insert_bores_top_still_reads_the_print_orientation() -> None:
+    """task-74 AC#2: ``printed=`` stops changing the bore's diameter, but it still chooses
+    the bore's top - a sideways insert bore gets a teardrop, an upright one stays round."""
+    plate = cuboid(60, 40, 20)
+    sideways = hole(
+        plate,
+        Point(30, 10),
+        on=plane_of(plate, "side-front"),
+        insert=INSERT_M3,
+        printed=PRINT,
+        label="insert",
+    )
+    r = INSERT_M3.bore / 2
+    box = bounds(_tool(sideways, "insert"))
+    assert box.z1 - 10.0 == pytest.approx(r * math.sqrt(2.0)), "an apex, not an arc"
+    upright = hole(
+        plate,
+        Point(30, 20),
+        on=plane_of(plate, "top"),
+        insert=INSERT_M3,
+        printed=PRINT,
+        label="insert-up",
+    )
+    straight = bounds(_tool(upright, "insert-up"))
+    assert straight.x1 - straight.x0 == pytest.approx(INSERT_M3.bore)
 
 
 def test_a_leaning_bore_gets_a_teardrop_without_being_asked() -> None:

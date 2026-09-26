@@ -38,9 +38,9 @@ from dataclasses import dataclass, replace
 from io import BytesIO
 from typing import Literal, NamedTuple, assert_never
 
-from .geometry import ORIGIN, TOL, Plane, Point, Transform, Vector, plane, to_local, translation
+from .geometry import TOL, Plane, Point, Transform, Vector, translation
 from .kernel import Mesh
-from .model import Part, Ref, Text, moved_part
+from .model import Part, Ref, Text, laid_down, moved_part
 from .nest import Sheet
 from .ops import bbox
 from .topology import (
@@ -556,13 +556,20 @@ def as_printed(mesh: Mesh, up: Vector, bed_along: Vector | None = None) -> Mesh:
     way every run it is exported. ``None`` leaves that turn to ``plane``'s own choice, which
     is deterministic too.
 
+    The turn itself is :func:`bench.model.laid_down`, the one rule that reads ``up`` and
+    ``bed_along`` into a rotation: :mod:`bench.views` resolves ``bed_along`` off a shape's own
+    ``Orient`` with :func:`bench.checks.bed_along` before calling this, and
+    :func:`bench.checks.fits` calls both to measure the box a part prints in before this ever
+    builds a mesh to turn - the same two vectors, read the same way, wherever an ``Orient``
+    is.
+
     X and Y are centred on the origin rather than left wherever the rotation put them: a
     build plate's own origin is its centre on nearly every slicer, and centring needs no
     bed size to be true, the way keeping a corner at the origin would.
 
     Pure: an assembly's pose never reaches this, only the direction a part prints in.
     """
-    turned = _moved_mesh(mesh, to_local(plane(ORIGIN, up, bed_along)))
+    turned = _moved_mesh(mesh, laid_down(up, bed_along))
     if not turned.vertices:
         return turned
     xs, ys, zs = turned.vertices[0::3], turned.vertices[1::3], turned.vertices[2::3]

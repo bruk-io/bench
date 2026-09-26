@@ -1,9 +1,10 @@
 ---
 id: task-68
 title: check_fits measures a printed part the way it prints
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-24 02:33'
+updated_date: '2026-09-26 14:58'
 labels: []
 milestone: m-10
 dependencies: []
@@ -18,8 +19,14 @@ decision-11, operation 1. check_fits(shape, volume) measures the body's box wher
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A part printed standing is measured on its print axes, using the same laying-down rule as export.as_printed
-- [ ] #2 The vent's hood passes the H2D check with no hand rotation
-- [ ] #3 A shape with no print orientation is measured as before
-- [ ] #4 Unit and functional tests
+- [x] #1 A part printed standing is measured on its print axes, using the same laying-down rule as export.as_printed
+- [x] #2 The vent's hood passes the H2D check with no hand rotation
+- [x] #3 A shape with no print orientation is measured as before
+- [x] #4 Unit and functional tests
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+checks.fits(shape|Part, volume, orient=None) lays the part down by the same rule as export (model.laid_down / checks.bed_along), and measures the turned box's corners because topology.bounds under-reads round faces after an oblique turn.
+<!-- SECTION:NOTES:END -->

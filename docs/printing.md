@@ -170,13 +170,16 @@ There is no fillet or chamfer on the edge of a body, and on this kernel there wi
 one. What a maker draws instead:
 
 - Round vertical edges by rounding the sketch before extruding it: `rounded_rect`, or
-  `chamfer(wire, at, d)` on a corner of a 2D profile.
+  `fillet(wire, r, at=...)` and `chamfer(wire, d, at=...)` on the corners of a 2D profile -
+  convex or concave corners alike.
 - A 45 degree underside by construction: a `loft` from a wide footprint to a narrow one,
   as `examples/pipe_bracket.py` does for its gusset.
-- A prism with both rims chamfered: `eased(profile, length, lead=..., drop=...)` from
-  `bench.library.print`, used by `examples/hinge.py`.
-
-Rounded and chamfered profiles, and eased rims on any extrusion, are planned (task-71).
+- An extrusion with a top, a bottom or both eased round or chamfered:
+  `rim(profile, length, lead=..., drop=..., style=...)` from `bench.library.print`, used by
+  `examples/eased_bracket.py`; `eased(profile, length, lead=..., drop=...)` is both rims
+  chamfered, used by `examples/hinge.py`. Both build the eased end from hulled slices, so
+  they are **convex-only**: a profile with a hole or a concave outline is refused with a
+  `ValueError` rather than eased into a solid with the notch filled in.
 
 **What bench checks.** `check_overhangs(solid, orient, material)` classifies every triangle
 of the built mesh against `orient.up` and reports a warning if any leans past
@@ -284,11 +287,11 @@ A printed hole comes out undersize. `hole(..., printed=...)` adds the material's
 profile is grown by half of that on every edge. Every figure in `bench.fasteners` is the
 nominal metal one, so the compensation is always added on top and never baked in.
 
-**The exception is an insert bore.** An insert's bore is quoted as the hole to print. Pass
-`printed=` with `insert=` and the compensation is still added: `INSERT_M3`'s 4.2 mm becomes
-4.4. `examples/enclosure_lid.py` keeps it exact by leaving `printed=` out and passing
-`top=Top.ROUND`. That also means a sideways insert bore gets no automatic teardrop (see
-Fasteners).
+**The exception is an insert bore.** An insert's bore is quoted as the hole to print, so
+`hole(insert=..., printed=...)` draws it exactly - `INSERT_M3`'s 4.2 mm stays 4.2, whether
+or not `printed=` is given. `printed=` is still worth passing: it is what `top=Top.AUTO`
+reads to choose a top by orientation, so a sideways insert bore gets its teardrop the same
+way a screw hole does (see Fasteners).
 
 ### Other hole details
 
@@ -423,8 +426,36 @@ several of Slant's techniques are well supported:
 `hole(screw=M3, fit=..., printed=...)` sizes a screw hole from the ISO table. Pass
 `countersink=True` for a 90 degree cone (`COUNTERSINK`), which is also a printable 45
 degree overhang, or `counterbore=True` for a socket head. Sizes run `M2`, `M2_5`, `M3`,
-`M4`, `M5`, `M6`, `M8`. There are no imperial sizes: the vent drew its #6 drywall screws as
-M4. Imperial wood, drywall and machine screws are planned (task-69).
+`M4`, `M5`, `M6`, `M8`.
+
+**Imperial (task-69).** The vent drew its #6 drywall screws as M4 for want of a table
+entry; `fasteners.py` now carries `WOOD_6`, `WOOD_8`, `WOOD_10` (flat head wood screws),
+`DRYWALL_6`, `DRYWALL_8`, `DRYWALL_10` (bugle head drywall screws, the same thread and
+clearance holes as the wood ones - a bugle head changes the head, not what the screw drives
+into) and `MACHINE_8_32`, `MACHINE_10_24`, `MACHINE_1_4_20`. Every figure is cited in the
+module: ASME B18.6.1's own diameter formula and flat head for the wood screws,
+ANSI/ASME B18.2.8 for the clearance holes (the inch counterpart of the metric table's ISO
+273), a softwood/hardwood pilot chart for `tap`/`self_tap` (shop practice, not a
+dimensional standard - ASME B18.6.1 does not set it either), and ASME B18.6.3 plus ASME
+B18.3 for the machine screws' thread, head and countersink. `hole(screw=DRYWALL_6, ...)`
+works exactly like a metric one: `DRYWALL_6.diameter` is 3.51 mm, between M3 and M4 and
+nothing like either.
+
+American flat and bugle heads sink at 82 degrees, not the metric table's ISO 90 - every
+imperial screw here carries that as `countersink_angle`, and a drywall screw's bugle head
+carries its own, narrower estimate (`BUGLE`, about 61.5 degrees - neither ASME table gives
+a bugle head an angle at all, so this is flagged as an estimate rather than a citation).
+`hole(..., countersink=True)` cuts the cone at the screw's own `countersink_angle` - 90 for
+a metric screw, 82 for an inch flat head, `BUGLE` for a drywall screw - and `angle=` is
+there only to override it. The narrower a cone, the deeper it sinks to the same diameter at
+the surface: a bugle countersink goes about half as deep again as a flat head's.
+
+Socket head, button head, counterbore and nut figures are `0.0` on every wood and drywall
+screw - nobody makes one with a hex socket or runs a nut on one - and on the machine screws
+the counterbore and nut columns are `0.0` too: this reviewer reached three disagreeing
+inch counterbore tables and an inch hex nut table split awkwardly across two standards, and
+left both at nothing rather than guessing between them. A `0.0` column fails loudly (a
+cutter with no size) rather than lying with an invented figure.
 
 **Self-tapping.** A plain hole slightly under the screw works for small screws and
 low-stakes joins, with at least **1 mm** of wall round it. For a large screw such as M10 it
@@ -452,17 +483,15 @@ pla = Printed(PLA)
 boss_d = INSERT_M3.od + 2 * 2.0          # 2 mm of plastic round the insert
 boss = cylinder(boss_d / 2, 10.0, label="boss")
 boss = hole(boss, ORIGIN, on=plane_of(boss, "boss/top"), insert=INSERT_M3,
-            depth=INSERT_M3.length + 1.0, top=Top.ROUND,
-            label="insert")              # no printed=: the 4.2 mm bore is already the hole to print
+            depth=INSERT_M3.length + 1.0, printed=pla,
+            label="insert")              # drawn at 4.2 mm: printed= never inflates an insert bore
 show(part("boss", boss, pla))
 ```
 
-`top=Top.ROUND` is needed because a body with no `printed=` cannot choose a top by itself.
-It is only right for an upright bore. A sideways insert bore needs its teardrop asked for,
-and then it needs `printed=`, which adds the compensation back. Give the bore as a plain
-diameter with the compensation taken off first:
-`hole(..., diameter=INSERT_M3.bore - PLA.hole_compensation, printed=pla, ...)`. It is then
-drawn at 4.2 mm, and since 4.2 is over `SHORT_SPAN`, `Top.AUTO` makes it a teardrop.
+`printed=` is the plain call, upright or sideways: it never adds compensation to an insert
+bore, so the hole stays 4.2 mm either way, and it is still what `top=Top.AUTO` reads to
+choose the top - round for the upright boss above, a teardrop without being asked if the
+same boss were drilled from the side.
 
 ### Nuts
 
@@ -485,13 +514,22 @@ demonstrated). Without a pause, there are three options:
 `depth`, and a `lead_in` of `LEAD_IN` = 0.4 mm. No function cuts the pocket. Draw the hexagon
 yourself with `polygon` and cut it, and cut the lead-in too if you want one.
 
+**task-75.** This is not bench already agreeing with Slant's hardware options above - it is
+only the numbers agreeing. No public operation cuts a nut trap or a set of crush ribs today;
+the rib geometry that does exist is private to `gridfinity3d._ribs`, one library's own
+shape, not a verb the vocabulary offers. Whether cutting a nut trap and a ring of crush ribs
+become public operations is left to decision-11's own order: `flexures` and `enclosures`
+will want both, and each gets its own decision when its turn comes, the way `shell` and the
+others in the decision's table already do.
+
 ### Magnets
 
 `MAGNET_6X2` is gridfinity-rebuilt's pocket for a 6 x 2 mm magnet: a 6.5 mm hole with eight
 5.9 mm crush ribs, which crush as the magnet goes in. The rib geometry is built inside
-`bench.library.gridfinity3d` and is not public. Anywhere else, the `Magnet` record gives the
-numbers and you draw the ribs yourself (`pattern` with a `Turn` places copies round a
-circle). The vent's magnet pockets had no ribs, so its magnets are glued.
+`bench.library.gridfinity3d` and is not public (see task-75, above). Anywhere else, the
+`Magnet` record gives the numbers and you draw the ribs yourself (`pattern` with a `Turn`
+places copies round a circle). The vent's magnet pockets had no ribs, so its magnets are
+glued.
 
 ## Joining parts
 
@@ -677,9 +715,22 @@ M3 and smaller do not work on a 0.4 mm nozzle. Keep every printed thread feature
 horizontal thread, cut away the top and bottom of the profile and keep only the side flanks
 ([sza8wg5FIxQ 05:33](https://www.youtube.com/watch?v=sza8wg5FIxQ&t=333s); demonstrated, 1).
 
-**In bench.** No threads yet. Use a heat-set insert or a nut. Threads are planned as a
-twisted extrusion (task-72), with the internal thread's clearance taken from the fit table.
-Whether it should refuse or warn below M3 is open.
+**In bench.** `thread(Thread.EXTERNAL | Thread.INTERNAL, diameter, pitch, length)` is a
+twisted extrusion of an offset circle, used by `examples/jar_lid.py`. The external thread is
+drawn nominal. The internal one is opened by the fit table's clearance, stood square across
+its steepest flank, and grown by the material's `hole_compensation` like any printed hole -
+added once, by `thread` itself. So the model's gap is the clearance plus half the
+compensation across the flank (an M12 x 2 in PLA at a slide measures 0.28 mm for 0.20
+asked), and on a fine thread the model's nut no longer engages its bolt - it would slide
+straight off along the axis - because an M8 x 1.25's opening is deeper than its 0.33 mm
+thread. The print, shrinking the cavity by that compensation, is what is meant to close it,
+and the run says so: an internal thread opened as far as it is deep is a `thread` warning,
+"drawn clear of its bolt". At the default depth that is every pitch under about 1.54 mm in
+PLA at `Fit.SLIDE` (2.03 at `CLEARANCE`; PETG 1.88 and 2.37; ASA 2.22 and 2.70) - a coarser
+pitch or a deeper thread engages in the model.
+A thread under 3.2 mm across or 0.4 mm deep is built and warned about, never refused: the
+warning is a `thread` finding in the Problems panel and `tools.build`'s summary, at the
+script's line, because both limits are Slant 3D's and unmeasured here.
 
 ## Big parts and bed fit
 
@@ -689,26 +740,27 @@ that is "only about 10 in" ([O33g62Kwq9s 02:07](https://www.youtube.com/watch?v=
 loose: an 8.5 in square has a 12 in diagonal, so 10 in presumably allows for the part's
 width.
 
-**In bench.** `check_fits(shape, volume)` compares the shape's axis-aligned box, as drawn,
-against a `Volume`. `H2D` is 350 x 320 x 325 mm, and `BEDS` names it and the 256 mm Bambu
-machines. It needs no kernel, so it runs everywhere. Two limits:
+**In bench.** `check_fits(shape_or_part, volume, orient=None)` compares the part's
+axis-aligned box against a `Volume` - lying down the way it prints, when something says how.
+`H2D` is 350 x 320 x 325 mm, and `BEDS` names it and the 256 mm Bambu machines. It needs no
+kernel, so it runs everywhere. One limit remains:
 
 - It does not try the part turned on the bed, so a long part that would fit diagonally is
   rejected. That errs on the safe side.
-- It measures the part where it is drawn, not the way it prints. The vent's hood, which
-  prints standing on its outlet, read "y 322.4 mm against 320" although it stands 322 mm
-  tall in a 325 mm build height. Until task-68 reads `Orient`, turn the body onto the bed
-  yourself before checking, as the vent did:
+
+It used to measure the part where it is drawn, not the way it prints: the vent's hood, which
+prints standing on its outlet, read "y 322.4 mm against 320" although it stands 322 mm tall
+in a 325 mm build height. task-68 fixed it - `check_fits` reads a printed `Part`'s own
+`Orient` when it is handed the `Part` rather than its bare shape, and `orient=` states one
+for a bare solid instead:
 
 ```python
-import math
-
 from bench import *
 from bench.library.print import PLA, H2D
 
 standing = Printed(PLA, Orient(up=Y))    # prints standing on its -Y face
 hood = cuboid(300, 322, 80)
-require(check_fits(rotate(hood, math.pi / 2, about=Axis(ORIGIN, X)), H2D))
+require(check_fits(part("hood", hood, standing), H2D))
 show(part("hood", hood, standing))
 ```
 
@@ -725,7 +777,7 @@ command-line `tools.build` loads no modeller, so there only `check_fits` answers
 
 | Check | Question | Needs the modeller |
 |---|---|---|
-| `check_fits(shape, volume)` | does the box, as drawn, fit the build volume | no |
+| `check_fits(shape_or_part, volume, orient=None)` | does the box, as it prints, fit the build volume | no |
 | `check_wall(solid, least)` | is the thinnest wall at least `least` | yes |
 | `check_overhangs(solid, orient, material)` | does any face lean past `max_overhang` (warning, worst face) | yes |
 | `check_clearance(a, b, least)` | do two bodies stay `least` apart | yes |

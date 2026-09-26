@@ -1,10 +1,10 @@
 ---
 id: task-73
 title: Sweep a profile along a path
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-24 02:34'
-updated_date: '2026-09-24 02:34'
+updated_date: '2026-09-26 14:59'
 labels: []
 milestone: m-10
 dependencies:
@@ -20,8 +20,14 @@ decision-11, operation 5. The modeller has no sweep; the vent faked its 90 degre
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The two routes are compared with numbers (accuracy, triangle count, time, faces) and the choice written down
-- [ ] #2 sweep() takes a profile and a path of lines and arcs
-- [ ] #3 A swept duct bend can be shelled and mated
-- [ ] #4 Tested against the shipped modeller; an example runs in the gate
+- [x] #1 The two routes are compared with numbers (accuracy, triangle count, time, faces) and the choice written down
+- [x] #2 sweep() takes a profile and a path of lines and arcs
+- [x] #3 A swept duct bend can be shelled and mated
+- [x] #4 Tested against the shipped modeller; an example runs in the gate
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+sweep/path/Straight/Bend build a mesh in Python via imported; it beat chained hulls in tools/sweep_routes.py. Swept node in topology (_swept_reach bounds helper).
+<!-- SECTION:NOTES:END -->

@@ -57,6 +57,19 @@ solids = ["geometry", "topology", "model", "ops"]
 # countersink a loft of two circles. It is also the only one of the three that reads
 # `fasteners` and `model`, which is where a screw's table and a part's way up come from.
 features = ["geometry", "topology", "model", "fasteners", "ops", "solids"]
+# threads is a screw thread as a twisted extrusion of an offset circle, built out of `ops` and
+# `solids` the way `features` is; it reads `fasteners` for the fit and `model` for the
+# material whose table the internal thread's clearance comes from, and `telemetry` for the
+# field that makes its small-thread warning a run's finding.
+threads = ["geometry", "topology", "model", "fasteners", "ops", "solids", "telemetry"]
+# shell hollows a body by making it again: the recipe of an extrusion, a revolve or a loft run
+# on its profile inset by `ops.offset`, and cut out of it with `solids`' own verbs. It evaluates
+# nothing and needs no kernel, which is the whole point of doing it at the level of the recipe.
+shell = ["geometry", "topology", "ops", "solids"]
+# sweep is a profile carried along a path of lines and arcs: the path's legs, the checks that
+# the result is a solid, and the `Swept` record from `topology`. Like every verb it evaluates
+# nothing; how a sweep is meshed is `meshing`'s, because the modeller has no sweep.
+sweep = ["geometry", "topology"]
 joints = ["geometry", "topology", "model", "ops"]
 # Parts are nested before they are exported, so export imports nest (for `Sheet`) and nest
 # imports nothing of export: a `Placement` carries the placed `Part`, not rendered paths.
@@ -71,12 +84,17 @@ export = ["geometry", "topology", "model", "ops", "nest", "kernel"]
 # check that cannot be measured answers UNCHECKED instead of passing. They read the records
 # (a material, an orientation, a build volume) off `model`, so they need no library either.
 # `fasteners` is for the `Fit | Contact` a pair put together at is asked about, and nothing
-# else: a fit's gap in some plastic is the caller's number to hand in.
-checks = ["geometry", "topology", "model", "fasteners", "kernel", "facets"]
+# else: a fit's gap in some plastic is the caller's number to hand in. `solids` is for
+# `plane_of`, which `checks.bed_along` reads a shape's own `bed_face` through - the same face
+# `export.as_printed` is laid down by - so `fits` can measure the box a part prints in off
+# the tree, before a kernel ever builds one.
+checks = ["geometry", "topology", "model", "fasteners", "kernel", "facets", "solids"]
 # meshing is the half of building a body that needs no modeller: which named face each
 # triangle of a fresh primitive lies on, and what each triangle of a result answers to. Flat
-# numbers in and out, so a kernel adapter builds and this decides; it imports no modeller.
-meshing = ["geometry", "topology", "model", "kernel"]
+# numbers in and out, so a kernel adapter builds and this decides; it imports no modeller. It
+# reads `triangulate` because a sweep is meshed here outright - the modeller has no sweep - and
+# its two caps are clipped on the very ring vertices its walls stand on.
+meshing = ["geometry", "topology", "model", "kernel", "triangulate"]
 # triangulate is ear clipping on flat (u, v) points: arithmetic, nothing of bench's, so any
 # layer that has a region to fill may read it.
 triangulate = []

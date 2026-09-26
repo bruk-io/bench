@@ -149,6 +149,7 @@ from .nest import (
 )
 from .ops import (
     BBox,
+    Corner,
     area,
     bbox,
     centroid,
@@ -158,6 +159,7 @@ from .ops import (
     edge,
     edges,
     fill,
+    fillet,
     is_ccw,
     line,
     offset,
@@ -179,6 +181,7 @@ from .scene import (
     Scene,
 )
 from .script import run
+from .shell import shell
 from .solids import (
     Turn,
     axis_of,
@@ -218,6 +221,8 @@ from .survey import (
     section_loops,
     survey,
 )
+from .sweep import Bend, Straight, path, sweep
+from .threads import ROUND_DEPTH, Thread, thread, thread_opening
 from .topology import (
     CHORD,
     Arc,
@@ -273,6 +278,7 @@ __all__ = [
     "M8",
     "MAGNET_6X2",
     "ORIGIN",
+    "ROUND_DEPTH",
     "SCREWS",
     "SHORT_SPAN",
     "TOL",
@@ -284,11 +290,13 @@ __all__ = [
     "BBox",
     "Band",
     "Bed",
+    "Bend",
     "Bounds",
     "Box",
     "Build",
     "Circle",
     "Contact",
+    "Corner",
     "Curve",
     "Curved",
     "Edge",
@@ -342,10 +350,12 @@ __all__ = [
     "Step",
     "Stock",
     "Stocked",
+    "Straight",
     "Survey",
     "SvgPath",
     "SvgText",
     "Text",
+    "Thread",
     "Top",
     "Transform",
     "Turn",
@@ -398,6 +408,7 @@ __all__ = [
     "faces_of",
     "female_intervals",
     "fill",
+    "fillet",
     "fit_between",
     "fits",
     "flat_faces",
@@ -440,6 +451,7 @@ __all__ = [
     "part_svg",
     "part_texts",
     "partition",
+    "path",
     "pattern",
     "perimeter",
     "perpendicular",
@@ -471,11 +483,15 @@ __all__ = [
     "sheet_dxf",
     "sheet_name",
     "sheet_svg",
+    "shell",
     "slot",
     "stl",
     "survey",
+    "sweep",
     "teardrop",
     "text_width",
+    "thread",
+    "thread_opening",
     "three_mf",
     "to_local",
     "to_world",

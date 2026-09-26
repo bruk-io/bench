@@ -86,23 +86,44 @@ def _drawn(at: Point) -> tuple[Point, Plane]:
     return Point(at.x, at.y, 0.0), raised(XY, at.z)
 
 
-def extrude(profile: Face, distance: float, *, label: str | Label | None = None) -> Solid:
+def extrude(
+    profile: Face,
+    distance: float,
+    *,
+    twist: float = 0.0,
+    scale: float = 1.0,
+    label: str | Label | None = None,
+) -> Solid:
     """The body ``profile`` sweeps out ``distance`` millimetres along its own normal.
 
     Makes a body and nothing else: joining and cutting are their own verbs with their own
     subjects, so nothing here quietly modifies something handed in. A negative ``distance``
     sweeps the other way, which is how a tool that hangs below a surface is built.
 
+    ``twist`` turns the far end ``twist`` radians about the axis through the profile
+    plane's own origin, counter-clockwise looking back down the sweep - so a positive twist
+    is a right-hand helix whichever way the sweep runs, and an offset circle twisted a turn
+    per pitch is a screw thread (:func:`bench.threads.thread`). ``scale`` is the far end's
+    size beside the profile's, about the same origin: a taper. Both run linearly along the
+    sweep; left alone they make the plain prism.
+
     Its faces are ``top`` at ``distance``, ``bottom`` on the profile's own plane,
-    ``side-<edge label or index>`` per outer edge, and one per hole wire.
+    ``side-<edge label or index>`` per outer edge, and one per hole wire - the same names
+    twisted or not, one side per edge however many turns the twist makes. A twisted or
+    tapered side is neither flat nor round, so :func:`plane_of` and :func:`axis_of` refuse
+    it, and ``top``'s frame is turned by the twist.
 
     Raises:
-        ValueError: if ``distance`` is zero, which sweeps out no body at all.
+        ValueError: if ``distance`` is zero, which sweeps out no body at all, or ``scale``
+            is not positive, which shrinks the far end to nothing or through itself.
     """
     if abs(distance) < TOL:
         msg = "an extrusion needs a distance to sweep"
         raise ValueError(msg)
-    return Solid(Extrude(profile, distance), _named(label))
+    if scale <= TOL:
+        msg = f"an extrusion's far end needs a positive scale, not {scale}"
+        raise ValueError(msg)
+    return Solid(Extrude(profile, distance, twist, scale), _named(label))
 
 
 def revolve(

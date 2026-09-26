@@ -57,6 +57,8 @@ NAMES = (
     "hinge.py",
     "fulcrum_hinge.py",
     "wall_vent.py",
+    "jar_lid.py",
+    "duct_offset.py",
 )
 
 PROGRAM = """\

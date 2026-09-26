@@ -1,9 +1,10 @@
 ---
 id: task-70
 title: 'shell(): hollow a body to a wall, open where it is asked'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-24 02:33'
+updated_date: '2026-09-26 14:58'
 labels: []
 milestone: m-10
 dependencies: []
@@ -18,9 +19,15 @@ decision-11, operation 2. The vent built its funnel and its manifold's hopper as
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 shell() hollows an extrusion, a revolve and a two-profile loft to a given wall, open at named faces
-- [ ] #2 Inner faces are named and pickable
-- [ ] #3 A shell thinner than the printer's minimum wall is caught by the existing wall check
-- [ ] #4 The vent's funnel and hopper can be written with it (show one in an example)
-- [ ] #5 Tested against the shipped modeller
+- [x] #1 shell() hollows an extrusion, a revolve and a two-profile loft to a given wall, open at named faces
+- [x] #2 Inner faces are named and pickable
+- [x] #3 A shell thinner than the printer's minimum wall is caught by the existing wall check
+- [x] #4 The vent's funnel and hopper can be written with it (show one in an example)
+- [x] #5 Tested against the shipped modeller
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+shell(body, wall, open=, inside=, label=) in shell.py. Refuses a twisted or tapered extrusion (its inset profile would not follow). Sliver faces when shelled pieces are joined: task-77.
+<!-- SECTION:NOTES:END -->

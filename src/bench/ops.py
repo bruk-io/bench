@@ -34,9 +34,11 @@ from .geometry import (
     Point,
     Vector,
     Z,
+    angle,
     cross,
     distance,
     near,
+    plane,
     unit,
 )
 from .topology import (
@@ -194,34 +196,161 @@ def fill(outline: Wire, *, on: Plane = XY, label: str | Label | None = None) -> 
 
 # ---- modifiers ---------------------------------------------------------------------
 
+Corner = Label | int
+"""One corner of a wire, named the way :func:`edge` finds one edge: by its label, or by
+the index of the edge whose *end* it sits at."""
 
-def chamfer(w: Wire, at: Label | int, d: float) -> Wire:
-    """``w`` with the corner at the *end* of one edge - named by label or index - cut
-    back ``d`` along that edge and ``d`` along the next one.
+
+def chamfer(w: Wire, d: float, *, at: Corner | tuple[Corner, ...] | None = None) -> Wire:
+    """``w`` with the chosen corners cut back ``d`` along each of the two straight edges
+    that meet there - every corner between two straight edges by default, or just the one
+    or more named in ``at``.
+
+    Every straight corner by default is what a printed profile mostly wants: the whole
+    outline eased alike, the way :func:`bench.solids.cuboid` wants every vertical edge
+    softened at once. ``at`` narrows that to the corners a script actually means - a
+    tuple for more than one - and is refused if any of them turns out not to be between
+    two straight edges, because asking for one by name is a claim it exists; the default
+    sweep is not a claim, so it silently leaves out a corner that is already an
+    :class:`~bench.topology.Arc` - one drawn round to begin with, or already filleted -
+    rather than refusing the whole wire over it; a corner :func:`chamfer` has already cut is
+    still between two straight edges, so the default sweep cuts it again, further back.
+    Multiple corners are cut back in one
+    call, each against the edges as the corners before it in the list left them, so two
+    corners sharing an edge only conflict when their two cuts really overlap it.
 
     Raises:
-        ValueError: if ``d`` is not positive, the corner is not between two straight
-            edges, or ``d`` reaches past either of them.
+        ValueError: if ``d`` is not positive, an explicitly named corner is not between
+            two straight edges, ``d`` reaches past either edge it cuts, or ``at`` is
+            ``None`` and the wire has no corner between two straight edges to chamfer.
     """
     if d <= TOL:
         msg = "a chamfer needs a positive size"
         raise ValueError(msg)
-    i = _edge_index(w, at)
-    j = (i + 1) % len(w.edges)
-    a, b = w.edges[i].curve, w.edges[j].curve
-    if not isinstance(a, Line) or not isinstance(b, Line):
-        msg = "a chamfer needs a corner between two straight edges"
+    corners = _corners(w, at)
+    if not corners:
+        msg = "no corner between two straight edges to chamfer"
         raise ValueError(msg)
+    edges = list(w.edges)
+    for i in sorted(set(corners), reverse=True):
+        edges = _chamfer_one(edges, i, d)
+    return wire(tuple(edges), w.label)
+
+
+def fillet(w: Wire, r: float, *, at: Corner | tuple[Corner, ...] | None = None) -> Wire:
+    """``w`` with the chosen corners rounded to radius ``r`` - every corner between two
+    straight edges by default, or just the one or more named in ``at`` - by an
+    :class:`~bench.topology.Arc` tangent to both edges, exactly where :func:`chamfer`
+    would put its straight cut.
+
+    The arc is built directly at the corner - the tangent length ``r / tan(theta / 2)``
+    back along each edge, an arc of radius ``r`` between the two tangent points, where
+    ``theta`` is the angle the two edges turn through - rather than by growing the whole
+    wire with :func:`offset` and shrinking it back, because :func:`offset` mitres a
+    straight corner rather than rounding it, and teaching it to round every corner would
+    change what kerf compensation means everywhere else that function is used. The two
+    constructions reach the geometry decision-11 describes - grow, then shrink back, with
+    a round joint at the corner - without touching that machinery. Built this way, the
+    corner takes no side on convex or concave: ``theta`` is the unsigned angle between the
+    two edges, so a notch is rounded exactly as a bump is, and ``at`` chooses corners the
+    same way :func:`chamfer`'s does, including the same silent skip of a corner that is
+    not between two straight edges when ``at`` is left as every corner.
+
+    Raises:
+        ValueError: if ``r`` is not positive, an explicitly named corner is not between
+            two straight edges, the two edges there run straight through the corner or
+            fold back on themselves (nothing to round), the tangent length reaches past
+            either edge, or ``at`` is ``None`` and the wire has no corner between two
+            straight edges to fillet.
+    """
+    if r <= TOL:
+        msg = "a fillet needs a positive radius"
+        raise ValueError(msg)
+    corners = _corners(w, at)
+    if not corners:
+        msg = "no corner between two straight edges to fillet"
+        raise ValueError(msg)
+    edges = list(w.edges)
+    for i in sorted(set(corners), reverse=True):
+        edges = _fillet_one(edges, i, r)
+    return wire(tuple(edges), w.label)
+
+
+def _corners(w: Wire, at: Corner | tuple[Corner, ...] | None) -> tuple[int, ...]:
+    """The edge indices ``at`` names, or every corner between two straight edges when
+    ``at`` is ``None``."""
+    if at is None:
+        return _straight_corners(w)
+    items = at if isinstance(at, tuple) else (at,)
+    return tuple(_edge_index(w, item) for item in items)
+
+
+def _straight_corners(w: Wire) -> tuple[int, ...]:
+    """Every corner of ``w`` that sits between two straight edges, in edge order. The
+    corner wrapping from the last edge to the first is only counted on a closed wire -
+    an open wire's two loose ends are not a corner at all."""
+    n = len(w.edges)
+    last = n if is_closed(w) else n - 1
+    return tuple(
+        i for i in range(last) if _straight_pair(w.edges[i].curve, w.edges[(i + 1) % n].curve)
+    )
+
+
+def _straight_pair(a: Curve, b: Curve) -> bool:
+    return isinstance(a, Line) and isinstance(b, Line)
+
+
+def _corner_edges(edges: list[Edge], i: int) -> tuple[int, Line, Line]:
+    """The two straight edges meeting at corner ``i``, and the index of the second.
+
+    Raises:
+        ValueError: if either is not a :class:`Line`.
+    """
+    j = (i + 1) % len(edges)
+    a, b = edges[i].curve, edges[j].curve
+    if not isinstance(a, Line) or not isinstance(b, Line):
+        msg = "a corner between two straight edges is needed here"
+        raise ValueError(msg)
+    return j, a, b
+
+
+def _chamfer_one(edges: list[Edge], i: int, d: float) -> list[Edge]:
+    j, a, b = _corner_edges(edges, i)
     if d >= abs(a.end - a.start) - TOL or d >= abs(b.end - b.start) - TOL:
         msg = "a chamfer cannot be longer than the edges it cuts"
         raise ValueError(msg)
     back = a.end - unit(a.end - a.start) * d
     on = b.start + unit(b.end - b.start) * d
-    edges = list(w.edges)
-    edges[i] = replace(edges[i], curve=Line(a.start, back))
-    edges[j] = replace(edges[j], curve=Line(on, b.end))
-    edges.insert(i + 1, Edge(Line(back, on)))
-    return wire(tuple(edges), w.label)
+    out = list(edges)
+    out[i] = replace(out[i], curve=Line(a.start, back))
+    out[j] = replace(out[j], curve=Line(on, b.end))
+    out.insert(i + 1, Edge(Line(back, on)))
+    return out
+
+
+def _fillet_one(edges: list[Edge], i: int, r: float) -> list[Edge]:
+    j, a, b = _corner_edges(edges, i)
+    vertex = a.end
+    back = unit(a.start - vertex)
+    fwd = unit(b.end - vertex)
+    theta = angle(back, fwd)
+    if theta <= TOL or theta >= math.pi - TOL:
+        msg = "a fillet needs a real corner, not edges that run straight through it or fold back"
+        raise ValueError(msg)
+    reach = r / math.tan(theta / 2)
+    if reach >= abs(a.end - a.start) - TOL or reach >= abs(b.end - b.start) - TOL:
+        msg = "a fillet cannot reach past either edge it rounds"
+        raise ValueError(msg)
+    p1 = vertex + back * reach
+    p2 = vertex + fwd * reach
+    centre = vertex + unit(back + fwd) * (r / math.sin(theta / 2))
+    on = plane(centre, cross(back, fwd), p1 - centre)
+    arc = Arc(centre, r, 0.0, _angle_of(p2, centre, on), on)
+    out = list(edges)
+    out[i] = replace(out[i], curve=Line(a.start, p1))
+    out[j] = replace(out[j], curve=Line(p2, b.end))
+    out.insert(i + 1, Edge(arc))
+    return out
 
 
 def offset[T: Wire | Face](shape: T, d: float) -> T:

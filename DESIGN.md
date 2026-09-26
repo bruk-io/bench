@@ -264,7 +264,9 @@ Z), `move(shape, vector)`, `rotate(shape, angle, *, about: Point | Axis = ORIGIN
 point means the Z axis through it), `pattern(shape, count, step: Vector | Turn)` -> tuple of
 shapes with `-1`, `-2` ... appended to labels, `grid(shape, (across, up), (along, over))`,
 `name(node, to)`,
-`chamfer(wire, edge_label_or_index, d)`. A solid records a move rather than doing one:
+`chamfer(wire, d, *, at=None)` and `fillet(wire, r, *, at=None)` - every corner between two
+straight edges by default, or just the one or more named in `at`, convex or concave alike.
+A solid records a move rather than doing one:
 `moved` wraps its node in `Moved`, so a reflection is the one transform in the tree that
 is not rigid.
 `offset(wire_or_face, d)` takes a bare wire only in a plane parallel to XY, because
@@ -407,7 +409,7 @@ Printable-hole geometry is in `features.py`, because `hole` builds with it:
 ```python
 hole(subject: Shape, at, *, on=XY, screw=None, diameter=None, insert=None,
      fit=Fit.CLEARANCE, depth=None, countersink=False, counterbore=False,
-     angle=COUNTERSINK, top=Top.AUTO, printed=None, label) -> Shape
+     angle=None, top=Top.AUTO, printed=None, label) -> Shape
 ```
 
 One verb over the closed union, a `match` ending in `assert_never`, and the subject's own
@@ -419,8 +421,9 @@ wrote. On a `Solid` it cuts a bore into `on`, whose normal points out of the mat
 the diameter is `bore(screw, fit)`, the insert's own bore, or the number given, plus the
 material's `hole_compensation` when `printed` is handed in. `depth=None` is through, sized
 off the body's own `bounds`. `countersink` and `counterbore` build the head's recess from
-the screw's table - a cone at `angle` (90 degrees, the ISO one, and what a printer can hold)
-or a flat-bottomed bore - and land under `<label>/head`; the bridging steps land under
+the screw's table - a cone at the screw's own `countersink_angle` (90 degrees on a metric
+screw, the ISO one and what a printer can hold; 82 on an inch flat head; `BUGLE` on a drywall
+screw) unless `angle` overrides it, or a flat-bottomed bore - and land under `<label>/head`; the bridging steps land under
 `<label>/bridge-1`. A face refuses all of those by name rather than ignoring them, because
 a cutter has one depth and cannot sink a head.
 
@@ -437,7 +440,7 @@ class Severity(StrEnum): ERROR; WARNING; UNCHECKED
 class Violation: check: str; message: str; severity: Severity
                  refs: tuple[Ref, ...] = (); line: int | None = None
 
-fits(shape, volume) -> Violation | None
+fits(shape: Shape | Part, volume, orient=None) -> Violation | None
 clearance_between(a, b, least, *, kernel) -> Violation | None
 fit_between(a, b, fit: Fit | Contact, asked, *, kernel, pair: RoundPair | None = None) -> Fitted
                                              # measured beside asked; a pair: over its shared length
@@ -451,6 +454,16 @@ implementation. Two tiers, and the signature says which: `fits` reads the tree's
 built body and, handed `kernel=None`, answer `Severity.UNCHECKED` rather than passing. That
 distinction is the point - "I could not tell" is not "it is fine", and a check that quietly
 passed in the browser and failed on the desk would be worse than no check at all.
+
+`fits` measures the part standing however it prints, not wherever it happens to be drawn
+(task-68): a `Part` already says so through its `Printed` stock's own `Orient`, and `orient`
+states one for the bare `Solid` a check is usually handed before the part it becomes exists,
+overriding a `Part`'s own when both are given. Laying down turns the drawn box's own eight
+corners with `model.laid_down` and `checks.bed_along` - the one rule `export.as_printed`
+lays a kernel's mesh down with - rather than turning the tree and re-bounding it, which
+`bounds` cannot do exactly for a round face once the turn is not a quarter one; turning
+corners is exact for every `Orient` seen so far and only ever reads wider than the truth
+otherwise, never narrower.
 
 `wall` is measured on the mesh: from the middle of every triangle, straight into the
 material, to the first surface facing back. The smallest of those is the thinnest wall and
@@ -551,10 +564,12 @@ verbatim, in world coordinates, wherever the script put the body, and a part mat
 down, or a lid that prints upside down (`Orient(up=-Z)`), exported in its assembly pose.
 `export.as_printed(mesh, up, bed_along)` is the fix - a pure rotate-then-drop transform,
 turning `up` to +Z and standing the lowest point at z = 0 - and `views._as_printed` calls it
-on every printed part's body before it goes into `scene['files']`, reading `bed_along` off
-`plane_of(shape, orient.bed_face)` when the part names one. It runs only on the bytes a maker
-downloads; the mesh the 3D view draws is still the posed one `mating` built, which is the
-whole point of keeping the two apart.
+on every printed part's body before it goes into `scene['files']`, reading `bed_along` with
+`checks.bed_along(shape, orient)` when the part names a `bed_face` - the same resolver
+`checks.fits` reads before laying the tree down (task-68), so the two never disagree about
+which face settles the turn. It runs only on the bytes a maker downloads; the mesh the 3D
+view draws is still the posed one `mating` built, which is the whole point of keeping the
+two apart.
 
 ## kernel.py [new] and adapters/ [new] - the seam a solid modeller is plugged into
 

@@ -78,6 +78,31 @@ describe("modeller, building", () => {
     expect(() => modeller.imported([0, 0, 0, 1, 0, 0, 0, 1, 0], [0, 1, 2])).toThrow();
   });
 
+  it("twists the top counter-clockwise about +Z by the degrees it is sent", () => {
+    const modeller = bind(wasm);
+    // The square's far corner (2, 2) turned a quarter counter-clockwise is (-2, 2); turned
+    // clockwise it would be (2, -2). Which one Manifold means is measured, not assumed.
+    const mesh = modeller.mesh(modeller.extrude(modeller.section(SQUARE.rings, SQUARE.lengths), 2, 8, 90, 1));
+    const top: [number, number][] = [];
+    for (let at = 0; at < mesh.vertices.length; at += mesh.num_prop) {
+      if (Math.abs((mesh.vertices[at + 2] ?? 0) - 2) < 1e-5) top.push([mesh.vertices[at] ?? 0, mesh.vertices[at + 1] ?? 0]);
+    }
+    expect(top.some(([x, y]) => Math.abs(x + 2) < 1e-5 && Math.abs(y - 2) < 1e-5)).toBe(true);
+    expect(top.some(([x, y]) => Math.abs(x - 2) < 1e-5 && Math.abs(y + 2) < 1e-5)).toBe(false);
+  });
+
+  it("scales the top about the origin, and a plain extrude is left as it was", () => {
+    const modeller = bind(wasm);
+    const tapered = modeller.mesh(modeller.extrude(modeller.section(SQUARE.rings, SQUARE.lengths), 2, 0, 0, 0.5));
+    let reach = 0;
+    for (let at = 0; at < tapered.vertices.length; at += tapered.num_prop) {
+      if (Math.abs((tapered.vertices[at + 2] ?? 0) - 2) < 1e-5) reach = Math.max(reach, tapered.vertices[at] ?? 0);
+    }
+    expect(reach).toBeCloseTo(1, 5);
+    expect(modeller.num_tri(cube(modeller))).toBe(12);
+    expect(modeller.volume(cube(modeller))).toBeCloseTo(8, 6);
+  });
+
   it("measures the gap between two bodies, stopping at the distance asked", () => {
     const modeller = bind(wasm);
     const apart = modeller.transform(cube(modeller), [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 0, 0, 1]);

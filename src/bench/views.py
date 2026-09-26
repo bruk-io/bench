@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import NamedTuple, assert_never
 
-from .checks import Severity, Violation, exportable
+from .checks import Severity, Violation, bed_along, exportable
 from .export import as_printed, part_svg, sheet_dxf, sheet_svg, stl, three_mf
 from .kernel import Kernel, Mesh
 from .model import Assembly, Part, Printed, Process, Ref, Stock, Stocked, index
@@ -212,20 +212,18 @@ def _as_printed(part: Part, body: Mesh | None) -> Mesh | None:
     one with a way up to read - :func:`_files` only ever calls this on a printed part's body,
     so that never actually happens, but a stray call should move nothing rather than guess.
 
-    A ``bed_face`` is read the same way a script's own ``ref()`` is: a name the part has no
-    face by, or a face with no one plane, is :func:`~bench.solids.plane_of`'s to refuse - and
-    that refusal is left to propagate to the script's own error rather than caught here and
-    traded for an arbitrary turn nobody asked for. A bad ``bed_face`` is the maker's mistake
-    to fix, the same as a bad ref anywhere else in a script.
+    ``bed_along`` is resolved by :func:`bench.checks.bed_along` - the same resolver
+    :func:`bench.checks.fits` reads a shape's own ``bed_face`` through before a kernel ever
+    builds a mesh to turn, so the two never find a different face for the same part. A name
+    the part has no face by, or a face with no one plane, is :func:`~bench.solids.plane_of`'s
+    to refuse - and that refusal is left to propagate to the script's own error rather than
+    caught here and traded for an arbitrary turn nobody asked for. A bad ``bed_face`` is the
+    maker's mistake to fix, the same as a bad ref anywhere else in a script.
     """
     if body is None or not isinstance(part.stock, Printed):
         return body
     orient = part.stock.orient
-    shape = part.shape
-    bed_along = None
-    if orient.bed_face is not None and isinstance(shape, Solid):
-        bed_along = plane_of(shape, orient.bed_face).x_dir
-    return as_printed(body, orient.up, bed_along)
+    return as_printed(body, orient.up, bed_along(part.shape, orient))
 
 
 # ---- the files -----------------------------------------------------------------------------
