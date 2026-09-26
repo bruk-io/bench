@@ -34,6 +34,7 @@ from bench import (
     Vector,
     bore,
 )
+from bench.library import ducts
 from bench.library import gridfinity3d as g3
 from bench.library.print import PLA, clearance
 from bench.scene import MeshView, OkScene
@@ -59,6 +60,7 @@ NAMES = (
     "wall_vent.py",
     "jar_lid.py",
     "duct_offset.py",
+    "dust_line.py",
 )
 
 PROGRAM = """\
@@ -544,3 +546,36 @@ def test_every_face_frame_lies_on_its_own_triangles(measured: dict[str, Any]) ->
                     )
                     checked += 1
     assert checked > 0, "no example gave a face frame to check at all"
+
+
+# ---- (i) the dust line -----------------------------------------------------------------
+
+
+def test_the_dust_lines_fittings_all_print_standing_and_the_coupler_slides_on_at_a_slide(
+    measured: dict[str, Any],
+) -> None:
+    """Every fitting's overhangs and walls, checked standing the way it prints, come back with
+    nothing - a warning included, which the test above does not count. The coupler, checked
+    seated on the wye's outlet, stands off it by the slide and no more than a chord past it,
+    and slid on from clear above it keeps that at every pose."""
+    scene = _scene(measured, "dust_line.py")
+    assert [one["check"] for one in scene["violations"]] == []
+    said = scene["stdout"].splitlines()
+    seated = said[0]
+    assert seated.startswith("coupler round the wye's outlet: clear by ")
+    assert seated.endswith(", asked 0.200 (slide)")
+    gap = float(seated.split("clear by ")[1].split(" mm")[0])
+    assert clearance(Fit.SLIDE, PLA) <= gap <= clearance(Fit.SLIDE, PLA, concave=True) + _TINY
+    assert "sampled at 5 poses" in said[1]
+    assert "every pair stayed" in said[1]
+
+
+def test_the_dust_lines_coupler_is_bored_to_the_ports_socket(measured: dict[str, Any]) -> None:
+    """A 4 inch port is sold by its outside, so the socket that takes it is the port and the
+    slide both sides - measured across the coupler's bore, found by its name."""
+    mesh = _mesh(_scene(measured, "dust_line.py"), "coupler")
+    bore = _points(mesh, "coupler/inside/side-inlet")
+    wide = ducts.socket_diameter(ducts.PORT_4)
+    assert wide == pytest.approx(101.6 + 2 * clearance(Fit.SLIDE, PLA, concave=True))
+    assert _measures(_span(bore, Vector(1, 0, 0)), wide)
+    assert _measures(_span(bore, Vector(0, 1, 0)), wide)

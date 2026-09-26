@@ -59,6 +59,7 @@ _PARTS = {
     "wall_vent.py": ("frame", "attachment"),
     "jar_lid.py": ("jar", "lid"),
     "duct_offset.py": ("duct", "flange"),
+    "dust_line.py": ("wye", "coupler", "reducer", "elbow", "hood"),
 }
 """What each example must show. Not every part of the cabinet - it has one front per drawer
 - but every part whose name a reader of the script would expect to find."""
