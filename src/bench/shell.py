@@ -23,6 +23,14 @@ open there. An extrusion opens at ``top`` and ``bottom``, a loft at the words it
 profiles were given in - ``bottom`` the first, ``top`` the second - a revolve at any of its
 ``side-`` faces, and at ``start`` and ``end`` when it is a partial turn, and a sweep at its
 ``start`` and ``end``. A sweep's inset is carried along its own path, so its wall is exact.
+
+**Pieces shelled one by one and set end to end** - a collar, a loft and a spigot, unioned -
+join into one body wherever their ends meet square to the axes, measured (task-77,
+``tests/adapter/test_seams_measured.py``). Where they meet on a leaning plane - a spigot
+shelled on an elbow's far end - the two cavities' walls coincide along a leaning line that
+no float lands on exactly, and slivers are left between them: measured, a 60 mm spigot on a
+20 degree elbow read a face leaning 87 degrees. Run one piece a wall's length on into the
+other there, or sweep the whole run in one, the way :mod:`bench.library.ducts` does.
 """
 
 import math
@@ -30,10 +38,25 @@ from collections.abc import Collection
 from dataclasses import replace
 from typing import assert_never
 
-from .geometry import TOL, Axis, Plane, Point, Transform, Vector, identity, plane, raised, unit
+from .geometry import (
+    TOL,
+    Axis,
+    Plane,
+    Point,
+    Transform,
+    Vector,
+    identity,
+    plane,
+    raised,
+    rotation,
+    translation,
+    unit,
+)
 from .ops import fill, offset, rect
 from .solids import cut, extrude, hull, move, name, rotate, union
 from .topology import (
+    Arc,
+    Circle,
     Curve,
     Difference,
     Edge,
@@ -58,7 +81,6 @@ from .topology import (
     faces_of,
     moved,
     straight,
-    sweep_stations,
     wire,
 )
 from .topology import label as _label
@@ -324,24 +346,54 @@ def _swept_cavity(node: Swept, wall: float, opened: frozenset[str]) -> Solid:
     """The profile inset by ``wall`` carried along the same path - run on ``PAST`` beyond an
     open end, and stopped ``wall`` short of a closed one, which is why a closed end has to run
     straight for more than the wall (:func:`_shortened`): an end wall cut square across a bend
-    would be thinner on its inside than ``wall``."""
+    would be thinner on its inside than ``wall``.
+
+    **Past an open end the end leg itself runs on** (:func:`_run_on`) - a straight lengthened,
+    a bend turned further - rather than a straight being added after it. A leg added there
+    starts a ring of the inset profile exactly on the open end's own plane, and where that
+    plane leans - the far end of an elbow - the ring's vertices and the end's are rounded
+    onto either side of it, and the cut leaves slivers a hair wide between the two. Measured
+    on the shipped kernel (task-77): a 4 in elbow turned 40 degrees, shelled 2 mm and open at
+    both ends, read a 0.32 mm wall and a face leaning 60 degrees at its far end; run on, it
+    reads neither."""
     _refused("a sweep", opened, ("start", "end"))
     edges = list(node.path.edges)
     setting_off = node.profile.plane.normal
-    arriving = sweep_stations(node)[-1] @ setting_off
     inset = offset(node.profile, -wall)
-    first, last = curve_start(edges[0].curve), curve_end(edges[-1].curve)
     if "start" in opened:
-        edges.insert(0, Edge(Line(first - setting_off * PAST, first)))
-        inset = move(inset, setting_off * -PAST)
+        leg, back = _run_on(edges[0], "start")
+        edges[0] = leg
+        inset = moved(inset, back)
     else:
         edges[0] = Edge(_shortened(edges[0].curve, wall, "start"))
         inset = move(inset, setting_off * wall)
     if "end" in opened:
-        edges.append(Edge(Line(last, last + arriving * PAST)))
+        edges[-1], _ = _run_on(edges[-1], "end")
     else:
         edges[-1] = Edge(_shortened(edges[-1].curve, wall, "end"))
     return Solid(Swept(inset, Wire(tuple(edges))))
+
+
+def _run_on(leg: Edge, end: str) -> tuple[Edge, Transform]:
+    """The leg at one end of a path run on ``PAST`` further at that end - a straight
+    lengthened, a bend turned on round its own centre - and the move that carries a profile
+    from where the leg began to where it now begins, which is nothing at the ``end``."""
+    match leg.curve:
+        case Line(start, stop):
+            run = unit(stop - start) * PAST
+            if end == "end":
+                return replace(leg, curve=Line(start, stop + run)), identity()
+            return replace(leg, curve=Line(start - run, stop)), translation(-run)
+        case Arc(centre, radius, a0, a1, on):
+            turn = math.copysign(PAST / radius, a1 - a0)
+            if end == "end":
+                return replace(leg, curve=Arc(centre, radius, a0, a1 + turn, on)), identity()
+            back = rotation(Axis(centre, on.normal), -turn)
+            return replace(leg, curve=Arc(centre, radius, a0 - turn, a1, on)), back
+        case Circle():  # a whole turn has no end to run on, and sweep() refuses one
+            return leg, identity()
+        case _:
+            assert_never(leg.curve)
 
 
 def _shortened(leg: Curve, wall: float, end: str) -> Line:

@@ -45,7 +45,17 @@ from bench import (
 from bench.library.print import PLA
 from bench.meshing import swept
 from bench.shell import PAST
-from bench.topology import CHORD, Difference, Line, Swept, Wire, curve_end, flat_ring
+from bench.topology import (
+    CHORD,
+    Arc,
+    Difference,
+    Line,
+    Swept,
+    Wire,
+    curve_end,
+    curve_start,
+    flat_ring,
+)
 
 pytestmark = pytest.mark.functional
 
@@ -208,13 +218,33 @@ def test_a_shelled_sweep_names_its_inside_after_its_outside() -> None:
     assert {"inside/start", "inside/end", "inside/side-0", "end", "side-0"} <= named
 
 
-def test_an_open_sweep_is_hollowed_past_both_ends_along_the_same_bend() -> None:
+def test_an_open_sweep_is_hollowed_past_both_ends_by_running_its_end_legs_on() -> None:
+    """``PAST`` beyond each open end, by lengthening the straight there rather than adding
+    one after it - an added leg would lay a ring of the cavity on the open end's own plane,
+    which is where task-77's slivers came from."""
     cavity = _cavity(shell(sweep(_round(), _elbow()), 2.0, open=("start", "end")))
     first, last = cavity.path.edges[0].curve, cavity.path.edges[-1].curve
     assert isinstance(first, Line)
+    assert isinstance(last, Line)
     assert near(first.start, Point(0.0, 0.0, -PAST))
-    assert near(curve_end(last), Point(R + 20.0 + PAST, 0.0, 20.0 + R))
-    assert len(cavity.path.edges) == len(_elbow().edges) + 2
+    assert near(first.end, Point(0.0, 0.0, 20.0))
+    assert near(last.start, Point(R, 0.0, 20.0 + R))
+    assert near(last.end, Point(R + 20.0 + PAST, 0.0, 20.0 + R))
+    assert len(cavity.path.edges) == len(_elbow().edges)
+
+
+def test_an_open_end_on_a_bend_is_hollowed_past_it_by_turning_the_bend_on() -> None:
+    """A path that starts and ends on a bend: the cavity's bend turns ``PAST`` of arc further
+    at each end, and its profile stands where the longer bend now starts."""
+    quarter = path(ORIGIN, Z, Bend(R, math.pi / 2, X))
+    cavity = _cavity(shell(sweep(_round(), quarter), 2.0, open=("start", "end")))
+    (edge,) = cavity.path.edges
+    (drawn,) = quarter.edges
+    assert isinstance(edge.curve, Arc)
+    assert isinstance(drawn.curve, Arc)
+    assert edge.curve.start_angle == pytest.approx(drawn.curve.start_angle - PAST / R)
+    assert edge.curve.end_angle == pytest.approx(drawn.curve.end_angle + PAST / R)
+    assert near(cavity.profile.plane.origin, curve_start(edge.curve))
 
 
 def test_a_closed_end_stops_a_wall_short() -> None:
