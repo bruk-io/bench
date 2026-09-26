@@ -36,6 +36,7 @@ from bench import (
     circle,
     contains,
     cuboid,
+    curve_end,
     curve_start,
     cut,
     cylinder,
@@ -45,6 +46,7 @@ from bench import (
     face_of,
     faces_of,
     fill,
+    fillet,
     foot_chamfer,
     grid,
     hole,
@@ -403,38 +405,143 @@ def test_name_renames_a_node_and_leaves_the_one_it_was_given_alone() -> None:
         name(f, "front/back")
 
 
+_SQUARE = wire(
+    (
+        Edge(Line(Point(0, 0), Point(10, 0)), Label("bottom")),
+        Edge(Line(Point(10, 0), Point(10, 10)), Label("right")),
+        Edge(Line(Point(10, 10), Point(0, 10)), Label("top")),
+        Edge(Line(Point(0, 10), Point(0, 0)), Label("left")),
+    ),
+    Label("outline"),
+)
+"""A ten by ten square, one corner per compass edge, for :func:`chamfer` and
+:func:`fillet` to cut at named corners."""
+
+
 def test_chamfer_cuts_the_corner_at_the_end_of_an_edge() -> None:
-    r = wire(
-        (
-            Edge(Line(Point(0, 0), Point(10, 0)), Label("bottom")),
-            Edge(Line(Point(10, 0), Point(10, 10)), Label("right")),
-            Edge(Line(Point(10, 10), Point(0, 10)), Label("top")),
-            Edge(Line(Point(0, 10), Point(0, 0)), Label("left")),
-        ),
-        Label("outline"),
-    )
-    cut_corner = chamfer(r, Label("bottom"), 2)
+    cut_corner = chamfer(_SQUARE, 2, at=Label("bottom"))
     assert len(cut_corner.edges) == 5
     assert is_closed(cut_corner) and is_ccw(cut_corner)
     assert cut_corner.label == Label("outline")
     assert area(fill(cut_corner)) == pytest.approx(98)
     assert _starts(cut_corner) == ((0, 0), (8, 0), (10, 2), (10, 10), (0, 10))
-    assert chamfer(r, -1, 2) == chamfer(r, 3, 2)
-    assert is_closed(chamfer(r, 3, 2))
+    assert chamfer(_SQUARE, 2, at=-1) == chamfer(_SQUARE, 2, at=3)
+    assert is_closed(chamfer(_SQUARE, 2, at=3))
+
+
+def test_chamfer_with_no_at_cuts_every_straight_corner() -> None:
+    """The default is every corner a rectangle has, the way :func:`rounded_rect` rounds
+    every one of them - four cuts in one call, each the size a triangle of two-millimetre
+    legs takes off its own corner."""
+    every = chamfer(rect(10, 10), 2)
+    assert len(every.edges) == 8
+    assert area(fill(every)) == pytest.approx(100 - 4 * 2.0)
+    assert every == chamfer(rect(10, 10), 2, at=(0, 1, 2, 3))
+
+
+def test_chamfer_takes_several_named_corners_in_one_call() -> None:
+    """Two corners, cut in the one call the way a script would ask for them, and the
+    order in ``at`` does not matter - the same corners come out cut whichever order they
+    are named."""
+    both = chamfer(_SQUARE, 2, at=(Label("bottom"), 2))
+    assert len(both.edges) == 6
+    assert area(fill(both)) == pytest.approx(100 - 2 * 2.0)
+    assert chamfer(_SQUARE, 2, at=(0, 2)) == chamfer(_SQUARE, 2, at=(2, 0))
 
 
 def test_chamfer_rejects_a_bad_corner() -> None:
     r = rect(10, 10)
     with pytest.raises(ValueError):
-        chamfer(r, 0, 0)
+        chamfer(r, 0, at=0)
     with pytest.raises(ValueError):
-        chamfer(r, 0, 20)
+        chamfer(r, 20, at=0)
     with pytest.raises(LookupError):
-        chamfer(r, Label("nope"), 2)
+        chamfer(_SQUARE, 2, at=Label("nope"))
     with pytest.raises(LookupError):
-        chamfer(r, 9, 2)
+        chamfer(r, 2, at=9)
     with pytest.raises(ValueError):
-        chamfer(circle(5), 0, 1)
+        chamfer(circle(5), 1, at=0)
+    with pytest.raises(ValueError, match="no corner"):
+        chamfer(circle(5), 1)
+
+
+_NOTCH = polygon((Point(0, 0), Point(10, 0), Point(10, 10), Point(5, 10), Point(5, 5), Point(0, 5)))
+"""An L-shape with one reflex corner at (5, 5), the end of edge 3, for a concave
+:func:`chamfer` and :func:`fillet` to cut."""
+
+
+def test_chamfer_cuts_a_concave_corner_the_same_way() -> None:
+    """The reflex corner at (5, 5) turns the other way from a square's, and the same cut
+    back along both edges adds the triangle to the enclosed area instead of taking it away
+    - a chamfer at a reflex corner fills the notch in rather than cutting the bump off."""
+    cut = chamfer(_NOTCH, 1, at=3)
+    assert len(cut.edges) == 7
+    assert area(fill(cut)) == pytest.approx(area(fill(_NOTCH)) + 1 * 1 / 2)
+
+
+def test_fillet_rounds_a_convex_corner_with_a_tangent_arc() -> None:
+    """A ten by ten square, one corner rounded to radius two: the arc is tangent to both
+    edges two millimetres back from the corner, its centre two millimetres in from each,
+    and the area lost is what a quarter circle takes off a square corner."""
+    rounded = fillet(_SQUARE, 2, at=Label("bottom"))
+    assert len(rounded.edges) == 5
+    assert is_closed(rounded) and is_ccw(rounded)
+    assert rounded.label == Label("outline")
+    corner = rounded.edges[1].curve
+    assert isinstance(corner, Arc)
+    assert corner.radius == pytest.approx(2.0)
+    assert corner.centre == Point(8, 2)
+    assert curve_start(corner) == Point(8, 0)
+    assert near(curve_end(corner), Point(10, 2))
+    assert area(fill(rounded)) == pytest.approx(100 - (4 - math.pi) * 2 * 2 / 4)
+
+
+def test_fillet_rounds_a_concave_corner_the_same_way() -> None:
+    """An L-shaped notch: the corner turns the other way, and the same tangent
+    construction rounds it into the material rather than out of it - a fillet at a reflex
+    corner adds the quarter circle back rather than cutting it away, because the corner
+    itself, not the wire's winding, is what :func:`fillet` reads."""
+    rounded = fillet(_NOTCH, 1, at=3)  # the reflex corner at (5, 5), end of edge 3
+    corner = rounded.edges[4].curve
+    assert isinstance(corner, Arc)
+    assert corner.radius == pytest.approx(1.0)
+    assert area(fill(rounded)) == pytest.approx(area(fill(_NOTCH)) + (4 - math.pi) * 1 * 1 / 4)
+
+
+def test_fillet_with_no_at_rounds_every_straight_corner() -> None:
+    every = fillet(rect(10, 10), 2)
+    assert len(every.edges) == 8
+    assert all(isinstance(e.curve, Arc) for e in every.edges[1::2])
+    assert area(fill(every)) == pytest.approx(100 - (4 - math.pi) * 2 * 2)
+
+
+def test_fillet_takes_several_named_corners_in_one_call() -> None:
+    both = fillet(_SQUARE, 2, at=(Label("bottom"), 2))
+    assert len(both.edges) == 6
+    assert area(fill(both)) == pytest.approx(100 - 2 * (4 - math.pi) * 2 * 2 / 4)
+
+
+def test_fillet_rejects_a_bad_corner() -> None:
+    r = rect(10, 10)
+    with pytest.raises(ValueError):
+        fillet(r, 0, at=0)
+    with pytest.raises(ValueError):
+        fillet(r, 20, at=0)
+    with pytest.raises(LookupError):
+        fillet(_SQUARE, 2, at=Label("nope"))
+    with pytest.raises(ValueError):
+        fillet(circle(5), 1, at=0)
+    with pytest.raises(ValueError, match="no corner"):
+        fillet(circle(5), 1)
+
+
+def test_fillet_at_radius_zero_is_not_a_no_op() -> None:
+    """Unlike :func:`rounded_rect`, which treats a zero radius as a plain rectangle,
+    :func:`fillet` refuses one - a radius is either given or the corner is left alone by
+    calling neither function, and a silent no-op would hide a script that meant to round
+    something."""
+    with pytest.raises(ValueError):
+        fillet(rect(10, 10), 0, at=0)
 
 
 # ---- selectors ---------------------------------------------------------------------

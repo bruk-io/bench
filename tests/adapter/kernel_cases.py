@@ -15,10 +15,12 @@ from bench import (
     ORIGIN,
     XY,
     Axis,
+    Bend,
     Fit,
     Point,
     Printed,
     Solid,
+    Straight,
     Top,
     Vector,
     Wire,
@@ -39,6 +41,7 @@ from bench import (
     loft,
     move,
     name,
+    path,
     plane_of,
     pocket,
     raised,
@@ -47,9 +50,11 @@ from bench import (
     rotate,
     rounded_rect,
     run,
+    sweep,
     union,
 )
 from bench.checks import Violation
+from bench.fasteners import DRYWALL_8, WOOD_8, Screw
 from bench.kernel import Kernel, Mesh
 from bench.library.print import PLA, Orient, clearance
 
@@ -57,6 +62,8 @@ PLATE = (60.0, 40.0, 5.0)
 BOSS = (8.0, 4.0)
 POCKET = (20.0, 10.0, 2.0)
 BORE = (2.0, 5.0)
+SUNK = 8.0
+"""The thickness of the plate each countersink is cut into: deep enough for a bugle's cone."""
 
 SCRIPTED = (
     "from bench import *\n"
@@ -110,6 +117,13 @@ def part_turn() -> Solid:
 
 def whole_turn() -> Solid:
     return revolve(_KNOB, Axis(ORIGIN, Vector(0, 1, 0)), label="knob")
+
+
+def elbow() -> Solid:
+    """A round duct turned a quarter round a bend, which the modeller cannot sweep and bench
+    meshes itself."""
+    route = path(ORIGIN, Vector(0, 0, 1), Straight(10.0), Bend(20.0, math.pi / 2, X))
+    return sweep(fill(circle(5.0)), route, label="elbow")
 
 
 DROPPED_SIDE = 10.0
@@ -184,10 +198,26 @@ CASES: dict[str, Callable[[], Solid]] = {
     "capped": capped,
     "part-turn": part_turn,
     "whole-turn": whole_turn,
+    "elbow": elbow,
     "shared": shared,
     "dropped": dropped,
 }
 """Bodies meshed whole, and between them every arm of ``Node``."""
+
+
+def _sunk(screw: Screw) -> Solid:
+    """A countersunk hole for ``screw`` at its own angle, through a plate :data:`SUNK`
+    thick, its cone answering to ``sunk/head``."""
+    plate = cuboid(20, 20, SUNK)
+    return hole(
+        plate,
+        Point(10, 10),
+        on=plane_of(plate, "top"),
+        screw=screw,
+        countersink=True,
+        printed=Printed(PLA),
+        label="sunk",
+    )
 
 
 def _extra() -> dict[str, Solid]:
@@ -216,6 +246,9 @@ def _extra() -> dict[str, Solid]:
             printed=Printed(PLA),
             label="m3",
         ),
+        "sunk-m3": _sunk(M3),
+        "sunk-wood-8": _sunk(WOOD_8),
+        "sunk-drywall-8": _sunk(DRYWALL_8),
     }
 
 

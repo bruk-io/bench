@@ -28,6 +28,13 @@ Attribute = str | int | float | bool
 FIELDS = "bench"
 """The ``extra`` key a log record's structured fields are kept under."""
 
+CHECK = "bench.check"
+"""The field that makes a warning a finding: the name of the check it is one of. A module that
+notices something while it builds - a thread too small to print - logs it with this field, and
+a run (:mod:`bench.script`) records that record as a warning beside what the script's own
+checks found, so it reaches the app's Problems panel and ``tools.build`` without being a check
+a script has to call."""
+
 
 class Span(NamedTuple):
     """One stretch of work: what it was, when it began (seconds since the epoch), how long it

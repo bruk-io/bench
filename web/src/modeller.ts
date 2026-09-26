@@ -50,7 +50,10 @@ export interface Tagged {
 /** What `bench.adapters.browser.Modeller` calls. Snake case, because Python is the caller. */
 export interface Modeller {
   section(rings: Numbers, lengths: Numbers): number;
-  extrude(section: number, height: number): number;
+  /** `twist` is in degrees, counter-clockwise about +Z, reached at the top over `divisions`
+   * extra copies of the section; `scale` is the top's size beside the bottom's. Left out,
+   * they are the plain prism. */
+  extrude(section: number, height: number, divisions?: number, twist?: number, scale?: number): number;
   revolve(section: number, segments: number, degrees: number): number;
   transform(body: number, columns: Numbers): number;
   union(a: number, b: number): number;
@@ -138,7 +141,15 @@ export function bind(wasm: ManifoldToplevel): Modeller {
           return keep({ kind: "section", one: new wasm.CrossSection(polygons, "EvenOdd") });
         }),
       ),
-    extrude: (handle, height) => made(section(handle).extrude(height)),
+    // The plain call is left exactly as it always was. Manifold's binding reads a bare number
+    // for the top scale as a vector with its Y missing - measured: a unit scale came back as a
+    // wedge of half the volume - so the scale crosses as the pair it really takes.
+    extrude: (handle, height, divisions, twist, scale) =>
+      made(
+        divisions === undefined && twist === undefined && scale === undefined
+          ? section(handle).extrude(height)
+          : section(handle).extrude(height, divisions ?? 0, twist ?? 0, [scale ?? 1, scale ?? 1]),
+      ),
     revolve: (handle, segments, degrees) => made(section(handle).revolve(segments, degrees)),
     transform: (handle, columns) =>
       reading(columns, "f64", (matrix) => made(body(handle).transform(Array.from(matrix) as Mat4))),

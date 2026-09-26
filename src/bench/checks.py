@@ -41,8 +41,9 @@ from .facets import Triangle, area, normal, thinnest, triangles
 from .fasteners import Contact, Fit
 from .geometry import TOL, Plane, Point, Vector, plane, unit
 from .kernel import Kernel, Mesh
-from .model import Material, Orient, Printed, Process, Ref, Stock, Stocked, Volume
-from .topology import Extrude, Face, Intersection, Shape, Solid, bounds, face, polygon
+from .model import Material, Orient, Part, Printed, Process, Ref, Stock, Stocked, Volume, laid_down
+from .solids import plane_of
+from .topology import Bounds, Extrude, Face, Intersection, Shape, Solid, bounds, face, polygon
 
 _ORIGIN = Point(0.0, 0.0, 0.0)
 """Where a point is measured from when it has to become a vector to be projected."""
@@ -96,17 +97,44 @@ def unchecked(check: str) -> Violation:
 # ---- what the tree can answer on its own ---------------------------------------------
 
 
-def fits(shape: Shape, volume: Volume) -> Violation | None:
+def fits(shape: Shape | Part, volume: Volume, orient: Orient | None = None) -> Violation | None:
     """Whether ``shape`` fits in ``volume`` as it stands, or ``None`` when it does.
 
     One of the two checks that need no kernel: :func:`~bench.topology.bounds` answers it from the
     tree, and is conservative under a cut - a bound that is too big never passes a part that
     will not fit, which is the direction a build-volume check has to err in.
 
-    The part is measured where it is drawn. Turning it to make it fit is a decision about
-    the print, not about the geometry, and belongs to whoever lays out the plate.
+    The part is measured where it is drawn - unless something has said how it prints, and
+    then it is measured lying down the way it will. ``shape`` already says when it is a
+    :class:`~bench.model.Part` whose stock is :class:`~bench.model.Printed`: its own
+    ``Orient`` is read off it, so a script can hand this a printed part directly rather than
+    its bare shape and a repeated ``orient``. ``orient`` is how a bare
+    :class:`~bench.topology.Solid` - what a check is usually handed before the part it
+    becomes exists - states one instead, and overrides a ``Part``'s own when both are given,
+    which is how a script asks about a way up other than the one the part was finally built
+    with. Neither given - a laser part's flat ``Face``, or a solid nobody has yet said prints
+    on end - and the box measured is the shape's own, exactly as before: turning a part to
+    make it fit is a decision about the print, not about the geometry, and belongs to
+    whoever lays out the plate, never to this check guessing an orientation nobody gave it.
+
+    Laying down turns the drawn box's own eight corners with :func:`~bench.model.laid_down`
+    and :func:`bed_along` - the same turn :func:`bench.export.as_printed` lays a kernel's
+    mesh down with - rather than turning the tree and asking :func:`~bench.topology.bounds`
+    for a second, rotated box: ``bounds`` finds a round face's extreme points in the shape's
+    own, undrawn-yet frame, and does not recompute them after a composed turn, so a shape
+    turned before it is bounded can read narrower than it truly is - the one direction a
+    build-volume check must never err in (a cylinder stood on ``up=Vector(1, 1, 1)`` - a
+    corner, about 55 degrees off Z - reads about 23 mm tall on the tree the app ships, turned
+    this way; it is in fact just over 28).
+    Turning the corners of the box already measured instead cannot make that mistake: it is
+    exact whenever the turn maps axes onto axes - a quarter turn, which is every ``Orient``
+    seen building the wall vent, its hood (``Orient(up=Y)``) included - and only ever wider
+    than the truth otherwise, the same direction ``bounds`` itself already errs in under a
+    cut.
     """
-    box = bounds(shape)
+    body, stated = _oriented_subject(shape)
+    printing = orient if orient is not None else stated
+    box = bounds(body) if printing is None else _laid_down_box(body, printing)
     over = tuple(
         f"{axis} {size:.1f} mm against {room:.1f} mm"
         for axis, size, room in (
@@ -123,6 +151,65 @@ def fits(shape: Shape, volume: Volume) -> Violation | None:
         message=f"the part is bigger than the build volume: {', '.join(over)}",
         severity=Severity.ERROR,
     )
+
+
+def _laid_down_box(shape: Shape, orient: Orient) -> Bounds:
+    """The box ``shape`` prints in: the eight corners of the box it is drawn in, turned by
+    :func:`~bench.model.laid_down` and :func:`bed_along`, bounded again.
+
+    Turning corners rather than the tree is deliberate - see :func:`fits`'s own docstring
+    for why turning the tree can read a round face's box too small once the turn is
+    anything but a quarter one. Eight corners of an already-conservative box (``bounds`` is
+    conservative under a cut) stay conservative under any rigid turn: the turned box always
+    contains the turned shape, whatever the turn, because it already contained the shape
+    before turning and a rigid turn moves everything together.
+    """
+    drawn = bounds(shape)
+    turn = laid_down(orient.up, bed_along(shape, orient))
+    corners = tuple(
+        turn @ Point(x, y, z)
+        for x in (drawn.x0, drawn.x1)
+        for y in (drawn.y0, drawn.y1)
+        for z in (drawn.z0, drawn.z1)
+    )
+    xs = tuple(p.x for p in corners)
+    ys = tuple(p.y for p in corners)
+    zs = tuple(p.z for p in corners)
+    return Bounds(min(xs), min(ys), min(zs), max(xs), max(ys), max(zs))
+
+
+def _oriented_subject(shape: Shape | Part) -> tuple[Shape, Orient | None]:
+    """The bare shape :func:`fits` measures, and the way it prints when ``shape`` already
+    says so - a :class:`~bench.model.Part` whose stock is :class:`~bench.model.Printed`
+    names its own :class:`~bench.model.Orient`; anything else states none, which is what
+    ``fits``'s own ``orient`` argument is for."""
+    if isinstance(shape, Part):
+        return shape.shape, shape.stock.orient if isinstance(shape.stock, Printed) else None
+    return shape, None
+
+
+def bed_along(shape: Shape, orient: Orient) -> Vector | None:
+    """The X of the face ``orient.bed_face`` names on ``shape``, when there is one - the turn
+    about ``orient.up`` that :func:`~bench.model.laid_down` otherwise leaves to
+    :func:`~bench.geometry.plane`'s own choice.
+
+    Resolving it is the one thing :func:`~bench.model.laid_down` cannot do itself: it takes
+    the two vectors apart, and knows no shape or face to read a name off. This is the
+    resolver both readers of an :class:`~bench.model.Orient` share instead of each finding
+    its own - :func:`fits` calls it before measuring the tree's own points, and
+    :mod:`bench.views` calls it before :func:`bench.export.as_printed` turns a kernel's mesh
+    - so the same ``bed_face`` settles the same turn wherever it is read.
+
+    ``None`` when ``orient`` names no ``bed_face``, or ``shape`` is not a
+    :class:`~bench.topology.Solid` to name one on - a check is handed a bare shape before a
+    ``Part``'s ``Printed`` stock is known to exist, and a bare shape's own ``Orient`` may
+    still name a face on it. A bad ``bed_face`` is :func:`~bench.solids.plane_of`'s to
+    refuse, and that refusal is left to propagate rather than caught here - the maker's
+    mistake to fix, the same as a bad ref anywhere else.
+    """
+    if orient.bed_face is None or not isinstance(shape, Solid):
+        return None
+    return plane_of(shape, orient.bed_face).x_dir
 
 
 def exportable(shape: Shape, stock: Stocked, process: Process) -> Violation | None:

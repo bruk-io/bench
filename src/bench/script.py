@@ -46,8 +46,8 @@ import io
 import linecache
 import logging
 import traceback
-from collections.abc import Callable, Container, Iterable, Mapping, Sequence
-from contextlib import redirect_stderr, redirect_stdout
+from collections.abc import Callable, Container, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field, is_dataclass, replace
 from types import FrameType, ModuleType
 from typing import NamedTuple, TypeIs, assert_never
@@ -87,7 +87,7 @@ from .model import (
 from .nest import Bed
 from .params import configured, declared, values_of
 from .scene import ParamView, Scalar, Scene
-from .telemetry import SILENT, Tracer, fields, timed
+from .telemetry import CHECK, FIELDS, SILENT, Tracer, fields, timed
 from .topology import Label, Shape, Solid
 from .views import Finding
 
@@ -369,6 +369,44 @@ def _asking_line() -> int | None:
     return None
 
 
+class _Heard(logging.Handler):
+    """Every warning a module logs as a finding while the script runs - a record carrying the
+    :data:`~bench.telemetry.CHECK` field, such as :func:`bench.threads.thread`'s small-thread
+    warning - written into the run's notebook as a violation of that check, at the line of the
+    script that was running when it was logged.
+
+    A handler because that is how :mod:`logging` is extended, as :mod:`bench.worker`'s is.
+    Logging is synchronous, so :func:`_asking_line` still sees the script's frame. A finding
+    heard twice at the same line - a thread built in a loop - is recorded once.
+    """
+
+    def __init__(self, recorder: _Recorder) -> None:
+        super().__init__(logging.WARNING)
+        self._recorder = recorder
+
+    def emit(self, record: logging.LogRecord) -> None:
+        check = getattr(record, FIELDS, {}).get(CHECK)
+        if not isinstance(check, str):
+            return
+        severity = Severity.ERROR if record.levelno >= logging.ERROR else Severity.WARNING
+        found = Violation(check, record.getMessage(), severity, line=_asking_line())
+        if all(one.violation != found for one in self._recorder.findings):
+            self._recorder.findings.append(Finding(found, ()))
+
+
+@contextmanager
+def _hearing(recorder: _Recorder) -> Iterator[None]:
+    """Hear ``bench``'s findings into ``recorder`` for the length of the block, and stop, so
+    no run hears another's."""
+    logger = logging.getLogger("bench")
+    heard = _Heard(recorder)
+    logger.addHandler(heard)
+    try:
+        yield
+    finally:
+        logger.removeHandler(heard)
+
+
 # ---- running -------------------------------------------------------------------------
 
 
@@ -481,6 +519,7 @@ def _ran(
         with (
             redirect_stdout(captured),
             redirect_stderr(complained),
+            _hearing(recorder),
             timed(tracer, "bench.script.exec"),
         ):
             # the script is the program; this is the interpreter
@@ -551,14 +590,23 @@ def _namespace(
         """
         _shown(recorder, thing)
 
-    def check_fits(shape: Shape, volume: Volume) -> Violation | None:
+    def check_fits(
+        shape: Shape | Part, volume: Volume, orient: Orient | None = None
+    ) -> Violation | None:
         """Check that ``shape`` fits in ``volume``, and record what it finds.
 
         Needs no kernel: the tree's own bounds answer it, so this one runs in the browser
-        as well as on the desk.
+        as well as on the desk. A ``shape`` already handed as the ``Part`` it becomes - a
+        printed part's ``stock`` names its own ``Orient`` - is measured standing the way it
+        prints, not lying however it was drawn, without saying so again; a bare ``Solid``,
+        usually asked about before the part it becomes exists, has no ``Part.stock`` yet to
+        read one off, so ``orient`` states it instead - the same record ``check_overhangs``
+        takes - and overrides a ``Part``'s own when both are given. Neither, and the box
+        measured is the shape's own, exactly as before.
         """
         with timed(tracer, "bench.check.fits"):
-            return _recorded(recorder, fits(shape, volume), (shape,))
+            subject = shape.shape if isinstance(shape, Part) else shape
+            return _recorded(recorder, fits(shape, volume, orient), (subject,))
 
     def check_clearance(a: Solid, b: Solid, least: float) -> Violation | None:
         """Check that two bodies stay ``least`` millimetres apart, and record what it
@@ -791,6 +839,14 @@ def _namespace(
         found, nothing happens. A check that could not be answered - no kernel to measure
         with - does not stop the run either: ``UNCHECKED`` is not a failure, and a script
         that stopped on one would refuse to draw itself in a browser.
+
+        ``require`` does not read ``Severity`` beyond that: an ``ERROR`` and a ``WARNING``
+        stop the run alike (task-75). ``check_overhangs`` answers only ``WARNING`` even for
+        a face the reviewer would call a real problem, so ``require(check_overhangs(...))``
+        stops on any lean past ``max_overhang`` - not what most scripts want, since the
+        check means to flag a face worth a look, not to fail the part. Call
+        ``check_overhangs`` on its own and read what it found instead; wrap it in
+        ``require`` only where every face really must pass.
 
         Raises:
             ValueError: naming the check and what it found, which comes back as the error

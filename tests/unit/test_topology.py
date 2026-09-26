@@ -28,6 +28,9 @@ from bench import (
     SolidFace,
     Vector,
     Wire,
+    X,
+    Y,
+    Z,
     bounds,
     chord_step,
     circle,
@@ -61,9 +64,11 @@ from bench.topology import (
     Intersection,
     Moved,
     Revolve,
+    Swept,
     Union,
     moved,
     node_children,
+    sweep_stations,
 )
 
 pytestmark = pytest.mark.unit
@@ -671,3 +676,55 @@ def test_an_import_has_no_extruded_root_to_chamfer_a_foot_on() -> None:
     it by name rather than guessing at a profile it does not have."""
     with pytest.raises(ValueError, match="extruded from a profile"):
         foot_chamfer(imported(_cube_mesh()), 0.5)
+
+
+# ---- a sweep ------------------------------------------------------------------------------
+
+
+def _hooked() -> Solid:
+    """A 5 mm circle carried up 10 along Z, then a quarter turn of radius 30 towards X - an
+    arc drawn in XZ about (30, 0, 10), from where the line stops to (30, 0, 40)."""
+    up = Edge(Line(ORIGIN, Point(0, 0, 10)))
+    turn = Edge(Arc(Point(30, 0, 10), 30.0, 0.0, math.pi / 2, plane(Point(30, 0, 10), Y, -X)))
+    return Solid(Swept(face(circle(5.0)), Wire((up, turn))))
+
+
+def test_a_sweep_stands_at_the_start_the_end_of_each_line_and_every_chord_of_a_bend() -> None:
+    """The bend is cut for the chord its outside runs - 30 plus the profile's 5 - so it takes
+    as many steps as :func:`chord_step` says a 35 mm arc needs for a quarter turn."""
+    node = cast("Swept", _hooked().node)
+    stations = sweep_stations(node)
+    assert stations[0] == identity()
+    assert len(stations) == 2 + math.ceil((math.pi / 2) / chord_step(35.0))
+    assert near(stations[1] @ ORIGIN, Point(0, 0, 10))
+    assert near(stations[-1] @ ORIGIN, Point(30, 0, 40))
+    assert near(stations[-1] @ Z, X)
+
+
+def test_a_sweep_names_its_start_and_end_and_a_side_per_profile_edge() -> None:
+    faces = faces_of(_hooked())
+    assert [f.label for f in faces] == ["start", "end", "side-0"]
+    start, end, side = faces
+    assert start.plane is not None and near(start.plane.normal, -Z)
+    assert end.plane is not None and near(end.plane.origin, Point(30, 0, 40))
+    assert near(end.plane.normal, X)
+    assert side.plane is None
+
+
+def test_a_sweep_turned_into_a_cavity_faces_its_ends_the_other_way() -> None:
+    carved = Solid(
+        Difference(Solid(Extrude(face(rect(100, 100, Point(-50, -50))), 60.0)), _hooked())
+    )
+    found = [c for c in node_children(carved.node, identity()) if isinstance(c, Solid)]
+    turned = node_children(found[1].node, identity())
+    start = next(f for f in turned if isinstance(f, SolidFace) and f.label == "start")
+    assert start.plane is not None and near(start.plane.normal, Z)
+
+
+def test_a_sweep_is_bounded_round_the_outside_of_its_bend() -> None:
+    """Up to 45 at the outside of the bend's top and out to 30 across X, 5 either side in Y -
+    and never short, whatever the chords between stations cut off."""
+    box = bounds(_hooked())
+    assert box.x0 <= -5.0 and box.y0 <= -5.0 and box.y1 >= 5.0
+    assert box.z1 >= 40.0 + 5.0 - CHORD and box.x1 >= 30.0
+    assert box.z1 <= 45.0 + 2 * CHORD and box.x0 >= -5.0 - 2 * CHORD

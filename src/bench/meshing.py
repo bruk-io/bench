@@ -34,6 +34,7 @@ import math
 from array import array
 from collections.abc import Mapping, Sequence
 
+from . import triangulate
 from .geometry import TOL, Point, Transform, identity, to_world
 from .kernel import Mesh
 from .model import Ref
@@ -42,10 +43,13 @@ from .topology import (
     Revolve,
     Ring,
     SolidFace,
+    Swept,
     chord_step,
+    flat_ring,
     node_children,
     profile_frame,
     profile_rings,
+    sweep_stations,
     under,
 )
 
@@ -62,7 +66,7 @@ genuine cap a side on a part a few hundred millimetres across."""
 # ---- names ------------------------------------------------------------------------------
 
 
-def face_refs(node: Extrude | Revolve, prefix: str) -> tuple[Ref, ...]:
+def face_refs(node: Extrude | Revolve | Swept, prefix: str) -> tuple[Ref, ...]:
     """What each face index of one swept primitive is called, in the order the naming rule
     lists the faces - which is the order :func:`profile_rings` counts them in."""
     return tuple(
@@ -88,6 +92,27 @@ def segments(rings: tuple[Ring, ...]) -> int:
     that flattened the rings themselves."""
     reach = max((abs(u) for ring in rings for u, _ in ring.points), default=0.0)
     return max(3, math.ceil(math.tau / chord_step(reach)))
+
+
+def divisions(rings: tuple[Ring, ...], twist: float, scale: float) -> int:
+    """How many extra copies of the section a twisted extrusion is built with, so that the
+    straight run between two of them stays within :data:`~bench.topology.CHORD` of the helix
+    the furthest point of the section really follows - the rule :func:`segments` turns a
+    revolve by. A sweep with no twist needs none: a taper's sides are straight already.
+
+    What this does not bound is the fold. Each step of the section sweeps a quad whose far
+    edge is turned against its near one, and the modeller splits it along one diagonal, so a
+    long straight step twisted is off its true surface by up to ``length * sin(turn / 2) / 2``
+    - measured, a 4 mm square turned a quarter over 10 mm comes out 9 per cent over its
+    volume turned one way and 12 per cent under turned the other. Holding the fold within a
+    chord as well was tried and measured worse where it matters: a thread's section is a
+    finely chorded circle whose every point slides along the circle as it turns, and copies
+    that close together lean the flank's facets to 67 degrees where the flank leans 40.
+    """
+    if abs(twist) <= TOL:
+        return 0
+    reach = max((math.hypot(u, v) for ring in rings for u, v in ring.points), default=0.0)
+    return max(1, math.ceil(abs(twist) / chord_step(reach * max(1.0, scale)))) - 1
 
 
 def sweep_frame(node: Extrude | Revolve) -> Transform:
@@ -163,13 +188,20 @@ def extruded_faces(
     triangles: Sequence[int],
     distance: float,
     rings: tuple[Ring, ...],
+    twist: float = 0.0,
+    scale: float = 1.0,
 ) -> array[int]:
     """One face index per triangle of a fresh extrusion: ``top`` and ``bottom`` by the
     triangle's normal, every side by the profile step underneath it.
 
     ``top`` is the face at ``distance`` however the sweep runs, so a negative distance makes
     the ``+Z``-facing cap the bottom one - the naming rule's own words, read off the mesh.
+
+    A twisted or tapered extrusion is :func:`_twisted_faces`'s instead: a thread's flank can
+    lean further than any normal test would still call a side.
     """
+    if abs(twist) > TOL or abs(scale - 1.0) > TOL:
+        return _twisted_faces(vertices, stride, triangles, distance, rings, twist, scale)
     up, down = (0, 1) if distance >= 0.0 else (1, 0)
     ends, owners = walls(rings)
     count = len(triangles) // 3
@@ -194,6 +226,55 @@ def extruded_faces(
             out[t] = down
         else:
             out[t] = _nearest(ends, owners, (ax + bx + cx) / 3, (ay + by + cy) / 3)
+    return out
+
+
+def _twisted_faces(
+    vertices: Sequence[float],
+    stride: int,
+    triangles: Sequence[int],
+    distance: float,
+    rings: tuple[Ring, ...],
+    twist: float,
+    scale: float,
+) -> array[int]:
+    """One face index per triangle of a fresh twisted or tapered extrusion, built from
+    ``z = 0`` to ``z = distance`` with its far end turned ``twist`` about the sweep.
+
+    A cap is decided by position, the way a revolve's is: all three corners on ``z = 0`` is
+    ``bottom`` and all three on ``z = distance`` is ``top``, because a side triangle always
+    spans two copies of the section. A side is decided by the profile step underneath it once
+    each corner is turned back and shrunk back by as much as its height turned and grew it,
+    which puts it on the step it was swept from. A section whose every step belongs to one
+    face - an offset circle, a thread - needs no search at all.
+    """
+    ends, owners = walls(rings)
+    only = owners[0] if len(set(owners)) == 1 else None
+    turn = twist if distance >= 0.0 else -twist
+    count = len(triangles) // 3
+    out = array("I", bytes(4 * count))
+    cos, sin = math.cos, math.sin
+    for t in range(count):
+        az = vertices[stride * triangles[3 * t] + 2]
+        bz = vertices[stride * triangles[3 * t + 1] + 2]
+        cz = vertices[stride * triangles[3 * t + 2] + 2]
+        if abs(az - distance) < _SEAM and abs(bz - distance) < _SEAM and abs(cz - distance) < _SEAM:
+            out[t] = 0
+        elif abs(az) < _SEAM and abs(bz) < _SEAM and abs(cz) < _SEAM:
+            out[t] = 1
+        elif only is not None:
+            out[t] = only
+        else:
+            u = v = 0.0
+            for k in range(3):
+                p = stride * triangles[3 * t + k]
+                f = vertices[p + 2] / distance
+                back = -turn * f
+                grow = 1.0 + (scale - 1.0) * f
+                x, y = vertices[p] / grow, vertices[p + 1] / grow
+                u += x * cos(back) - y * sin(back)
+                v += x * sin(back) + y * cos(back)
+            out[t] = _nearest(ends, owners, u / 3, v / 3)
     return out
 
 
@@ -309,3 +390,100 @@ def mesh(
         )
     )
     return Mesh(positions, tuple(triangles), tuple(refs))
+
+
+# ---- a sweep, as rings along its path ---------------------------------------------------------
+
+_START = 0
+_END = 1
+_SIDES = 2
+"""Where a sweep's faces stand among the ones :func:`~bench.topology.node_children` names:
+``start``, ``end``, then a ``side-`` per outer edge and one per hole wire."""
+
+_STRAIGHT = 1e-9
+"""Twice the area, in square millimetres, below which three ring points are in a line - the
+figure :mod:`bench.triangulate` drops a corner at, so a ring cleaned here keeps every corner
+the cap is clipped from and the cap and the walls share every vertex."""
+
+
+def swept(node: Swept) -> tuple[array[float], array[int], array[int]]:
+    """A swept body as a closed mesh built here, not by a modeller: ``x, y, z`` per vertex,
+    three vertex indices per triangle wound counter-clockwise seen from outside, and the face
+    each triangle lies on - its index among the faces the naming rule lists.
+
+    The profile is flattened once, the way every profile is (:func:`~bench.topology.flat_ring`,
+    arcs cut within :data:`~bench.topology.CHORD`), and a ring of it stands at every station
+    :func:`~bench.topology.sweep_stations` gives. Neighbouring rings are joined step by step,
+    each step's two triangles on the face its profile edge sweeps, and the first and last ring
+    are capped with the profile's own region, triangulated on the same vertices - so the mesh
+    is closed without a vertex being merged, which is what a modeller asks of a mesh it is
+    handed.
+    """
+    on = node.profile.plane
+    rings = tuple(
+        _cleaned(ring, facing=k == 0)
+        for k, ring in enumerate(
+            (
+                flat_ring(
+                    node.profile.outer,
+                    on,
+                    tuple(_SIDES + i for i in range(len(node.profile.outer.edges))),
+                ),
+                *(
+                    flat_ring(w, on, (_SIDES + len(node.profile.outer.edges) + k,) * len(w.edges))
+                    for k, w in enumerate(node.profile.inner)
+                ),
+            )
+        )
+    )
+    flat = [point for ring in rings for point in ring.points]
+    per = len(flat)
+    stations = sweep_stations(node)
+    vertices = array("d")
+    for t in stations:
+        frame = t @ to_world(on)
+        for u, v in flat:
+            p = frame @ Point(u, v, 0.0)
+            vertices.extend((p.x, p.y, p.z))
+    triangles = array("I")
+    faces = array("I")
+    first = 0
+    for ring in rings:
+        count = len(ring.points)
+        for k in range(len(stations) - 1):
+            here, there = k * per + first, (k + 1) * per + first
+            for j in range(count):
+                a, b = here + j, here + (j + 1) % count
+                c, d = there + (j + 1) % count, there + j
+                triangles.extend((a, b, c, a, c, d))
+                faces.extend((ring.faces[j], ring.faces[j]))
+        first += count
+    cap = triangulate.triangles(rings[0].points, tuple(ring.points for ring in rings[1:]))
+    last = (len(stations) - 1) * per
+    for i, j, k in cap:
+        triangles.extend((i, k, j, last + i, last + j, last + k))
+        faces.extend((_START, _END))
+    return vertices, triangles, faces
+
+
+def _cleaned(ring: Ring, *, facing: bool) -> Ring:
+    """``ring`` walked counter-clockwise when ``facing`` - an outline - and clockwise when not
+    - a hole - with every point that repeats the one before it or stands in a line between its
+    neighbours left out, its step merged into the step before it."""
+    points = list(ring.points)
+    owners = list(ring.faces)
+    if (triangulate.signed_area(points) > 0.0) != facing:
+        count = len(points)
+        points = points[::-1]
+        owners = [owners[(count - 2 - j) % count] for j in range(count)]
+    k = 0
+    while len(points) > 3 and k < len(points):
+        count = len(points)
+        (au, av), (bu, bv), (cu, cv) = points[k - 1], points[k], points[(k + 1) % count]
+        if abs((bu - au) * (cv - av) - (bv - av) * (cu - au)) <= _STRAIGHT:
+            del points[k]
+            del owners[k]
+            k = max(k - 1, 0)
+        else:
+            k += 1
+    return Ring(tuple(points), tuple(owners))

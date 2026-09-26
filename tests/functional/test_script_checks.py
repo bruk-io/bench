@@ -6,6 +6,8 @@ finish*, and ``require`` is the one way a script turns a violation into a stoppe
 measurement itself is the adapter layer's.
 """
 
+from pathlib import Path
+
 import pytest
 
 from bench import Severity, run
@@ -50,6 +52,29 @@ from bench.library.print import PLA, H2D
 block = cuboid(40, 40, 40)
 check_fits(block, H2D)
 show(part("block", block, Printed(PLA)))
+"""
+
+HOOD = """\
+from bench import *
+from bench.library.print import PLA, H2D
+
+# The wall vent's hood, reproduced as a box of its dimensions (task-68): 272 x 120 mm
+# footprint, 322 mm tall standing on its outlet - drawn with that 322 mm along its own Y,
+# which is what Orient(up=Y) turns to face the bed. The hood is a Part before it is
+# checked, and check_fits reads its own Orient off it - no hand rotation, and no orient=
+# repeated here either.
+hood = part("hood", cuboid(272.0, 322.0, 120.0), Printed(PLA, Orient(up=Y)))
+check_fits(hood, H2D)
+show(hood)
+"""
+
+HOOD_UNORIENTED = """\
+from bench import *
+from bench.library.print import PLA, H2D
+
+hood = part("hood", cuboid(272.0, 322.0, 120.0), Printed(PLA))
+check_fits(hood, H2D)
+show(hood)
 """
 
 CHECKED_BEFORE_IT_WAS_A_PART = """\
@@ -133,6 +158,25 @@ def test_a_violation_carries_the_line_of_the_script_that_asked_for_it() -> None:
 def test_a_check_that_found_nothing_records_nothing() -> None:
     """``violations`` is what went wrong, not a transcript of what was asked."""
     assert _ok(run(CLEAN))["violations"] == []
+
+
+def test_check_fits_measures_a_standing_part_on_its_print_axes() -> None:
+    """task-68: the wall vent's hood passes its H2D check through the public script API,
+    with no hand rotation - `check_fits`, given the `Part` itself, reads its `Printed`
+    stock's own `Orient` and lays it down the way it prints before measuring, the same turn
+    `export.as_printed` lays the finished mesh down with."""
+    assert _ok(run(HOOD))["violations"] == []
+
+
+def test_check_fits_reads_the_part_it_was_actually_given() -> None:
+    """The same box drawn without turning it - a `Printed` part whose `Orient` defaults to
+    +Z, which is no turn at all for a shape drawn standing in its own Y - still reads the
+    bug this fixes: its own Y over H2D's depth. `check_fits` reads whatever `Orient` the
+    `Part` it was handed actually carries, not a turn nobody drew or asked for."""
+    found = _ok(run(HOOD_UNORIENTED))["violations"]
+    assert len(found) == 1
+    assert found[0]["check"] == "fits"
+    assert "y 322.0 mm against 320.0 mm" in found[0]["message"]
 
 
 # ---- the assembly-shaped clearance ------------------------------------------------------
@@ -311,3 +355,65 @@ def test_the_checks_are_injected_per_run_and_are_not_names_of_the_package() -> N
         assert not hasattr(bench, name), f"{name} is a per-run closure, not an export"
     scene = _ok(run(CLEAN))
     assert scene["violations"] == []
+
+
+SMALL_THREAD = """\
+from bench import *
+from bench.library.print import PLA
+
+for _ in range(2):
+    bolt = thread(Thread.EXTERNAL, 3.0, 0.5, 6.0)
+tool = thread(Thread.INTERNAL, 12.0, 2.0, 4.0, material=PLA)
+nut = cut(cylinder(20.0, 4.0), tool, label="thread")
+show((part("bolt", bolt, Printed(PLA)), part("nut", nut, Printed(PLA))))
+"""
+
+
+def test_a_thread_too_small_to_print_is_a_warning_at_the_line_that_made_it() -> None:
+    """The small-thread warning is a finding like any check's, though no check was asked
+    for: one per limit the thread falls under, at the script's line, heard once however many
+    times the loop built it - and none for the M12 beside it."""
+    found = _ok(run(SMALL_THREAD))["violations"]
+    assert [(one["check"], one["severity"], one["line"]) for one in found] == [
+        ("thread", Severity.WARNING, 5),
+        ("thread", Severity.WARNING, 5),
+    ]
+    assert "3 mm thread" in found[0]["message"]
+    assert "0.13 mm deep" in found[1]["message"]
+    assert all("unmeasured default" in one["message"] for one in found)
+
+
+def test_a_thread_warning_is_heard_only_by_the_run_that_made_it() -> None:
+    """A run's hearing stops with it: the next run, with no small thread, finds nothing."""
+    _ok(run(SMALL_THREAD))
+    assert _ok(run(CLEAN))["violations"] == []
+
+
+FINE_NUT = """\
+from bench import *
+from bench.library.print import PLA
+
+fine = thread(Thread.INTERNAL, 8.0, 1.25, 6.0, material=PLA, fit=Fit.SLIDE)
+coarse = thread(Thread.INTERNAL, 12.0, 2.0, 6.0, material=PLA, fit=Fit.SLIDE)
+nut = cut(cut(cylinder(30.0, 6.0), fine, label="fine"), coarse, label="coarse")
+show(part("nut", nut, Printed(PLA)))
+"""
+
+
+def test_a_nut_drawn_clear_of_its_bolt_is_a_warning_and_a_coarse_one_is_not() -> None:
+    """The M8 x 1.25 cavity at line 4 is opened past its depth; the M12 x 2 at line 5 is not.
+    The M8 is also shallower than the small-thread limit, which is its own finding."""
+    found = _ok(run(FINE_NUT))["violations"]
+    clear = [one for one in found if "drawn clear" in one["message"]]
+    assert [(one["check"], one["severity"], one["line"]) for one in clear] == [
+        ("thread", Severity.WARNING, 4)
+    ]
+    assert "in PLA at SLIDE" in clear[0]["message"]
+    assert all(one["line"] == 4 for one in found if one["check"] == "thread")
+
+
+def test_the_jar_lid_is_not_drawn_clear_of_its_jar() -> None:
+    """A 40 x 3 thread in PLA at a clearance fit engages in the model."""
+    source = (Path(__file__).resolve().parents[2] / "examples" / "jar_lid.py").read_text()
+    found = _ok(run(source))["violations"]
+    assert not [one for one in found if one["check"] == "thread"]

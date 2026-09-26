@@ -47,12 +47,13 @@ from bench.topology import (
     Moved,
     Node,
     Revolve,
+    Swept,
     Union,
     chord_step,
     flat_ring,
 )
 from tests.adapter import kernel_cases
-from tests.adapter.kernel_cases import BORE, BOSS, PLATE, POCKET, WALLED
+from tests.adapter.kernel_cases import BORE, BOSS, PLATE, POCKET, SUNK, WALLED
 from tools import stack
 
 pytestmark = pytest.mark.adapter
@@ -225,6 +226,8 @@ def _kinds(node: Node) -> frozenset[type[Node]]:
             return frozenset({Imported})
         case Moved(inner, _):
             return frozenset({Moved}) | _kinds(inner)
+        case Swept():
+            return frozenset({Swept})
         case _:
             assert_never(node)
 
@@ -536,6 +539,25 @@ def test_a_printed_bore_measures_the_diameter_the_material_asked_for(
     assert across == pytest.approx(asked, abs=1e-3), "the circle the chords stand in"
     lost = built["volumes"]["drilled-plate"] - built["volumes"]["drilled"]
     assert lost == pytest.approx(_polygon_area(asked / 2) * 4.0, rel=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("key", "degrees"), [("sunk-m3", 90.0), ("sunk-wood-8", 82.0), ("sunk-drywall-8", 61.5)]
+)
+def test_a_countersink_is_cut_at_the_screws_own_angle(
+    built: dict[str, Any], key: str, degrees: float
+) -> None:
+    """``hole(countersink=True)`` with no ``angle`` cuts the cone the screw's own
+    ``countersink_angle`` asks for: ISO 90 for an M3, 82 for an inch flat head, the bugle's
+    estimate for a drywall screw. Read off the cone's own triangles: how far it widens
+    between its narrowest ring, down where it meets the bore, and its widest, at the plate's
+    top, over how far apart the two rings stand."""
+    mesh = _mesh(built, key)
+    cone = [p for at in _tagged(mesh, "sunk/head") for p in _corners(mesh, at)]
+    reach = [(math.hypot(x - 10.0, y - 10.0), z) for x, y, z in cone]
+    (r0, z0), (r1, z1) = min(reach, key=lambda p: p[1]), max(reach)
+    assert z1 == pytest.approx(SUNK, abs=1e-3)
+    assert math.degrees(2 * math.atan((r1 - r0) / (z1 - z0))) == pytest.approx(degrees, abs=0.05)
 
 
 def test_a_wall_check_measures_the_thinnest_wall_of_a_real_body(built: dict[str, Any]) -> None:

@@ -12,7 +12,12 @@ from itertools import pairwise
 import pytest
 
 from bench.fasteners import (
+    BUGLE,
     COUNTERSINK,
+    COUNTERSINK_82,
+    DRYWALL_6,
+    DRYWALL_SCREWS,
+    IMPERIAL_SCREWS,
     INSERT_M3,
     INSERT_M4,
     INSERT_M5,
@@ -24,8 +29,12 @@ from bench.fasteners import (
     M5,
     M6,
     M8,
+    MACHINE_8_32,
+    MACHINE_SCREWS,
     MAGNET_6X2,
     SCREWS,
+    WOOD_8,
+    WOOD_SCREWS,
     Fit,
     Screw,
     bore,
@@ -172,3 +181,107 @@ def test_a_screw_is_a_value_and_two_of_the_same_size_are_equal() -> None:
     """Frozen and dumb, like every other record here: no identity, no state, hashable."""
     assert Screw(**{f: getattr(M3, f) for f in M3.__slots__}) == M3
     assert len({M3, M3}) == 1
+
+
+# ---- imperial: wood, drywall and machine screws (task-69) -----------------------------
+
+
+def test_a_wood_screws_diameter_is_asme_b18_6_1s_own_formula() -> None:
+    """D = 0.060 + 0.013 * gauge, in inches, converted to millimetres like the rest of the
+    table."""
+    assert [round(s.diameter, 2) for s in WOOD_SCREWS] == [3.51, 4.17, 4.83]
+    # a #8 wood screw and an 8-32 machine screw share a gauge and so a major diameter
+    assert WOOD_8.diameter == MACHINE_8_32.diameter
+
+
+def test_wood_screw_clearance_holes_are_the_inch_tables_own() -> None:
+    """ANSI/ASME B18.2.8's designated drills for #6, #8 and #10, the inch counterpart of
+    the metric table's ISO 273."""
+    assert [(s.close, s.normal, s.loose) for s in WOOD_SCREWS] == [
+        (3.91, 4.31, 4.70),
+        (4.57, 4.98, 5.41),
+        (5.22, 5.61, 6.05),
+    ]
+
+
+def test_wood_screw_pilot_holes_are_tighter_in_softwood_than_hardwood() -> None:
+    """``tap`` reads as the softwood pilot and ``self_tap`` the hardwood one - shop
+    practice, not a dimensional standard, but ordered the same tightest-first way the
+    metric table's own ``tap`` < ``self_tap`` already is."""
+    for screw in WOOD_SCREWS:
+        assert screw.tap < screw.self_tap < screw.diameter
+
+
+def test_a_drywall_screw_shares_its_wood_screws_thread_and_holes() -> None:
+    """A bugle head changes the head, not what the screw drives into."""
+    for wood, drywall in zip(WOOD_SCREWS, DRYWALL_SCREWS, strict=True):
+        assert drywall.diameter == wood.diameter
+        assert (drywall.close, drywall.normal, drywall.loose) == (
+            wood.close,
+            wood.normal,
+            wood.loose,
+        )
+        assert (drywall.tap, drywall.self_tap) == (wood.tap, wood.self_tap)
+        assert drywall.flat_head_d == wood.flat_head_d
+        assert drywall.countersink_d == wood.countersink_d
+
+
+def test_a_bugle_head_is_not_the_flat_heads_82_degrees_either() -> None:
+    """task-69: honoured or its difference stated. Neither ASME table gives a bugle head's
+    angle, so :data:`BUGLE` is an estimate the module says is one, and it is what every
+    drywall screw's own ``countersink_angle`` carries - narrower than the flat head's cited
+    82 degrees, and narrower again than the metric table's ISO 90."""
+    assert math.radians(60.0) < BUGLE < math.radians(63.0)
+    assert BUGLE < COUNTERSINK_82 < COUNTERSINK
+    for screw in DRYWALL_SCREWS:
+        assert screw.countersink_angle == BUGLE
+    for screw in WOOD_SCREWS + MACHINE_SCREWS:
+        assert screw.countersink_angle == COUNTERSINK_82
+
+
+def test_wood_and_drywall_screws_have_no_socket_or_nut_columns() -> None:
+    """Nobody makes a wood or a drywall screw with a hex socket or a nut, so those columns
+    are ``0.0`` rather than a number invented to fill the field - a check that fails on a
+    zero-size cutter, not a lie."""
+    for screw in WOOD_SCREWS + DRYWALL_SCREWS:
+        assert (screw.socket_head_d, screw.socket_head_h) == (0.0, 0.0)
+        assert (screw.button_head_d, screw.button_head_h) == (0.0, 0.0)
+        assert (screw.counterbore_d, screw.counterbore_depth) == (0.0, 0.0)
+        assert screw.nut_across_flats == pytest.approx(0.0)
+
+
+def test_the_vents_number_6_drywall_screw_can_be_written_as_the_real_size() -> None:
+    """decision-11's own example: the vent's #6 drywall screws were drawn as M4 for want of
+    a table entry. ``DRYWALL_6`` is not M4 - close to M3.5, and printed with a real bugle
+    countersink rather than a borrowed metric one."""
+    assert DRYWALL_6.diameter != M4.diameter
+    assert M3.diameter < DRYWALL_6.diameter < M4.diameter
+    assert bore(DRYWALL_6, Fit.CLEARANCE) == pytest.approx(4.31)
+
+
+def test_machine_screw_clearance_and_tap_holes_are_the_inch_tables_own() -> None:
+    """ANSI/ASME B18.2.8 for clearance, the ANSI 75 percent tap drill for ``tap``."""
+    assert [(s.close, s.normal, s.loose, s.tap) for s in MACHINE_SCREWS] == [
+        (4.57, 4.98, 5.41, 3.45),
+        (5.22, 5.61, 6.05, 3.80),
+        (6.75, 7.14, 7.54, 5.11),
+    ]
+
+
+def test_machine_screw_socket_and_button_heads_are_asme_b18_3s_own() -> None:
+    """A socket head cap screw and a button head cap screw are real products in these three
+    sizes, unlike a wood or a drywall screw's - ASME B18.3, not B18.6.3."""
+    for screw in MACHINE_SCREWS:
+        assert screw.socket_head_d > screw.diameter
+        assert screw.button_head_d > screw.diameter
+        assert screw.socket_head_h > 0.0
+        assert screw.button_head_h > 0.0
+
+
+def test_a_bore_reads_the_same_way_for_an_imperial_screw_as_a_metric_one() -> None:
+    """:func:`bore` never special-cases the table it reads from - the drift guard that
+    already runs over :data:`SCREWS`, run again over the imperial ones."""
+    for screw in IMPERIAL_SCREWS:
+        holes = [bore(screw, fit) for fit in Fit]
+        assert holes == sorted(holes), f"{screw.name} does not widen with the fit"
+        assert holes[0] < screw.diameter < holes[-1]

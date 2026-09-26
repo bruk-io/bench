@@ -36,6 +36,7 @@ _PARTS = {
         "runner",
     ),
     "gridfinity_bin.py": ("bin",),
+    "eased_bracket.py": ("plate",),
     "pipe_bracket.py": ("bracket",),
     "enclosure_lid.py": ("box", "lid"),
     "depth_stop_collar.py": ("collar",),
@@ -56,6 +57,8 @@ _PARTS = {
         "pin-3",
     ),
     "wall_vent.py": ("frame", "attachment"),
+    "jar_lid.py": ("jar", "lid"),
+    "duct_offset.py": ("duct", "flange"),
 }
 """What each example must show. Not every part of the cabinet - it has one front per drawer
 - but every part whose name a reader of the script would expect to find."""

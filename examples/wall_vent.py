@@ -3,7 +3,9 @@
 The frame is screwed over a hole in the wall: a flange with a window in it and a collar
 standing out of its front face round the window. The attachment is a plate whose groove fits
 over the collar at a sliding fit, with a funnel from the square window to a round duct on its
-front - at 45 degrees across the square's corners, so it prints without supports.
+front - at 45 degrees across the square's corners, so it prints without supports. The funnel
+is one loft hollowed with `shell`, open at both ends, rather than an outer loft and an inner
+one taken out of it by hand.
 
 The attachment is drawn where it prints - back face down on the bed, at the origin - and not
 where it sits. `mated` puts it there: its back face on the flange's front face, touching, both
@@ -89,21 +91,26 @@ def attachment(p: Vent) -> Solid:
     rise = side / 2 * 2**0.5 - r_out  # 45 degrees across the corners, which lean the most
     top = body_top + rise
     inner_bottom = _square(side, inset, p.corner)
-    outer = loft(
-        fill(offset(inner_bottom, p.shell), on=raised(XY, body_top)),
-        fill(circle(r_out, centre), on=raised(XY, top)),
-        label="transition",
-    )
-    inner = loft(
-        fill(inner_bottom, on=raised(XY, body_top - 0.5)),
-        fill(circle(r_in, centre), on=raised(XY, top + 0.5)),
+    # The funnel is its outside hollowed to the wall and open at both ends: `shell` insets
+    # both profiles by the wall and takes that loft out, which is the window at the bottom
+    # and the duct's bore at the top. The wall is measured level with the profiles, so on the
+    # 45 degree corners it is `shell * cos(45)` through, not `shell`.
+    funnel = shell(
+        loft(
+            fill(offset(inner_bottom, p.shell), on=raised(XY, body_top)),
+            fill(circle(r_out, centre), on=raised(XY, top)),
+            label="transition",
+        ),
+        p.shell,
+        open=("bottom", "top"),
+        inside="funnel",
     )
     spigot = extrude(
         face(circle(r_out, centre), holes=(circle(r_in, centre),), on=raised(XY, top)),
         p.spigot,
         label="spigot",
     )
-    body = cut(union(body, union(outer, spigot)), inner, label="funnel")
+    body = union(body, union(funnel, spigot))
     return cut(
         body,
         extrude(fill(inner_bottom, on=raised(XY, groove_top - 0.5)), p.base + 1.0),

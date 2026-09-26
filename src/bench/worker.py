@@ -173,7 +173,9 @@ class _Spans:
 class _Records(logging.Handler):
     """``bench``'s log records, handed to the page with their structured fields.
 
-    The one subclass in the package, because a handler is how :mod:`logging` is extended.
+    One of the package's two subclasses, both handlers, because a handler is how
+    :mod:`logging` is extended; the other is :mod:`bench.script`'s, which hears a run's
+    findings.
     """
 
     def __init__(self, telemetry: Telemetry) -> None:

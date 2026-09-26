@@ -88,6 +88,7 @@ and says in its own text what it could not do and why.
 | `box_with_hole.py` | a finger-jointed ply box | the smallest script there is |
 | `gridfinity_cabinet.py` | a drawer cabinet, laser-cut | a library `Build` and a cut list |
 | `gridfinity_bin.py` | a 2 x 1 x 3 bin, label lip and scoop | `library/gridfinity3d`, and a stacking fit measured rather than asserted |
+| `eased_bracket.py` | a small mounting plate | `fillet` and `chamfer` on chosen corners of a profile, and `library/print.rim` easing the top round while `check_overhangs` confirms it is the printable direction |
 | `pipe_bracket.py` | a 40 mm pipe bracket, two M4 holes | a bore that comes out a teardrop because the part says which way up it prints, and a lofted gusset where a fillet cannot go |
 | `enclosure_lid.py` | a box and its lid | `clearance(Fit.SNUG, PLA)` as the lip's own dimension, four M3 insert bosses, and a lid that prints upside down (`Orient(up=-Z)`) |
 | `depth_stop_collar.py` | a collar for a 6.35 mm shank | a radial set screw: `plane_of(collar, "side-0", around=..., along=...)` |
@@ -95,6 +96,7 @@ and says in its own text what it could not do and why.
 | `systainer_tote.py` | a Systainer-style stacking tote | tapered plugs and their sockets as one `loft`, a wall that thickens into the rim only at the top, and what a hull costs you in names |
 | `fulcrum_hinge.py` | one stack of the rolling hinge in US 10,114,424, posed | a planar linkage swept along its axis, a D passageway cut by hand beside a round one from `hole`, every dimension recorded as the script's own, a pose driven in the patent's order and measured pair by pair with `min_gap`, the whole travel sampled at twenty-one deployments with `check_clearance_through`, and a docstring that says what a static model cannot prove |
 | `wall_vent.py` | a wall vent frame and the attachment that fits over its collar | `mated`: the attachment drawn where it prints, put on the flange by its back face, the contact measured by the call that made it, and the groove round the collar checked with `check_fit` against the slide the table asks |
+| `jar_lid.py` | a jar and the lid that screws onto it | `thread(...)`: a twisted extrusion of an offset circle, the lid's thread opened by `Fit.CLEARANCE` and grown by PLA's hole compensation, the gap measured with `check_clearance` on the bodies, and a helical flank that is one face, `jar/neck/side-0` |
 
 ## Layers
 
@@ -126,12 +128,17 @@ and says in its own text what it could not do and why.
 - `ops.py`, `solids.py`, `features.py` - what you can do, in three files that import only
   downward. Constructors (`rect`, `circle`, `slot`,
   `rounded_rect`), the face builder (`fill`), the flat modifiers (`offset` for kerf,
-  `chamfer`), selectors (`edges`, `edge`) and queries (`bbox`, `bounds`, `area`,
+  `chamfer` and `fillet` for a wire's own corners, convex or concave, all of them or the
+  ones named in `at`), selectors (`edges`, `edge`) and queries (`bbox`, `bounds`, `area`,
   `perimeter`, `centroid`, `is_ccw`, `contains`) are `ops.py`; the body verbs (`extrude`,
   `revolve`, `union`, `cut`, `common`, `hull`, and the sugar `cuboid`, `cylinder`, `loft`,
   `pocket`, `boss`) and the verbs a body takes as readily as a sketch (`mirror`, `move`,
   `rotate`, `pattern`, `grid`, `name`) are `solids.py`; the hole and what makes one
-  printable is `features.py`. Together they are
+  printable is `features.py`. `extrude(..., twist=, scale=)` turns and grows the far end of a
+  sweep, and `threads.py` builds a screw thread out of that: `thread(Thread.EXTERNAL |
+  Thread.INTERNAL, diameter, pitch, length)`, the internal half opened by the fit table's
+  clearance and grown by the material's hole compensation, like any printed hole. Together
+  they are
   the one public home for the verbs a script writes. Every label
   may be a plain string. A sketch's `on=` is where it is *drawn*: `fill(rect(10, 6),
   on=plane_of(plate, "top"))` reads the rectangle in that plane's own frame and lifts it onto
@@ -146,8 +153,28 @@ and says in its own text what it could not do and why.
   countersink, counterbore, angle, top, printed, label)` is one verb over the `Face | Solid`
   union - a circle in a flat part, a bore in a body - and `Top`, `teardrop`, `bridge_steps`,
   `printable_top` and `foot_chamfer` are the printable-hole geometry it builds with.
+- `shell.py` - a body hollowed to a wall. `shell(body, wall, *, open, inside, label)` makes an
+  extrusion, a revolve or a two-profile loft again from its profile inset by `wall` and cuts
+  that out under `inside`, so the inner faces are named (`inside/bottom`, `inside/side-...`)
+  and face into the hollow; a face named in `open` is cut through instead of walled. No kernel
+  offsets a surface here: a loft's wall is measured level with its profiles, so a side leaning
+  `a` is `wall * cos(a)` through, and `wall()` is what measures it.
+- `sweep.py` - a profile carried along a path. `path(start, heading, *legs)` writes the route
+  as `Straight(length)` and `Bend(radius, angle, toward)` legs - an elbow, an S-bend, an
+  offset - and `sweep(profile, along)` carries the profile along it without twisting, its
+  faces `start`, `end` (the profile's frame carried to the end, so a flange mates onto it) and
+  a `side-` per profile edge. The modeller has no sweep, so the body is a `Swept` node that
+  `meshing.swept` lays as rings along the path and the kernel takes in as one mesh - chosen
+  over a chain of hulls after measuring both (`tools/sweep_routes.py`): as exact, any profile,
+  fewer triangles, 3 to 12 times faster, and faces that keep their names. `shell` hollows one.
 - `checks.py` - what has to be true of a part, answered as a `Violation` rather than a
-  raise: `fits(shape, volume)`, `clearance_between(a, b, least, *, kernel)`,
+  raise: `fits(shape, volume, orient=None)` - measured where the shape is drawn, or, given
+  the `Orient` a `Part`'s `Printed` stock names (or `orient` itself, for the bare `Solid` a
+  check is usually handed before the part it becomes exists), laid down first with
+  `model.laid_down` and `bed_along(shape, orient)` (the turn `export.as_printed` lays a mesh
+  down with, read here off the tree instead), so a part that stands on end is measured
+  standing rather than lying however it was authored -
+  `clearance_between(a, b, least, *, kernel)`,
   `fit_between(a, b, fit, asked, *, kernel)` - how a pair put together at a fit really sits,
   a `Fitted` whose sentence is the measured gap beside the asked one,
   `contact_between(a, b, *, kernel)` - the check a pair gets *instead* of `clearance_between`
@@ -276,9 +303,13 @@ and says in its own text what it could not do and why.
   `three_mf(objects)` a 3MF package - one object per part, `unit="millimeter"`, and no
   slicer settings of anybody's. `as_printed(mesh, up, bed_along)` is the mesh a kernel
   built - in the assembly's pose - turned to lie on the bed the way `up` says instead:
-  rotated so `up` is +Z, `bed_along` (a `bed_face`'s own X, when a part names one) settling
-  the turn about it that leaves free, then moved so the lowest point is z = 0 and the
-  footprint centred on the origin. `views._files` is the only caller, on every printed
+  rotated so `up` is +Z with `model.laid_down`, `bed_along` (a `bed_face`'s own X, when a
+  part names one) settling the turn about it that leaves free, then moved so the lowest
+  point is z = 0 and the footprint centred on the origin. `laid_down` is the one rule a
+  printed part is laid down by wherever its `Orient` is read: `checks.bed_along(shape,
+  orient)` resolves `bed_along` off a shape's own `Orient` before `views` calls this, and
+  `checks.fits` calls both to turn the tree's own points and measure the box a part prints
+  in before a kernel ever builds it. `views._files` is the only caller, on every printed
   part's body, so an STL or a 3MF is never the posed mesh. All four are pure functions.
 - `params.py` - a script's settings as one frozen dataclass. `knob(default, *, label, min,
   max, step)` puts the panel's hints on a field without changing its type, and a `Literal`
@@ -339,9 +370,12 @@ and says in its own text what it could not do and why.
   (shrink, printed-hole compensation, first-layer spread, minimum wall, maximum overhang,
   longest bridge, layer height and the per-fit clearance table), the public
   `clearance(fit, material)` **per side** that a lid lip and a hinge bore need as much as a
-  hole does, and the build volumes (`H2D`, `BEDS`). One import for the whole print
-  vocabulary: the records it fills in live in `model.py` and the geometry in `features.py`,
-  and it re-exports both.
+  hole does, the build volumes (`H2D`, `BEDS`), and `rim(profile, length, lead=, drop=,
+  style=, top=, bottom=)` - an extrusion with a top, a bottom or both eased round or
+  chamfered by a stack of hulled slices, so convex-only: a profile with a hole or a concave
+  outline is refused, since a hull would fill either in; `eased()` is `rim()` called with
+  both rims chamfered. One import for the whole print vocabulary: the records it fills in live in
+  `model.py` and the geometry in `features.py`, and it re-exports both.
 - `library/gridfinity3d.py` - the printed Gridfinity bin: a frozen `Spec` (units, a height
   that is a union of the four things "how tall" means, wall, floor, divisions, scoop, label
   tab, magnets, screws and the `Fit` it stacks at), `derive()` for the millimetres,

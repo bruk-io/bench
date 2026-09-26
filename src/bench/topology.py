@@ -37,6 +37,7 @@ from .geometry import (
     plane,
     rotation,
     to_world,
+    translation,
     unit,
 )
 
@@ -188,10 +189,20 @@ class FaceRole(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Extrude:
-    """A profile swept along its own normal; a negative ``distance`` sweeps the other way."""
+    """A profile swept along its own normal; a negative ``distance`` sweeps the other way.
+
+    ``twist`` is how far the far end is turned, in radians, about the axis through the
+    profile plane's own origin along the sweep - counter-clockwise looking back down the
+    sweep, so a positive twist is a right-hand helix whichever way the sweep runs - and
+    ``scale`` is how big the far end is beside the profile, about the same origin. Both are
+    interpolated linearly along the sweep, and both default to the plain prism every
+    extrusion was before they existed.
+    """
 
     profile: Face
     distance: float
+    twist: float = 0.0
+    scale: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,8 +288,23 @@ class Imported:
     triangles: tuple[int, ...]
 
 
-Node = Extrude | Revolve | Union | Difference | Intersection | Hull | Moved | Imported
-"""The recipe for a body. Eight kinds; every consumer matches and ends in ``assert_never``."""
+@dataclass(frozen=True, slots=True)
+class Swept:
+    """A profile carried along a path of lines and arcs, square to the path the whole way.
+
+    The profile stands at the path's start, its normal the way the path sets off, and is
+    carried without twisting: along a line it moves, and round an arc it turns about the
+    arc's own axis, so a frame drawn on it at the start is the frame it arrives with. What
+    :func:`bench.sweep.sweep` builds and checks; a kernel with no sweep of its own builds it
+    as rings of the profile at stations along the path (:func:`sweep_stations`).
+    """
+
+    profile: Face
+    path: Wire
+
+
+Node = Extrude | Revolve | Union | Difference | Intersection | Hull | Moved | Imported | Swept
+"""The recipe for a body. Nine kinds; every consumer matches and ends in ``assert_never``."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -591,6 +617,10 @@ def node_children(
       ``side-<edge label or index>`` per outer-wire edge, and one face per profile hole
       wire under that wire's label (``hole-0``, ``hole-1`` ... when unlabelled). A side
       swept from an arc or a circle has no plane and carries a :class:`Curved` instead.
+      A twisted or tapered extrusion is named by the same rule - one side per edge however
+      many turns it makes, so an offset circle twisted into a thread is one ``side-0`` -
+      but none of its sides has a plane or a :class:`Curved`, and its ``top`` is turned
+      by the twist.
     * ``Revolve``: the same ``side-`` and hole faces, plus ``start`` and ``end`` when the
       angle is less than a full turn.
     * ``Union``, ``Difference``, ``Intersection``: the operands themselves, so each keeps
@@ -599,12 +629,17 @@ def node_children(
     * ``Hull``: nothing. Identity does not survive a hull.
     * ``Imported``: nothing. A file somebody else wrote has no names in it to keep.
     * ``Moved``: what is under it, planes transformed; it renames nothing.
+    * ``Swept``: ``start`` on the profile's own plane, ``end`` where the path stops - the
+      profile's frame carried there - and the same ``side-`` and hole faces as an extrusion,
+      none of them planar.
     """
     match node:
         case Extrude():
             return _inside_out(_extruded_faces(node, at), cavity)
         case Revolve():
             return _inside_out(_revolved_faces(node, at), cavity)
+        case Swept():
+            return _inside_out(_swept_faces(node, at), cavity)
         case Union(a, b) | Intersection(a, b):
             return (_body_at(a, at, cavity), _body_at(b, at, cavity))
         case Difference(base, tool):
@@ -709,6 +744,8 @@ def _swept_curved(c: Curve, node: Extrude, at: Transform, *, hole: bool = False)
     round it was drawn. ``circle()`` walks counter-clockwise and :func:`bench.solids.cut` puts it
     straight in as a hole, so travel says nothing there.
     """
+    if not straight(node):
+        return None
     match c:
         case Line():
             return None
@@ -734,16 +771,19 @@ def _extruded_faces(node: Extrude, at: Transform) -> tuple[SolidFace, ...]:
 
     ``top`` is the face at ``distance`` and ``bottom`` the one on the profile's own plane,
     whichever way the sweep runs; both normals point out of the material, so the frame of
-    ``top`` is the profile's own and ``bottom``'s is that frame turned over.
+    ``top`` is the profile's own and ``bottom``'s is that frame turned over. A twisted
+    extrusion's ``top`` is that frame turned by the twist, so a point drawn on the profile
+    lies on it at the same numbers - times ``scale``, which a frame cannot carry. Its sides
+    are neither flat nor round, so they come back with no plane and no :class:`Curved`.
     """
     on = node.profile.plane
     out = 1.0 if node.distance >= 0.0 else -1.0
+    flat = straight(node)
+    far = _face_plane(on, node.distance, out)
+    if not flat:
+        far = _moved_plane(far, rotation(Axis(far.origin, on.normal * out), node.twist))
     return (
-        SolidFace(
-            FaceRole.TOP,
-            _moved_plane(_face_plane(on, node.distance, out), at),
-            _role_label(FaceRole.TOP),
-        ),
+        SolidFace(FaceRole.TOP, _moved_plane(far, at), _role_label(FaceRole.TOP)),
         SolidFace(
             FaceRole.BOTTOM,
             _moved_plane(_face_plane(on, 0.0, -out), at),
@@ -752,7 +792,7 @@ def _extruded_faces(node: Extrude, at: Transform) -> tuple[SolidFace, ...]:
         *(
             SolidFace(
                 FaceRole.SIDE,
-                _swept_plane(e.curve, on, at),
+                _swept_plane(e.curve, on, at) if flat else None,
                 _side_label(e, i),
                 _swept_curved(e.curve, node, at),
             )
@@ -763,6 +803,12 @@ def _extruded_faces(node: Extrude, at: Transform) -> tuple[SolidFace, ...]:
             for i, w in enumerate(node.profile.inner)
         ),
     )
+
+
+def straight(node: Extrude) -> bool:
+    """Whether ``node`` is a plain prism - no twist and no taper - which is what every
+    extrusion was before it could be either, and what a kernel still builds the old way."""
+    return abs(node.twist) <= TOL and abs(node.scale - 1.0) <= TOL
 
 
 def _round_hole(w: Wire, node: Extrude, at: Transform) -> Curved | None:
@@ -823,6 +869,34 @@ def _sweep_sense(profile: Face, axis: Axis) -> float:
         if abs(motion) > TOL:
             return 1.0 if motion @ profile.plane.normal > 0.0 else -1.0
     return 1.0
+
+
+def _swept_faces(node: Swept, at: Transform) -> tuple[SolidFace, ...]:
+    """``start`` and ``end``, then one ``side-`` per outer edge and one face per hole wire.
+
+    ``start`` is the profile's own plane turned over, the way an extrusion's ``bottom`` is;
+    ``end`` is the profile's frame carried to the end of the path, facing on along it, so a
+    sketch drawn on it is drawn in the profile's own numbers - the way ``top`` is. A side
+    follows the path round its bends and has no single plane.
+    """
+    on = node.profile.plane
+    arrived = at @ sweep_stations(node)[-1]
+    return (
+        SolidFace(
+            FaceRole.START,
+            _moved_plane(_face_plane(on, 0.0, -1.0), at),
+            _role_label(FaceRole.START),
+        ),
+        SolidFace(FaceRole.END, _moved_plane(on, arrived), _role_label(FaceRole.END)),
+        *(
+            SolidFace(FaceRole.SIDE, None, _side_label(e, i))
+            for i, e in enumerate(node.profile.outer.edges)
+        ),
+        *(
+            SolidFace(FaceRole.SIDE, None, _hole_label(w, i))
+            for i, w in enumerate(node.profile.inner)
+        ),
+    )
 
 
 # ---- what a kernel builds a swept body from -------------------------------------------
@@ -981,6 +1055,49 @@ def _uv(p: Point, on: Plane) -> tuple[float, float]:
     return (v @ on.x_dir, v @ on.y_dir)
 
 
+def sweep_stations(node: Swept) -> tuple[Transform, ...]:
+    """Where a swept profile stands along its path, as the moves that carry it there from the
+    start: the identity first, then one move to the end of each line and, round each arc, as
+    many turns about the arc's axis as keep every chord within :data:`CHORD` of the arc it
+    stands in for.
+
+    The chord that matters is the one the profile's furthest point runs on - the outside of
+    the bend, a profile's reach further out than the path - so that is the radius the step is
+    worked out for, by the one rule every other curve is cut with (:func:`chord_step`). A
+    kernel builds the body as a ring of the profile at each station; the last station is where
+    ``end`` is.
+    """
+    reach = _swept_reach(node)
+    stations = [identity()]
+    for e in node.path.edges:
+        here = stations[-1]
+        match e.curve:
+            case Line(start, end):
+                if abs(end - start) > TOL:
+                    stations.append(translation(end - start) @ here)
+            case Arc(centre, r, a0, a1, on):
+                stations += _turns(Axis(centre, on.normal), a1 - a0, r + reach, here)
+            case Circle(centre, r, on):
+                stations += _turns(Axis(centre, on.normal), math.tau, r + reach, here)
+            case _:
+                assert_never(e.curve)
+    return tuple(stations)
+
+
+def _turns(axis: Axis, turn: float, outermost: float, here: Transform) -> list[Transform]:
+    """The stations round one arc turning ``turn`` radians about ``axis``, from ``here``."""
+    steps = max(1, math.ceil(abs(turn) / chord_step(outermost)))
+    return [rotation(axis, turn * k / steps) @ here for k in range(1, steps + 1)]
+
+
+def _swept_reach(node: Swept) -> float:
+    """How far the profile stands out from the point the path starts at, at its furthest."""
+    on = node.profile.plane
+    su, sv = _uv(curve_start(node.path.edges[0].curve), on)
+    points = flat_ring(node.profile.outer, on, (0,) * len(node.profile.outer.edges)).points
+    return max(math.hypot(u - su, v - sv) for u, v in points)
+
+
 # ---- where a shape reaches -----------------------------------------------------------
 
 
@@ -1077,8 +1194,17 @@ def _face_points(f: Face, at: Transform) -> tuple[Point, ...]:
 
 def _node_points(node: Node, at: Transform) -> tuple[Point, ...]:
     match node:
-        case Extrude(profile, distance):
+        case Extrude(profile, distance, twist, scale):
             lift = profile.plane.normal * distance
+            if abs(twist) > TOL:
+                return _twisted_points(profile, lift, scale, at)
+            if abs(scale - 1.0) > TOL:
+                o = profile.plane.origin
+                return tuple(
+                    at @ q
+                    for p in _face_points(profile, identity())
+                    for q in (p, o + (p - o) * scale + lift)
+                )
             return tuple(at @ q for p in _face_points(profile, identity()) for q in (p, p + lift))
         case Revolve(profile, axis, _):
             return _revolved_points(profile, axis, at)
@@ -1088,6 +1214,8 @@ def _node_points(node: Node, at: Transform) -> tuple[Point, ...]:
             return _node_points(base.node, at)
         case Intersection(a, _):
             return _node_points(a.node, at)
+        case Swept(profile, _):
+            return _swept_points(profile, sweep_stations(node), at)
         case Hull(parts):
             return tuple(p for one in parts for p in _node_points(one.node, at))
         case Imported(vertices, _):
@@ -1099,6 +1227,36 @@ def _node_points(node: Node, at: Transform) -> tuple[Point, ...]:
             return _node_points(inner, at @ t)
         case _:
             assert_never(node)
+
+
+def _twisted_points(profile: Face, lift: Vector, scale: float, at: Transform) -> tuple[Point, ...]:
+    """The corners of a square prism round a twisted extrusion's axis, wide enough for the
+    profile's furthest reach from that axis at the larger of its two ends - a twist turns
+    every point of the profile through angles in between, so its own corners bound nothing.
+    """
+    on = profile.plane
+    reach = max(
+        (_reach(e.curve, on) for w in (profile.outer, *profile.inner) for e in w.edges),
+        default=0.0,
+    ) * max(1.0, scale)
+    return tuple(
+        at @ (on.origin + on.x_dir * (sx * reach) + on.y_dir * (sy * reach) + up)
+        for sx in (-1.0, 1.0)
+        for sy in (-1.0, 1.0)
+        for up in (Vector(0.0, 0.0, 0.0), lift)
+    )
+
+
+def _reach(c: Curve, on: Plane) -> float:
+    """How far from ``on``'s origin any point of ``c`` lies, or a little further for a
+    round curve: its centre's distance plus its radius."""
+    match c:
+        case Line(start, end):
+            return max(abs(start - on.origin), abs(end - on.origin))
+        case Arc(centre, r, _, _, _) | Circle(centre, r, _):
+            return abs(centre - on.origin) + r
+        case _:
+            assert_never(c)
 
 
 def _revolved_points(profile: Face, axis: Axis, at: Transform) -> tuple[Point, ...]:
@@ -1119,3 +1277,21 @@ def _revolved_points(profile: Face, axis: Axis, at: Transform) -> tuple[Point, .
     )
     ends = tuple(origin + along * t for t in (min(arms), max(arms)))
     return tuple(end + sign * spread for end in ends for sign in (1.0, -1.0))
+
+
+def _swept_points(
+    profile: Face, stations: tuple[Transform, ...], at: Transform
+) -> tuple[Point, ...]:
+    """Two opposite corners of a box round a swept body: the profile's own extremes at every
+    station, spread by :data:`CHORD` for the most the true sweep can bulge past the chords
+    between two of them. A line needs no spreading and an arc no more than that, so the box
+    is never short."""
+    swept = tuple(
+        p for t in stations for p in _face_points(_moved_face(profile, at @ t), identity())
+    )
+    if not swept:
+        return ()
+    low = Point(min(p.x for p in swept), min(p.y for p in swept), min(p.z for p in swept))
+    high = Point(max(p.x for p in swept), max(p.y for p in swept), max(p.z for p in swept))
+    pad = Vector(CHORD, CHORD, CHORD)
+    return (low - pad, high + pad)

@@ -22,7 +22,7 @@ import math
 from enum import StrEnum
 from typing import assert_never, cast
 
-from .fasteners import COUNTERSINK, Fit, Insert, Screw, bore
+from .fasteners import Fit, Insert, Screw, bore
 from .geometry import ORIGIN, TOL, XY, Plane, Point, Vector, raised, translation, unit
 from .model import Printed
 from .ops import _at_angle, circle, fill, offset, rect
@@ -43,6 +43,7 @@ from .topology import (
     Revolve,
     Shape,
     Solid,
+    Swept,
     Union,
     Wire,
     moved,
@@ -225,7 +226,7 @@ def hole[T: Shape](
     depth: float | None = None,
     countersink: bool = False,
     counterbore: bool = False,
-    angle: float = COUNTERSINK,
+    angle: float | None = None,
     top: Top = Top.AUTO,
     printed: Printed | None = None,
     label: str | Label,
@@ -255,17 +256,23 @@ def hole[T: Shape](
     :func:`~bench.solids.rotate` keeps a wire's own winding - to land right side up in
     ``on``'s frame, the same way it would pick the right ``up`` for a hand-built shape.
 
-    The material's ``hole_compensation`` is added to whichever it is when ``printed`` is
-    given, because a printed hole comes out undersize and the table is the metal figure - a
-    round hole grows by it on its diameter, a profile grows by half of it on every edge
-    (:func:`bench.ops.offset`), which is the same amount on the side that matters and keeps
-    a caller from applying it by hand.
+    The material's ``hole_compensation`` is added to a screw's or a plain diameter's hole
+    when ``printed`` is given, because a printed hole comes out undersize and the table is
+    the metal figure - a round hole grows by it on its diameter, a profile grows by half of
+    it on every edge (:func:`bench.ops.offset`), which is the same amount on the side that
+    matters and keeps a caller from applying it by hand. **An insert's bore is the
+    exception**: :class:`~bench.fasteners.Insert` is quoted the other way round - its
+    ``bore`` is already the hole to print - so ``hole`` draws it exactly and never adds
+    compensation on top, whether or not ``printed`` is given. ``printed`` still says which
+    way the part goes up, so ``top=Top.AUTO`` still reads it for a leaning insert bore.
 
     ``depth`` is measured from ``on`` into the material and defaults to through, which is
     sized off the body's own bounds. ``countersink`` and ``counterbore`` cut the head's own
-    recess from the screw's table - a cone at ``angle`` (90 degrees, the ISO one and the one
-    a printer can hold) or a flat-bottomed bore - and need a screw to read it from, so a
-    profiled bore, which never has a screw, cannot ask for either.
+    recess from the screw's table - a cone at the screw's own ``countersink_angle`` (the ISO
+    90 degrees on a metric screw, 82 on an inch flat head, :data:`~bench.fasteners.BUGLE` on
+    a drywall screw) unless ``angle`` says otherwise, or a flat-bottomed bore - and need a
+    screw to read it from, so a profiled bore, which never has a screw, cannot ask for
+    either.
     ``top`` is the horizontal-hole rule, :func:`printable_top`: with ``printed`` in hand a
     leaning bore gets a teardrop, or a bridged top when it is counterbored and must stay
     round. A body is a thing to be printed, so ``Top.AUTO`` on one asks for ``printed`` and
@@ -336,19 +343,22 @@ def _hole_diameter(
     fit: Fit,
     printed: Printed | None,
 ) -> float:
-    """How wide the hole is cut: the table's figure, plus what the plastic takes back.
+    """How wide the hole is cut: the table's figure, plus what the plastic takes back - or,
+    for an insert, the insert's own bore exactly, since that figure is already the hole to
+    print and never a metal one waiting for compensation.
 
     Exactly one of the three ways of saying it has already been settled by :func:`hole`.
 
     Raises:
         ValueError: if what was given is not a positive diameter.
     """
-    if screw is not None:
-        wide = bore(screw, fit)
-    elif insert is not None:
+    if insert is not None:
         wide = insert.bore
-    else:
-        wide = diameter if diameter is not None else 0.0
+        if wide <= TOL:
+            msg = "a hole needs a positive diameter"
+            raise ValueError(msg)
+        return wide
+    wide = bore(screw, fit) if screw is not None else (diameter if diameter is not None else 0.0)
     if wide <= TOL:
         msg = "a hole needs a positive diameter"
         raise ValueError(msg)
@@ -484,7 +494,7 @@ def _bore(
     depth: float | None,
     countersink: bool,
     counterbore: bool,
-    angle: float,
+    angle: float | None,
     top: Top,
     printed: Printed | None,
 ) -> Solid:
@@ -558,10 +568,11 @@ def _counterbored(screw: Screw, at: Point, mouth: Plane, *, label: str) -> Solid
 
 
 def _countersunk(
-    screw: Screw, wide: float, at: Point, on: Plane, angle: float, *, label: str
+    screw: Screw, wide: float, at: Point, on: Plane, angle: float | None, *, label: str
 ) -> Solid:
     """The cone a flat head sinks into: the screw's countersink diameter at the surface,
-    narrowing at ``angle`` until it meets the bore.
+    narrowing at ``angle`` - the screw's own ``countersink_angle`` when ``None`` - until it
+    meets the bore.
 
     A hull of two circles, which is exactly a frustum and is the one shape this kernel can
     taper without naming anything it cannot keep.
@@ -570,10 +581,11 @@ def _countersunk(
         ValueError: if ``angle`` is not a cone - nothing at all, or a whole half turn, in
             which case the countersink is a flat pocket and wants a counterbore instead.
     """
-    if not TOL < angle < math.pi - TOL:
+    cone = screw.countersink_angle if angle is None else angle
+    if not TOL < cone < math.pi - TOL:
         msg = "a countersink is a cone between nothing and flat"
         raise ValueError(msg)
-    flare = math.tan(angle / 2)
+    flare = math.tan(cone / 2)
     deep = max(TOL, (screw.countersink_d - wide) / 2 / flare)
     return loft(
         fill(circle(wide / 2, at), on=raised(on, -deep)),
@@ -649,7 +661,7 @@ def _extruded_root(node: Node) -> tuple[Face, float] | None:
                 return None
             profile, distance = found
             return (moved(profile, t), distance)
-        case Revolve() | Union() | Difference() | Intersection() | Hull() | Imported():
+        case Revolve() | Union() | Difference() | Intersection() | Hull() | Imported() | Swept():
             return None
         case _:
             assert_never(node)

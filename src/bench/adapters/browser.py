@@ -48,9 +48,12 @@ from ..topology import (
     Moved,
     Node,
     Revolve,
+    Ring,
     Solid,
+    Swept,
     Union,
     profile_rings,
+    straight,
     under,
 )
 
@@ -101,7 +104,15 @@ class Modeller(Protocol):
     """
 
     def section(self, rings: array[float], lengths: array[int], /) -> int: ...
-    def extrude(self, section: int, height: float, /) -> int: ...
+    def extrude(
+        self,
+        section: int,
+        height: float,
+        divisions: int = 0,
+        twist: float = 0.0,
+        scale: float = 1.0,
+        /,
+    ) -> int: ...
     def revolve(self, section: int, segments: int, degrees: float, /) -> int: ...
     def transform(self, body: int, columns: array[float], /) -> int: ...
     def union(self, a: int, b: int, /) -> int: ...
@@ -207,6 +218,8 @@ def _node(js: Modeller, node: Node, under: str, tags: _Tags) -> int:
             return _imported(js, vertices, triangles, under, tags)
         case Moved(inner, at):
             return js.transform(_node(js, inner, under, tags), meshing.column_major(at))
+        case Swept():
+            return _carried(js, node, under, tags)
         case _:
             assert_never(node)
 
@@ -222,13 +235,25 @@ def _swept(js: Modeller, node: Extrude | Revolve, under: str, tags: _Tags) -> in
     refs = meshing.face_refs(node, under)
     profile = js.section(*meshing.section(rings))
     match node:
-        case Extrude(_, distance):
+        case Extrude(_, distance) if straight(node):
             body = js.extrude(profile, abs(distance))
             if distance < 0.0:
                 body = js.transform(body, meshing.column_major(_lifted(distance)))
             built = js.mesh(body)
             faces = meshing.extruded_faces(
                 built.vertices.to_py(), built.num_prop, built.triangles.to_py(), distance, rings
+            )
+        case Extrude(_, distance, twist, scale):
+            body = _twisted(js, profile, rings, distance, twist, scale)
+            built = js.mesh(body)
+            faces = meshing.extruded_faces(
+                built.vertices.to_py(),
+                built.num_prop,
+                built.triangles.to_py(),
+                distance,
+                rings,
+                twist,
+                scale,
             )
         case Revolve(_, _, angle):
             turn = math.degrees(min(angle, math.tau))
@@ -248,6 +273,53 @@ def _swept(js: Modeller, node: Extrude | Revolve, under: str, tags: _Tags) -> in
     for face, ref in enumerate(refs):
         tags[marked.mark, face] = ref
     return js.transform(marked.body, meshing.column_major(meshing.sweep_frame(node)))
+
+
+def _twisted(
+    js: Modeller, profile: int, rings: tuple[Ring, ...], distance: float, twist: float, scale: float
+) -> int:
+    """A twisted or tapered extrusion, built from ``z = 0`` to ``z = distance``.
+
+    Manifold sweeps up ``+Z`` and turns counter-clockwise about it, so a sweep the other way
+    is built upwards with the turn reversed and then reflected through its own profile's
+    plane: the profile stays where it was drawn, unturned and full size, and the far end
+    comes out below it, turned the right way about the sweep.
+    """
+    turn = twist if distance >= 0.0 else -twist
+    body = js.extrude(
+        profile,
+        abs(distance),
+        meshing.divisions(rings, twist, scale),
+        math.degrees(turn),
+        scale,
+    )
+    if distance >= 0.0:
+        return body
+    return js.transform(body, meshing.column_major(_REFLECTED))
+
+
+_REFLECTED = Transform(((1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0), (0.0, 0.0, -1.0, 0.0)))
+"""The reflection through ``z = 0`` that turns a sweep built upwards into one hanging below
+its profile."""
+
+
+def _carried(js: Modeller, node: Swept, under: str, tags: _Tags) -> int:
+    """A profile carried along its path, meshed here and handed over whole, every triangle
+    given the face it was laid for.
+
+    The modeller has no sweep, so :func:`bench.meshing.swept` lays the rings and caps and says
+    which face each triangle is, and the modeller only takes the mesh in. Taking it in
+    reorders the triangles, but each one comes back with the index of a triangle it was made
+    from - one of its own coplanar neighbours, all of which lie on the same face - so the face
+    it lies on is read through that index before it is marked.
+    """
+    vertices, triangles, faces = meshing.swept(node)
+    body = js.imported(vertices, triangles)
+    made_from = js.mesh(body).face_id.to_py()
+    marked = js.tagged(body, array("I", (faces[one] for one in made_from)))
+    for face, ref in enumerate(meshing.face_refs(node, under)):
+        tags[marked.mark, face] = ref
+    return marked.body
 
 
 def _lifted(distance: float) -> Transform:

@@ -75,8 +75,9 @@ class Screw:
     drill for cutting a thread in metal and ``self_tap`` the larger one for driving the
     screw straight into plastic, which is a different question and a different number.
     ``counterbore_d`` and ``counterbore_depth`` swallow a socket cap; ``countersink_d`` is
-    the diameter a flat head sinks to at ``countersink_angle`` (the ISO 90 degrees, in
-    radians, not the imperial 82). ``nut_across_flats`` is the nut itself,
+    the diameter a flat head sinks to at ``countersink_angle`` (in radians: the ISO 90
+    degrees on a metric screw, 82 on an inch flat head), the cone
+    :func:`~bench.features.hole` cuts for it. ``nut_across_flats`` is the nut itself,
     ``nut_trap_across_flats`` the pocket it drops into - a tenth or two wider, so it drops -
     and ``nut_trap_depth`` how deep that pocket goes, a shade more than the nut is thick so
     the nut seats rather than props the joint open.
@@ -108,7 +109,7 @@ class Screw:
 COUNTERSINK = math.radians(90.0)
 """The included angle of a countersink, in radians. 90 degrees is the ISO metric one - and
 what a printed countersink wants, because it is the shallowest cone whose wall is still a
-45 degree overhang. The imperial 82 degrees is not offered."""
+45 degree overhang. The inch series' 82 degrees is :data:`COUNTERSINK_82`."""
 
 
 M2 = Screw(
@@ -283,6 +284,295 @@ SCREWS = (M2, M2_5, M3, M4, M5, M6, M8)
 """Every size in the table, smallest first - what a test walks and a menu lists."""
 
 
+# ---- imperial: wood, drywall and machine screws (task-69) --------------------------------
+#
+# decision-11's operation 1: the vent's #6 drywall screws had to be drawn as M4, because
+# this table only had ISO metric sizes. The figures below are every one this reviewer could
+# reach a published source for, in millimetres like the rest of the table (ASME's own tables
+# are inch, so every number is the inch figure times 25.4, rounded to the table's own two
+# decimal places):
+#
+# * **Major diameter, wood screw gauge.** ASME B18.6.1's own formula, D = 0.060 + 0.013 *
+#   gauge. #6, #8 and #10 share it with a drywall screw - a bugle head changes the head, not
+#   the thread.
+# * **Clearance holes** (``close``, ``normal``, ``loose``) are ANSI/ASME B18.2.8's, the
+#   inch counterpart of the metric table's ISO 273 - one designated drill per fit, for #6,
+#   #8, #10 and 1/4 inch alike, so the same three columns cover the wood/drywall screws and
+#   the machine screws below.
+# * **Pilot and tap holes.** ASME B18.6.1 sets a wood screw's thread, not the hole it goes
+#   into - pilot sizing is shop practice, not a dimensional standard (a point Wikipedia's
+#   own wood-screw pilot-hole article makes explicitly). What is here is a widely
+#   republished softwood/hardwood pilot chart: softwood takes the smaller hole (the wood
+#   compresses round the thread without splitting) and reads as ``tap``, hardwood the
+#   larger one (it splits otherwise) and reads as ``self_tap`` - the same ordering the
+#   metric table's own ``tap`` < ``self_tap`` already carries, tightest first. A machine
+#   screw's ``tap`` is a real ASME/ANSI B94.9 75 percent tap drill; its ``self_tap`` has no
+#   inch table for driving into a printed boss either, so it is read off the one published
+#   plastic self-tapping figure this reviewer found (1/4-20 into plastic, 0.228 in, about
+#   91 percent of the major diameter - fasnetdirect.com's hole-size data) and carried across
+#   at the same percentage, the way the metric table's own ``self_tap`` sits at a roughly
+#   fixed fraction of ``diameter`` across every metric size without a per-size citation of
+#   its own.
+# * **Flat head, and the countersink it sinks to.** ASME B18.6.1 (wood) and ASME B18.6.3
+#   (machine) both cut a flat countersunk head at 82 degrees, not the metric table's ISO 90
+#   - ``COUNTERSINK_82`` below. ``flat_head_d`` is the head's own basic diameter,
+#   ``countersink_d`` the table's max - the same min/max pair the metric table's own
+#   ``flat_head_d`` / ``countersink_d`` already are, just never labelled as such.
+# * **Socket and button heads** exist for the machine screws (ASME B18.3, a socket head cap
+#   screw and a button head cap screw are real products in 8-32, 10-24 and 1/4-20) but not
+#   for a wood or a drywall screw - nobody makes one with a hex socket - so
+#   ``socket_head_*`` and ``button_head_*`` are ``0.0`` on :data:`WOOD_6` through
+#   :data:`DRYWALL_10`. A ``counterbore=True`` or a nut trap built from a ``0.0`` column
+#   fails loudly, on a cutter with no size, rather than quietly cutting a socket that was
+#   never a real part.
+# * **What is not here.** ``counterbore_d``, ``counterbore_depth`` and every nut column
+#   (``nut_across_flats``, ``nut_trap_across_flats``, ``nut_thickness``, ``nut_trap_depth``)
+#   are ``0.0`` on *every* record below, wood, drywall and machine alike. This reviewer
+#   reached three different, disagreeing counterbore tables for inch socket head cap screws
+#   and trusts none of them over saying so; the inch hex nut table splits awkwardly across
+#   ASME B18.6.3 (8-32, 10-24) and ASME B18.2.2 (1/4 inch and up) and was not reached
+#   cleanly either. task-69 asks for the screw and its hole, not its nut, so this is left at
+#   nothing rather than invented: ``nut_trap()`` on one of these answers with a trap of
+#   ``0.0`` across the flats, which is a check that fails rather than a number nobody
+#   measured.
+# * **A bugle head is not 90, or 82, degrees.** A drywall screw's bugle head is a curved
+#   reflex under the head, not a plain cone, and it is not in ASME B18.6.1 or B18.6.3 at
+#   all - it is ASTM C954/C1002 territory, and neither gives a single head angle the way a
+#   flat head's 82 degrees is given. Trade references put the *included* angle around 60 to
+#   63 degrees; :data:`DRYWALL_6`, :data:`DRYWALL_8` and :data:`DRYWALL_10` carry that
+#   as ``countersink_angle`` - :data:`BUGLE`, the midpoint, flagged in its own docstring as
+#   an estimate rather than a table figure - and reuse the flat head's own diameter and
+#   depth, the only ones with a citation, as the closest honest stand-in for the bugle's own
+#   swallow. :func:`~bench.features.hole` cuts a countersink at the screw's own
+#   ``countersink_angle`` unless its ``angle`` says otherwise, so
+#   ``hole(screw=DRYWALL_6, countersink=True)`` cuts the bugle's narrower cone - deeper than
+#   a flat head's, to the same diameter at the surface - and ``WOOD_6`` the 82 degree one.
+
+COUNTERSINK_82 = math.radians(82.0)
+"""The included angle of a flat countersunk head in the inch series - ASME B18.6.1 (wood
+screws) and ASME B18.6.3 (machine screws) both cut it at 82 degrees, not the metric table's
+ISO 90 (:data:`COUNTERSINK`)."""
+
+BUGLE = math.radians(61.5)
+"""A drywall screw's bugle head, as an included angle - the midpoint of the 60 to 63 degree
+range trade references give. Neither ASME B18.6.1 nor B18.6.3 covers a bugle head at all
+(that is ASTM C954/C1002 territory), and this reviewer found no single table figure there
+either, so this is an estimate, not a citation, and is flagged as one everywhere it is used."""
+
+
+def _wood_diameter(gauge: int) -> float:
+    """A wood or drywall screw's major diameter, in millimetres, from ASME B18.6.1's own
+    formula: ``0.060 + 0.013 * gauge`` inches."""
+    return (0.060 + 0.013 * gauge) * 25.4
+
+
+WOOD_6 = Screw(
+    name="#6",
+    diameter=round(_wood_diameter(6), 2),
+    close=3.91,
+    normal=4.31,
+    loose=4.70,
+    tap=1.98,
+    self_tap=2.38,
+    socket_head_d=0.0,
+    socket_head_h=0.0,
+    button_head_d=0.0,
+    button_head_h=0.0,
+    flat_head_d=6.20,
+    flat_head_h=2.11,
+    counterbore_d=0.0,
+    counterbore_depth=0.0,
+    countersink_d=7.09,
+    countersink_angle=COUNTERSINK_82,
+    nut_across_flats=0.0,
+    nut_trap_across_flats=0.0,
+    nut_thickness=0.0,
+    nut_trap_depth=0.0,
+)
+"""A #6 flat head wood screw. ``close``/``normal``/``loose`` are ANSI/ASME B18.2.8's
+designated drills; ``tap`` is the softwood pilot (5/64 in), ``self_tap`` the hardwood one
+(3/32 in) - shop practice, not a dimensional standard, per the section note above. The head
+is ASME B18.6.1's flat countersunk one at 82 degrees."""
+
+WOOD_8 = Screw(
+    name="#8",
+    diameter=round(_wood_diameter(8), 2),
+    close=4.57,
+    normal=4.98,
+    loose=5.41,
+    tap=2.78,
+    self_tap=3.18,
+    socket_head_d=0.0,
+    socket_head_h=0.0,
+    button_head_d=0.0,
+    button_head_h=0.0,
+    flat_head_d=7.42,
+    flat_head_h=2.54,
+    counterbore_d=0.0,
+    counterbore_depth=0.0,
+    countersink_d=8.43,
+    countersink_angle=COUNTERSINK_82,
+    nut_across_flats=0.0,
+    nut_trap_across_flats=0.0,
+    nut_thickness=0.0,
+    nut_trap_depth=0.0,
+)
+"""A #8 flat head wood screw. Pilot holes are 7/64 in (softwood, ``tap``) and 1/8 in
+(hardwood, ``self_tap``)."""
+
+WOOD_10 = Screw(
+    name="#10",
+    diameter=round(_wood_diameter(10), 2),
+    close=5.22,
+    normal=5.61,
+    loose=6.05,
+    tap=3.18,
+    self_tap=3.57,
+    socket_head_d=0.0,
+    socket_head_h=0.0,
+    button_head_d=0.0,
+    button_head_h=0.0,
+    flat_head_d=8.64,
+    flat_head_h=2.95,
+    counterbore_d=0.0,
+    counterbore_depth=0.0,
+    countersink_d=9.78,
+    countersink_angle=COUNTERSINK_82,
+    nut_across_flats=0.0,
+    nut_trap_across_flats=0.0,
+    nut_thickness=0.0,
+    nut_trap_depth=0.0,
+)
+"""A #10 flat head wood screw. Pilot holes are 1/8 in (softwood, ``tap``) and 9/64 in
+(hardwood, ``self_tap``)."""
+
+WOOD_SCREWS = (WOOD_6, WOOD_8, WOOD_10)
+"""Every flat head wood screw this table carries, smallest first."""
+
+DRYWALL_6 = Screw(
+    **{
+        **{f: getattr(WOOD_6, f) for f in WOOD_6.__slots__},
+        "name": "#6 bugle",
+        "countersink_angle": BUGLE,
+    }
+)
+"""A #6 bugle head drywall screw. Thread, clearance and pilot holes are :data:`WOOD_6`'s
+own - a bugle head changes the head, not what the screw drives into - and the head and
+countersink columns are the closest cited figures available (the flat head's), not a bugle
+table. ``hole(..., countersink=True)`` cuts its countersink at :data:`BUGLE` - see the
+section note above."""
+
+DRYWALL_8 = Screw(
+    **{
+        **{f: getattr(WOOD_8, f) for f in WOOD_8.__slots__},
+        "name": "#8 bugle",
+        "countersink_angle": BUGLE,
+    }
+)
+"""A #8 bugle head drywall screw - see :data:`DRYWALL_6`."""
+
+DRYWALL_10 = Screw(
+    **{
+        **{f: getattr(WOOD_10, f) for f in WOOD_10.__slots__},
+        "name": "#10 bugle",
+        "countersink_angle": BUGLE,
+    }
+)
+"""A #10 bugle head drywall screw - see :data:`DRYWALL_6`."""
+
+DRYWALL_SCREWS = (DRYWALL_6, DRYWALL_8, DRYWALL_10)
+"""Every bugle head drywall screw this table carries, smallest first."""
+
+MACHINE_8_32 = Screw(
+    name="#8-32",
+    diameter=4.17,
+    close=4.57,
+    normal=4.98,
+    loose=5.41,
+    tap=3.45,
+    self_tap=3.80,
+    socket_head_d=6.86,
+    socket_head_h=4.17,
+    button_head_d=7.92,
+    button_head_h=2.21,
+    flat_head_d=7.24,
+    flat_head_h=2.54,
+    counterbore_d=0.0,
+    counterbore_depth=0.0,
+    countersink_d=7.93,
+    countersink_angle=COUNTERSINK_82,
+    nut_across_flats=0.0,
+    nut_trap_across_flats=0.0,
+    nut_thickness=0.0,
+    nut_trap_depth=0.0,
+)
+"""An 8-32 machine screw. ``tap`` is the ANSI 75 percent tap drill (#29); ``close``,
+``normal`` and ``loose`` are ANSI/ASME B18.2.8's clearance holes, the same table the wood
+screws above read; ``socket_head_*`` and ``button_head_*`` are ASME B18.3's cap screw
+figures. ``self_tap`` and the nut and counterbore columns are as the section note above
+says: carried at a fixed percentage or left at ``0.0`` and said so, never invented."""
+
+MACHINE_10_24 = Screw(
+    name="#10-24",
+    diameter=4.83,
+    close=5.22,
+    normal=5.61,
+    loose=6.05,
+    tap=3.80,
+    self_tap=4.40,
+    socket_head_d=7.92,
+    socket_head_h=4.83,
+    button_head_d=9.17,
+    button_head_h=2.57,
+    flat_head_d=8.46,
+    flat_head_h=2.95,
+    counterbore_d=0.0,
+    counterbore_depth=0.0,
+    countersink_d=9.20,
+    countersink_angle=COUNTERSINK_82,
+    nut_across_flats=0.0,
+    nut_trap_across_flats=0.0,
+    nut_thickness=0.0,
+    nut_trap_depth=0.0,
+)
+"""A 10-24 machine screw. ``tap`` is the ANSI 75 percent tap drill (#25)."""
+
+MACHINE_1_4_20 = Screw(
+    name="1/4-20",
+    diameter=6.35,
+    close=6.75,
+    normal=7.14,
+    loose=7.54,
+    tap=5.11,
+    self_tap=5.79,
+    socket_head_d=9.53,
+    socket_head_h=6.35,
+    button_head_d=11.10,
+    button_head_h=3.35,
+    flat_head_d=11.23,
+    flat_head_h=3.89,
+    counterbore_d=0.0,
+    counterbore_depth=0.0,
+    countersink_d=12.12,
+    countersink_angle=COUNTERSINK_82,
+    nut_across_flats=0.0,
+    nut_trap_across_flats=0.0,
+    nut_thickness=0.0,
+    nut_trap_depth=0.0,
+)
+"""A 1/4-20 machine screw. ``tap`` is the ANSI 75 percent tap drill (#7); ``self_tap``, 0.228
+in, is the one figure in this section with a direct citation - a published pilot hole for a
+1/4-20 self-tapping into plastic (fasnetdirect.com) - rather than a carried-over
+percentage."""
+
+MACHINE_SCREWS = (MACHINE_8_32, MACHINE_10_24, MACHINE_1_4_20)
+"""Every inch machine screw this table carries, smallest first."""
+
+IMPERIAL_SCREWS = WOOD_SCREWS + DRYWALL_SCREWS + MACHINE_SCREWS
+"""Every imperial screw this table carries - what a test walks the way :data:`SCREWS` walks
+the metric ones."""
+
+
 def bore(screw: Screw, fit: Fit) -> float:
     """The hole ``screw`` wants at ``fit``, in millimetres, before any printed compensation.
 
@@ -371,8 +661,13 @@ class NutTrap:
 
 
 LEAD_IN = 0.4
-"""The default chamfer at the mouth of a nut trap or an insert bore, in millimetres - one
-layer or two of taper, which is what a nut or an insert needs to start straight."""
+"""The default chamfer at the mouth of a :class:`NutTrap`, in millimetres - one layer or two
+of taper, which is what a nut needs to start straight.
+
+task-75: this used to say "a nut trap or an insert bore", but :func:`~bench.features.hole`
+never reads it - only :func:`nut_trap` does, and an insert bore gets no lead-in at all today.
+The docstring was wrong, not the code: a lead-in on `hole()` itself is a candidate
+(task-71's eased rims may cover it), not something silently already happening."""
 
 
 def nut_trap(screw: Screw, *, lead_in: float = LEAD_IN) -> NutTrap:

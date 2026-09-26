@@ -29,7 +29,7 @@ from enum import StrEnum
 from typing import NamedTuple, NewType, assert_never
 
 from .fasteners import Fit
-from .geometry import Plane, Point, Transform, Vector, Z, identity
+from .geometry import ORIGIN, Plane, Point, Transform, Vector, Z, identity, plane, to_local
 from .topology import (
     Edge,
     Face,
@@ -84,7 +84,11 @@ class Material:
     Every field is a physical fact about the plastic and the nozzle rather than an opinion
     about a part. ``shrink`` is the fraction a cooled part comes in by; ``hole_compensation``
     is how much a printed hole comes out *under* on diameter, so it is added back;
-    ``foot`` is how far the first layer spreads, which a bottom chamfer takes off again;
+    ``foot`` is how far the first layer spreads - the elephant's foot a bottom chamfer is
+    for, though :func:`~bench.features.foot_chamfer` takes its own ``d`` rather than reading
+    ``foot`` itself, so a caller is free to chamfer more than the bare spread;
+    ``examples/pipe_bracket.py`` chamfers three times ``foot`` (task-75: this line used to
+    read as if the chamfer always took off exactly ``foot``, which no caller does);
     ``min_wall`` is the thinnest wall worth printing; ``max_overhang`` is the greatest angle
     a wall may lean away from the build direction, in radians; ``bridge_max`` is the longest
     unsupported span, in millimetres; ``layer`` is the layer height. ``clearances`` is the
@@ -113,8 +117,12 @@ class Orient:
 
     ``up`` is the build direction in the part's own coordinates - the way the layers stack -
     and defaults to ``+Z``, which is how nearly every part is drawn. ``bed_face`` is the ref
-    of the face that lies on the bed, when the part names one; it is what an elephant's-foot
-    chamfer and a first-layer check read, and it is ``None`` when nobody has said.
+    of the face that lies on the bed, when the part names one; :mod:`bench.views` and
+    :mod:`bench.export` read it to turn the part onto the bed for a screenshot or an export,
+    and it is ``None`` when nobody has said. task-75: this used to also credit an
+    elephant's-foot chamfer, but :func:`~bench.features.foot_chamfer` takes no ``Orient`` at
+    all - it works from the extrusion's own footprint, not from which face sits on the bed,
+    so it never reads ``bed_face``. The docstring was wrong, not the code.
 
     Every print-aware behaviour in the package refers to this and to nothing else: a
     teardrop, a bridged top, an overhang check, the direction the layers run. Without one,
@@ -124,6 +132,27 @@ class Orient:
 
     up: Vector = Z
     bed_face: Ref | None = None
+
+
+def laid_down(up: Vector, bed_along: Vector | None = None) -> Transform:
+    """The rigid rotation that turns ``up`` to face +Z, the turn about it left free settled by
+    ``bed_along`` when there is one - the one rule a printed part is laid on the bed by,
+    wherever something reads its :class:`Orient`.
+
+    ``bed_along`` is the X of the face an ``Orient.bed_face`` names, already resolved by the
+    caller: this function knows nothing of a shape, a face or a name, only the two vectors
+    that say which way is up and which way is forward. :func:`bench.checks.bed_along` is the
+    resolver that reads it off a shape's own ``Orient`` - what :func:`bench.checks.fits`
+    measures a box with before a part is built, and what :mod:`bench.views` reads before
+    calling :func:`bench.export.as_printed` on a kernel's mesh, which by then has no shape
+    left to read a face's name from. All three turn the same way, because all three call this
+    and nothing rebuilds it.
+
+    ``None`` leaves the turn about ``up`` to :func:`~bench.geometry.plane`'s own choice, which
+    is deterministic too, so the same shape turns out the same way whether or not a
+    ``bed_face`` was ever named.
+    """
+    return to_local(plane(ORIGIN, up, bed_along))
 
 
 @dataclass(frozen=True, slots=True)

@@ -12,11 +12,14 @@ should own:
   number, and the alternative is a maker typing ``0.25`` by hand.
 * **The build volumes themselves.** ``H2D`` and the rest, so a check can ask whether a part
   fits before anybody slices it.
-* **The eased rim.** :func:`eased` is a prism whose rims are chamfered by how the shape was
-  made rather than by finding an edge afterwards - there is no chamfer verb for the edge of
-  a solid on this kernel and there is not going to be one. A rim a maker would draw with a
-  chamfer is drawn here as a loft, an extrude and a loft instead, and any part that wants
-  one asks for it once rather than hand-rolling it again.
+* **The eased rim.** :func:`rim` is an extrusion whose top, bottom or both are rounded or
+  chamfered by how the shape was made rather than by finding an edge afterwards - there is
+  no fillet or chamfer verb for the edge of a solid on this kernel and there is not going to
+  be one. A rim a maker would draw with a round-over or a chamfer is drawn here as a stack
+  of hulled slices instead - the technique :func:`~bench.solids.hull`'s own docstring
+  already names - and any part that wants one asks for it once rather than hand-rolling it
+  again. :func:`eased` is the one case task-71 found already in the vocabulary: both rims
+  chamfered, and now just :func:`rim` called that way.
 
 The *records* it fills in - :class:`~bench.model.Material`, :class:`~bench.model.Orient`,
 :class:`~bench.model.Printed`, :class:`~bench.model.Volume` - live in :mod:`bench.model`,
@@ -37,13 +40,17 @@ file.
 """
 
 import math
+from functools import reduce
+from itertools import pairwise
+from typing import Literal
 
 from ..fasteners import Fit
 from ..features import Top, bridge_steps, foot_chamfer, printable_top, teardrop
+from ..geometry import TOL, Vector
 from ..model import Material, Orient, Printed, Volume
 from ..ops import offset
-from ..solids import extrude, loft, move, union
-from ..topology import CHORD, Face, Solid
+from ..solids import extrude, hull, move, union
+from ..topology import CHORD, Face, Solid, flat_ring
 
 __all__ = [
     "ASA",
@@ -61,6 +68,7 @@ __all__ = [
     "eased",
     "foot_chamfer",
     "printable_top",
+    "rim",
     "teardrop",
 ]
 
@@ -169,24 +177,183 @@ def clearance(fit: Fit, material: Material, *, concave: bool = False) -> float:
 
 # ---- the eased rim ---------------------------------------------------------------------
 
+_EaseStyle = Literal["round", "chamfer"]
+
+
+def rim(
+    profile: Face,
+    length: float,
+    *,
+    lead: float,
+    drop: float,
+    style: _EaseStyle = "chamfer",
+    top: bool = True,
+    bottom: bool = True,
+    steps: int = 8,
+) -> Solid:
+    """The extrusion of ``profile`` by ``length`` along its own normal, with the chosen
+    rim or rims eased instead of left square: ``lead`` millimetres narrower in the plane,
+    reached over ``drop`` millimetres along the sweep, straight in one step for
+    ``style="chamfer"`` or rounded over ``steps`` for ``style="round"``. :func:`eased` is
+    this called with both rims chamfered - task-71's generalisation of it.
+
+    There is no fillet or chamfer verb for the edge of a solid on this kernel and there is
+    not going to be one. What there is, and what a maker would have drawn anyway, is a
+    stack of slices - the full profile where the eased rim meets the body, narrower slices
+    approaching the rim itself - each consecutive pair wrapped in a :func:`~bench.solids.hull`,
+    the way :func:`~bench.solids.hull`'s own docstring already describes a profile that
+    changes as it rises. A chamfer is the two end slices of that stack and nothing between
+    them; a round is the same stack with the narrowing slices traced along a quarter
+    ellipse from the full profile to the inset tip, close enough to the curve for
+    ``steps`` steps that a maker chooses the way :data:`~bench.topology.CHORD` chooses it
+    for a circle - more steps for a rim large enough that eight would show as facets.
+
+    **A round eased rim is not a fillet, and only one direction of it is usually
+    printable.** A rim that narrows going *up*, from the full profile to the tip, is a dome
+    over the whole run - every slice sits inside the one below it, so nothing overhangs and
+    ``check_overhangs`` finds nothing. A rim that narrows going *down* - easing the
+    ``bottom`` this way while printing with the profile's own normal up - widens as it
+    rises off the bed, and the middle of a round curve reaches a horizontal tangent before
+    it reaches vertical: `docs/printing.md`'s own rule, "chamfer it rather than filleting
+    it", because a fillet used as an overhang sweeps through a ceiling. ``check_overhangs``
+    on the built solid is how a script confirms which side its own rim is really on;
+    nothing here refuses the other one, because bench does not know which way up a body
+    will print until a part is built from it.
+
+    **A hulled slice is convex, so ``profile`` has to be, and it has to be empty of
+    holes.** The chain of hulls that builds an eased cap fills in anything the real outline
+    does not - a notch, a fillet's own concave corner, a hole in ``profile.inner`` - the
+    same way :func:`~bench.solids.loft` already does between two profiles. So both are
+    refused here, before anything is built, rather than eased into a wrong solid: an outline
+    that turns the other way anywhere along it, flattened the way a kernel flattens it, and
+    a profile with any hole at all. Round or chamfered, the rim is convex-only; a notched
+    outline is eased by hand, one convex piece at a time. A wire's own corners are another
+    matter - :func:`~bench.ops.fillet` and :func:`~bench.ops.chamfer` round or cut a concave
+    corner of a sketch as readily as a convex one; it is only the rim that cannot follow it
+    afterwards. ``lead`` is checked too, but indirectly: it has to stay under the smallest
+    arc radius in ``profile``, or the cap's innermost slice asks :func:`~bench.ops.offset` to
+    shrink that arc past zero, and ``offset``'s own ``ValueError`` - "offset collapses an
+    arc" - propagates from here with no kernel needed to raise it. A caller filleting a
+    corner and then easing the rim keeps ``lead`` comfortably under that radius.
+
+    **Face names.** A straight run between two eased rims keeps its own ``side-<n>`` faces,
+    since that part of the body is a plain :func:`~bench.solids.extrude` and a hull only
+    erases names in the parts it wraps. The extrusion's own ``top`` survives only when
+    ``top=False`` and ``bottom`` only when ``bottom=False`` - the flat end nobody asked to
+    ease. Where an end *is* eased, the coincident face it shares with the straight run's own
+    end is removed by the union between them, the same as any two solids joined at a shared
+    face, and that end's own eased cap answers to nothing but the whole solid's label,
+    because :class:`~bench.topology.Hull` is a leaf for naming.
+
+    Raises:
+        ValueError: if ``length``, ``lead`` or ``drop`` is not positive, neither ``top``
+            nor ``bottom`` is asked for, ``style="round"`` is given fewer than two
+            ``steps``, the two eased rims meet or cross in the middle of the run,
+            ``profile`` has a hole or a concave outline - a hull would fill either in - or
+            ``lead`` reaches past one of ``profile``'s own arcs - :func:`~bench.ops.offset`'s
+            own error, raised from here with no kernel needed.
+    """
+    if length <= TOL:
+        msg = "a rim needs a positive length to run the extrusion along"
+        raise ValueError(msg)
+    if lead <= TOL or drop <= TOL:
+        msg = "an eased rim needs a positive lead and drop"
+        raise ValueError(msg)
+    if not top and not bottom:
+        msg = "a rim needs at least one end asked for, top or bottom"
+        raise ValueError(msg)
+    if profile.inner:
+        msg = (
+            "a rim eases a profile by hulling slices of it, and a hull would fill in its"
+            f" {len(profile.inner)} hole(s); ease the outline and cut the holes afterwards"
+        )
+        raise ValueError(msg)
+    if not _convex(profile):
+        msg = (
+            "a rim eases a profile by hulling slices of it, and a hull would fill in this"
+            " one's concave outline; ease each convex piece and join them"
+        )
+        raise ValueError(msg)
+    on = profile.plane
+    n = on.normal
+    lo = drop if bottom else 0.0
+    hi = length - drop if top else length
+    if hi <= lo + TOL:
+        msg = "the two eased rims meet or cross before the middle of the run"
+        raise ValueError(msg)
+    body = extrude(move(profile, n * lo), hi - lo)
+    if bottom:
+        body = union(body, _eased_cap(profile, lead, drop, style, steps, n, at=0.0, rise=True))
+    if top:
+        body = union(body, _eased_cap(profile, lead, drop, style, steps, n, at=length, rise=False))
+    return body
+
+
+def _convex(profile: Face) -> bool:
+    """Whether ``profile``'s outline turns one way all the way round, flattened into the
+    chords a kernel builds it from - so a hull of it is the outline itself."""
+    points = flat_ring(profile.outer, profile.plane, (0,) * len(profile.outer.edges)).points
+    turns = tuple(
+        (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+        for a, b, c in zip(points, points[1:] + points[:1], points[2:] + points[:2], strict=True)
+    )
+    return min(turns) >= -TOL or max(turns) <= TOL
+
 
 def eased(profile: Face, length: float, *, lead: float, drop: float) -> Solid:
     """A prism ``length`` long, along ``profile``'s own normal, with both rims chamfered.
 
-    There is no chamfer verb for the edge of a solid on this kernel and there is not going
-    to be one. What there is, and what a maker would have drawn anyway, is this: a loft, an
-    extrude and a loft, so a rim is chamfered because the shape was made that way rather
-    than because an edge was found afterwards. ``lead`` is how far the rim is inset, in the
-    plane; ``drop`` is how far that inset travels along the prism before it meets the full
-    profile - the chamfer is out of the vocabulary, but the angle it draws is still the
-    caller's to choose, well under 45 degrees for a fit that prints clean.
+    ``lead`` is how far the rim is inset, in the plane; ``drop`` is how far that inset
+    travels along the prism before it meets the full profile - well under 45 degrees for a
+    fit that prints clean, on whichever rim ends up facing away from the bed. :func:`rim`
+    is the general form: a round rather than a chamfer, and one rim rather than both.
     """
-    on = profile.plane
-    near = move(profile, on.normal * drop)
-    far = move(profile, on.normal * (length - drop))
-    return union(
-        union(loft(offset(profile, -lead), near), extrude(near, length - 2 * drop)),
-        loft(far, offset(move(profile, on.normal * length), -lead)),
+    return rim(profile, length, lead=lead, drop=drop, style="chamfer", top=True, bottom=True)
+
+
+def _eased_cap(
+    profile: Face,
+    lead: float,
+    drop: float,
+    style: _EaseStyle,
+    steps: int,
+    n: Vector,
+    *,
+    at: float,
+    rise: bool,
+) -> Solid:
+    """The eased cap at one rim of :func:`rim`: a chain of hulled slices from the full
+    profile where it meets the body to the tip - inset ``lead`` and moved ``drop`` toward
+    the rim - built at ``at`` along the extrusion's own normal and growing toward the body
+    (``rise=True`` for the bottom) or away from it (``rise=False`` for the top)."""
+    sign = 1.0 if rise else -1.0
+    slices = [
+        move(profile if inset <= TOL else offset(profile, -inset), n * (at + sign * height))
+        for inset, height in _ease_curve(lead, drop, style, steps)
+    ]
+    return reduce(union, (hull(a, b) for a, b in pairwise(slices)))
+
+
+def _ease_curve(
+    lead: float, drop: float, style: _EaseStyle, steps: int
+) -> tuple[tuple[float, float], ...]:
+    """``(inset, height)`` pairs from the tip of an eased rim - inset ``lead`` in the
+    plane, at ``height`` 0 along the sweep - to where it meets the full profile - no inset,
+    at ``height`` ``drop``: two points for a straight chamfer, or ``steps + 1`` points
+    (``steps`` hulled segments between them) along a quarter ellipse for a round, close
+    enough to it that a maker who wants a smoother curve asks for more steps.
+
+    Raises:
+        ValueError: if ``style="round"`` is given fewer than two steps.
+    """
+    if style == "chamfer":
+        return ((lead, 0.0), (0.0, drop))
+    if steps < 2:
+        msg = "a round eased rim needs at least two steps to look round"
+        raise ValueError(msg)
+    return tuple(
+        (lead * math.cos(t), drop * math.sin(t))
+        for t in (math.pi / 2 * k / steps for k in range(steps + 1))
     )
 
 
