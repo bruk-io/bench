@@ -15,6 +15,16 @@
  * answer - a handle freed or never made - throws, and the adapter turns that into the error
  * scene a refused body has always been.
  *
+ * **One grid for every vertex.** A body that has been through a `Mesh` - every primitive, which
+ * `tagged` rebuilds to mark its faces, and every imported sweep - holds its vertices as 32-bit
+ * floats, because that is what a `Mesh` carries. A transform works in doubles, so before
+ * task-77 a moved body landed off that grid while a hull or a sweep built on the same numbers
+ * sat on it, and two faces drawn to meet came out up to half a float's last place apart: a
+ * loft's top rounded to z = 70.0840835571289 under a cylinder moved to 70.08408650799234, and
+ * the union kept the 3 micrometre gap between them - two bodies, and the face between them read
+ * as a 90 degree ceiling. So `transform` puts what it moved back on the grid (`onTheGrid`): the
+ * same number drawn two ways rounds to the same float, and a union meets itself.
+ *
  * **One trap, kept out of here.** Manifold's `transform` takes a column-major 4 by 4. The
  * sixteen numbers arrive already in that order, from `bench.meshing.column_major`, so this
  * module never reorders a matrix.
@@ -85,6 +95,18 @@ export async function load(base: string): Promise<ManifoldToplevel> {
   return wasm;
 }
 
+/** `moved` with every vertex rounded to the nearest 32-bit float - the grid every body read in
+ * through a `Mesh` already stands on. `warpBatch` only moves vertices, so the triangles and the
+ * face ids they carry are untouched. Rounding the positions of what is already the answer is not
+ * geometry: nothing is decided here, only kept on the one grid Python's numbers all land on. */
+function onTheGrid(moved: Manifold): Manifold {
+  const rounded = moved.warpBatch((verts) => {
+    for (let at = 0; at < verts.length; at += 1) verts[at] = Math.fround(verts[at] ?? 0);
+  });
+  moved.delete();
+  return rounded;
+}
+
 type Held = { readonly kind: "section"; readonly one: CrossSection } | { readonly kind: "body"; readonly one: Manifold };
 
 const isPyBuffer = (given: Numbers): given is PyBuffer =>
@@ -152,7 +174,7 @@ export function bind(wasm: ManifoldToplevel): Modeller {
       ),
     revolve: (handle, segments, degrees) => made(section(handle).revolve(segments, degrees)),
     transform: (handle, columns) =>
-      reading(columns, "f64", (matrix) => made(body(handle).transform(Array.from(matrix) as Mat4))),
+      reading(columns, "f64", (matrix) => made(onTheGrid(body(handle).transform(Array.from(matrix) as Mat4)))),
     union: (a, b) => made(body(a).add(body(b))),
     difference: (a, b) => made(body(a).subtract(body(b))),
     intersection: (a, b) => made(body(a).intersect(body(b))),

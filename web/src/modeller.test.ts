@@ -103,6 +103,28 @@ describe("modeller, building", () => {
     expect(modeller.volume(cube(modeller))).toBeCloseTo(8, 6);
   });
 
+  it("unions a moved body with one built where it lands as one body, at a height no float holds", () => {
+    const modeller = bind(wasm);
+    // Measured before task-77: a hull's top came back rounded onto a 32-bit float and a block
+    // moved onto it did not, so they stood 3 micrometres apart and the union kept two bodies.
+    const high = 70.08408650799234;
+    const slab = modeller.hull([0, 0, 0, 2, 0, 0, 2, 2, 0, 0, 2, 0, 0, 0, high, 2, 0, high, 2, 2, high, 0, 2, high]);
+    const marked = modeller.tagged(slab, Array.from({ length: modeller.num_tri(slab) }, () => 0));
+    const block = modeller.tagged(cube(modeller), Array.from({ length: 12 }, () => 0));
+    const onTop = modeller.transform(block.body, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, high, 1]);
+    const mesh = modeller.mesh(modeller.union(marked.body, onTop));
+    const edges = new Set<string>();
+    for (let at = 0; at < mesh.triangles.length; at += 3) {
+      const corners = [mesh.triangles[at] ?? 0, mesh.triangles[at + 1] ?? 0, mesh.triangles[at + 2] ?? 0];
+      for (let k = 0; k < 3; k += 1) {
+        const [u, v] = [corners[k] ?? 0, corners[(k + 1) % 3] ?? 0];
+        edges.add(u < v ? `${u},${v}` : `${v},${u}`);
+      }
+    }
+    // One closed surface: V - E + F = 2. Two bodies side by side would be 4.
+    expect(mesh.vertices.length / mesh.num_prop - edges.size + mesh.triangles.length / 3).toBe(2);
+  });
+
   it("measures the gap between two bodies, stopping at the distance asked", () => {
     const modeller = bind(wasm);
     const apart = modeller.transform(cube(modeller), [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 0, 0, 1]);
