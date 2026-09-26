@@ -78,6 +78,7 @@ src/bench/
     gridfinity.py  drawer cabinet sized in Gridfinity units                  [done]
     print.py       the print domain: PLA/PETG/ASA, clearance(), the beds     [new]
     gridfinity3d.py  the printed bin: Spec/derive/validate/bin_()             [new]
+    ducts.py       hose and duct sizes, and the fittings between them       [new]
 examples/        the seven scripts the browser's menu loads; five of them
                  are the maker review's parts, and they are the acceptance
                  test for the 3D vocabulary                                   [new]
@@ -854,6 +855,44 @@ so the slicer has something straight to span, and its crush ribs are a `pattern`
 `Turn` in it. `validate` names the first parameter that will not print - `wall` under the
 material's own `min_wall`, `divisions` that close a compartment up, a `height` that leaves
 less inside than the flare under its own mouth takes.
+
+## library/ducts.py [new] - hose and duct sizes, and the fittings between them
+
+decision-11's first standards library, built on m-10's operations: what the vent's manifold
+drew by hand, as calls. Flat, beside `gridfinity`, and no `parts/` package until the library
+outgrows a flat list.
+
+**A size says which side it is measured on.** `Size(name, side, diameter, source,
+estimate=False)`: a dust hose is sold by its inside, a dust port by its outside, and a fit
+built on the wrong one is out by the wall. Each size in the table cites the page its number
+is from; one no page gave - the 2-1/2 inch port, the shop-vacuum ends, round HVAC duct - is
+`estimate=True` and says what it was guessed from, to be measured.
+
+**The gap goes on one part, and the size says which.** A spigot is the male side of a joint,
+a socket the female. A size measured inside is female already, so its spigot is drawn under
+by the fit's gap and its socket at the nominal; one measured outside is male already, so its
+socket is drawn over and its spigot at the nominal. `spigot(s)` slides into `socket(s)` at
+the fit either way, and each also takes the real thing it stands in for. The gap is
+`clearance(fit, material, concave=True)` a side, and nothing more is added - a socket is not
+a hole `hole` compensates.
+
+**Drawn the way it prints.** Every fitting stands on its start at the origin rising `+Z`
+(`UPRIGHT`). Every change of diameter is a cone leaning the material's `max_overhang`. An
+elbow turns and a branch's tap bends as far as asked, because a 90 degree elbow can be built
+and is the commonest fitting there is: up to `max_overhang` it prints unsupported, and past
+it `check_overhangs` flags it the way it flags any part - the checks decide what prints,
+and an exception is for what cannot be built. A turn past that angle prints best as two
+elbows and a coupler, which the elbow's docstring says. A straight fitting is an outline
+turned and hollowed with `shell`; an elbow is its wall's ring swept along a `path`; a branch
+is two rods - the tap setting off up the run and bending out, so its bore starts as a floor
+rather than a tangent sliver - with both bores cut out at once; a square-to-round is a
+collar, a loft and a spigot, each running a wall's length on into the next, cut once.
+
+**Nothing is two bodies that only touch.** Measured on the modeller the app ships: three
+shells set end to end stay three bodies, and the checks read the faces between them as a
+90 degree ceiling and a 0.17 mm wall; a shelled sweep's tilted open end leaves slivers the
+wall check reads as 0.64 mm. Overlapping pieces and one cut, or a ring swept whole, leave
+neither - and every fitting in PLA and ASA passes `overhangs` and `wall` standing up.
 
 ## web/ [done]
 

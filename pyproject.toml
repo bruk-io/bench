@@ -148,6 +148,21 @@ report = ["geometry", "survey"]
     "fasteners",
     "library.print",
 ]
+# ducts is the first standards library on the m-10 operations: hose and duct sizes and the
+# fittings between them, turned and hollowed with `shell`, bent with `sweep`, and sized off
+# the print domain's fit table - an object library reading another library, as gridfinity3d
+# does.
+"library.ducts" = [
+    "geometry",
+    "topology",
+    "model",
+    "ops",
+    "solids",
+    "fasteners",
+    "shell",
+    "sweep",
+    "library.print",
+]
 # print is the print domain: the filament profiles, the fit table and the build volumes,
 # plus the one import a script needs to reach the whole vocabulary. It sits above `features`
 # because it re-exports the printable-hole geometry that `hole` is built from - and
