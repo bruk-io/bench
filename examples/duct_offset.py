@@ -68,8 +68,8 @@ def build(p: Duct) -> Assembly:
     )
     print(fitted)
 
-    require(check_fits(held.shape, H2D))
-    check_wall(held.shape, PLA.min_wall)
+    require(check_fits(held, H2D))
+    check_wall(held, PLA.min_wall)
     turn = math.degrees(_turn(p))
     print(f"duct {p.diameter:.0f} mm across, {p.offset:.0f} mm over, bends of {turn:.1f} degrees")
     return assembly("duct", (Placed(held, XY), Placed(fitted.part, XY)), posed=True)

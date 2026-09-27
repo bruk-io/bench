@@ -36,7 +36,7 @@ import math
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import assert_never
+from typing import NamedTuple, assert_never
 
 from .facets import Triangle, area, normal, thinnest, triangles
 from .fasteners import Contact, Fit
@@ -814,8 +814,14 @@ def sampling(over: tuple[float, float], samples: int) -> tuple[float, ...]:
     return (*(low + step * n for n in range(samples - 1)), high)
 
 
-def wall(solid: Solid, least: float, *, kernel: Kernel | None) -> Violation | None:
-    """Whether every wall of ``solid`` is at least ``least`` millimetres thick.
+def wall(shape: Solid | Part, least: float, *, kernel: Kernel | None) -> Violation | None:
+    """Whether every wall of ``shape`` is at least ``least`` millimetres thick.
+
+    ``shape`` is a :class:`~bench.model.Part` or its bare :class:`~bench.topology.Solid`, so a
+    script hands every print check the same thing (task-81). Only the body is read off a
+    part: a wall is as thick lying down as standing up, so how it prints changes nothing
+    here. A part cut flat from sheet has no wall to measure, and that is refused by
+    :func:`_body`.
 
     Measured on the mesh, because thickness is not something a recipe knows: from the middle
     of each triangle, straight into the material, to the first surface facing back. The
@@ -824,6 +830,7 @@ def wall(solid: Solid, least: float, *, kernel: Kernel | None) -> Violation | No
     is also what :func:`bench.survey.survey` reports a downloaded model's walls with, so the
     two can never disagree about the same mesh.
     """
+    solid = _body(shape, "wall")
     if kernel is None:
         return unchecked("wall")
     mesh = kernel.mesh(solid)
@@ -853,11 +860,48 @@ read an angle off a mesh with; a part is not unprintable for a rounding error.
 """
 
 
+_LISTED = 5
+"""How many overhangs one finding's sentence names before it says how many more there are.
+
+Measured on the shipped examples, not picked: the Systainer tote is the most any of them has,
+eighteen - four socket ceilings, two grip tops, two latch lugs and ten ribs - and named in
+full its sentence runs past fifteen hundred characters, forty-odd lines of the Problems
+panel for one finding. Each place named costs about seventy characters, two lines of the
+panel, so five is ten lines: the steepest and largest, which are the ones to look at first,
+and a count of the rest. None of them is lost past the cap - the finding's refs name every
+place, in the same order, and those are what the panel prints under the sentence and the
+ref tree marks."""
+
+
+class _Overhang(NamedTuple):
+    """One place on a mesh that leans past the limit: the triangles of one face, joined by
+    shared corners, with how far the steepest of them leans, how much surface they cover,
+    and how far they reach across the bed - the two sides of their box in the plane the
+    layers are laid in, larger first."""
+
+    lean: float
+    surface: float
+    across: tuple[float, float]
+    at: Ref | None
+    first: int
+
+
 def overhangs(
-    solid: Solid, orient: Orient, material: Material, *, kernel: Kernel | None
+    shape: Solid | Part,
+    orient: Orient | None = None,
+    material: Material | None = None,
+    *,
+    kernel: Kernel | None,
 ) -> Violation | None:
-    """Whether anything on ``solid`` leans further off the build direction than the plastic
+    """Whether anything on ``shape`` leans further off the build direction than the plastic
     can hold up unsupported.
+
+    ``shape`` is a :class:`~bench.model.Part` or its bare :class:`~bench.topology.Solid`. A
+    part whose stock is :class:`~bench.model.Printed` already says both things this needs -
+    its ``Orient`` and its ``Material`` - and they are read off it, the way :func:`fits`
+    reads the first, so a script hands the part it made rather than its shape and the stock
+    again. ``orient`` and ``material`` state them for a bare solid, and override a part's own
+    when given, which is how a script asks about another way up.
 
     Every triangle is classified by its normal against ``orient.up``: a surface leaning
     ``theta`` from the build direction has a normal ``theta`` off the horizontal, so
@@ -879,7 +923,29 @@ def overhangs(
     a face leaning 50 degrees). One triangle is never judged alone, because a flat ceiling's
     own triangulation fans out into needles far thinner than that; a patch is as wide as the
     whole overhang it belongs to.
+
+    **Every overhang is reported, not only the worst** (task-78). What is left is split into
+    one overhang per face each patch covers - two faces that happen to meet at a corner, a
+    ledge and a tube run into it, are two things to support - and all of them come back in
+    one finding, steepest first and the larger first between two that lean alike (the lean
+    compared to the whole degree the sentence says, so two ceilings that read 89.99 and
+    90.00 off a single-precision mesh are ordered by size, not by rounding): its sentence
+    names each with its lean, its area and its box across the bed, up to :data:`_LISTED` of
+    them, and its refs are every face that leans, each once, in the same order. One face
+    can be two places - a bore's crown either side of the hole it crosses - and is named in
+    the sentence twice. One finding and not one per overhang, because a check is one
+    question and ``require`` stops on its one answer; the tote's eighteen overhangs are one
+    part with eighteen places to look, and the sentence says so once. Before task-78 it
+    named only the worst, and at a tie the first it met: the tote read ``socket-1`` alone,
+    and its latch lugs and ribs, which hang off the wall with nothing under them, went
+    unreported.
+
+    A shape nothing says the printing of - a bare solid with no ``orient`` or ``material``,
+    a part on sheet stock with none given, a flat part cut from sheet - is
+    :func:`_printed`'s to refuse, before the kernel is asked for anything, so a browser with
+    no modeller refuses the same script the desk does.
     """
+    solid, orient, material = _printed(shape, orient, material, "overhangs")
     if kernel is None:
         return unchecked("overhangs")
     mesh = kernel.mesh(solid)
@@ -893,26 +959,123 @@ def overhangs(
         lean = _lean_of(corners, up)
         if lean > material.max_overhang + _ANGLE_SLACK:
             leaning[i] = lean
-    worst = 0.0
-    at: Ref | None = None
-    for i in sorted(
-        i
-        for patch in _patches(mesh, leaning)
-        if _across(mesh, corners_of, patch) >= CHORD
-        for i in patch
-    ):
-        if leaning[i] > worst:
-            worst, at = leaning[i], mesh.refs[i]
-    if worst <= material.max_overhang + _ANGLE_SLACK:
+    found = sorted(
+        (
+            _overhang(mesh, corners_of, leaning, face_of, up)
+            for patch in _patches(mesh, leaning)
+            if _across(mesh, corners_of, patch) >= CHORD
+            for face_of in _by_face(mesh, patch)
+        ),
+        key=lambda one: (-round(math.degrees(one.lean)), -one.surface, one.first),
+    )
+    if not found:
         return None
     return Violation(
         check="overhangs",
-        message=(
-            f"a face leans {math.degrees(worst):.0f} degrees off the build direction, and"
-            f" {material.name} holds up {math.degrees(material.max_overhang):.0f}"
-        ),
+        message=_leaning(found, material),
         severity=Severity.WARNING,
-        refs=() if at is None else (at,),
+        refs=tuple(dict.fromkeys(one.at for one in found if one.at is not None)),
+    )
+
+
+def _printed(
+    shape: Solid | Part, orient: Orient | None, material: Material | None, check: str
+) -> tuple[Solid, Orient, Material]:
+    """The body a print check measures, the way it prints and what it is printed in: read
+    off a :class:`~bench.model.Part` whose stock is :class:`~bench.model.Printed`, and
+    overridden by whichever of ``orient`` and ``material`` were given.
+
+    A part cut flat from sheet is :func:`_body`'s to refuse.
+
+    Raises:
+        ValueError: if either is still missing - a bare solid needs both said.
+    """
+    body = _body(shape, check)
+    _, stated = _oriented_subject(shape)
+    printed = shape.stock if isinstance(shape, Part) and isinstance(shape.stock, Printed) else None
+    orient = orient if orient is not None else stated
+    material = material if material is not None else None if printed is None else printed.material
+    if orient is None or material is None:
+        missing = " and ".join(
+            name for name, given in (("orient", orient), ("material", material)) if given is None
+        )
+        msg = (
+            f"{check} needs to know how the body prints: hand it a Part on Printed stock, or"
+            f" say {missing}"
+        )
+        raise ValueError(msg)
+    return body, orient, material
+
+
+def _body(shape: Solid | Part, check: str) -> Solid:
+    """The body a check on a built mesh measures: ``shape`` itself, or the part's own.
+
+    Raises:
+        ValueError: if ``shape`` is a part whose shape is a flat ``Face`` - cut from sheet,
+            never meshed, and with nothing for ``check`` to measure.
+    """
+    if not isinstance(shape, Part):
+        return shape
+    if not isinstance(shape.shape, Solid):
+        msg = f"{check} measures a built body, and {shape.label} is a flat face cut from sheet"
+        raise ValueError(msg)
+    return shape.shape
+
+
+def _by_face(mesh: Mesh, patch: Collection[int]) -> list[list[int]]:
+    """A patch's triangles split by the face each one belongs to, in the order the faces are
+    first met - a patch that runs across two named faces is two overhangs, not one."""
+    faces: dict[Ref | None, list[int]] = {}
+    for i in sorted(patch):
+        faces.setdefault(mesh.refs[i], []).append(i)
+    return list(faces.values())
+
+
+def _overhang(
+    mesh: Mesh,
+    corners_of: Sequence[Triangle],
+    leaning: dict[int, float],
+    chosen: Sequence[int],
+    up: Vector,
+) -> _Overhang:
+    """What one overhang is - see :class:`_Overhang` - measured off its triangles."""
+    flat = plane(_ORIGIN, up)
+    points = tuple(p - _ORIGIN for i in chosen for p in corners_of[i])
+    xs = tuple(v @ flat.x_dir for v in points)
+    ys = tuple(v @ flat.y_dir for v in points)
+    wide, deep = max(xs) - min(xs), max(ys) - min(ys)
+    return _Overhang(
+        lean=max(leaning[i] for i in chosen),
+        surface=sum(area(corners_of[i]) for i in chosen),
+        across=(max(wide, deep), min(wide, deep)),
+        at=mesh.refs[chosen[0]],
+        first=chosen[0],
+    )
+
+
+def _leaning(found: Sequence[_Overhang], material: Material) -> str:
+    """The sentence a set of overhangs is reported in: the one, or how many and each of the
+    first :data:`_LISTED`, steepest first, and how many more past those."""
+    limit = f"{material.name} holds up {math.degrees(material.max_overhang):.0f}"
+    if len(found) == 1:
+        return f"a face leans {_said(found[0], 'degrees off the build direction')}, and {limit}"
+    named = "; ".join(
+        f"{one.at or 'a face'} leans {_said(one, 'degrees')}" for one in found[:_LISTED]
+    )
+    more = len(found) - _LISTED
+    rest = f"; and {more} more" if more > 0 else ""
+    return (
+        f"{len(found)} places lean further off the build direction than {limit} degrees:"
+        f" {named}{rest}"
+    )
+
+
+def _said(one: _Overhang, degrees: str) -> str:
+    """How far one overhang leans, in ``degrees``' words, and how big it is."""
+    wide, deep = one.across
+    return (
+        f"{math.degrees(one.lean):.0f} {degrees} over {one.surface:.0f} mm2, {wide:.1f} by"
+        f" {deep:.1f} mm across"
     )
 
 

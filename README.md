@@ -182,8 +182,11 @@ and says in its own text what it could not do and why.
   once a maker declares the two are meant to seat against each other, which asks whether they
   share material rather than whether they stand apart, because `min_gap` reads a touch and a
   collision alike as zero -
-  `wall(solid, least, *, kernel)` and `overhangs(solid, orient, material, *, kernel)`. The
-  kernel is a parameter, never an import, and a check that needs one and has none answers
+  `wall(shape, least, *, kernel)` and `overhangs(shape, orient=None, material=None, *,
+  kernel)` - each takes a bare solid or the `Part` it became, and `overhangs` reads a
+  `Printed` part's own way up and plastic, `orient` and `material` overriding them (task-81);
+  it reports every place that leans past the limit, steepest first, in one finding
+  (task-78). The kernel is a parameter, never an import, and a check that needs one and has none answers
   `Severity.UNCHECKED` instead of passing. `Sampled` and `sampling(over, samples)` are what a
   question asked of a whole motion answers with and where its poses are - a record that says
   how many poses were measured and how far apart, because a check made at twenty-one poses
@@ -336,7 +339,8 @@ and says in its own text what it could not do and why.
   check records a `Violation` with the line of the script that asked and hands it back, and
   a failed check never aborts the run - the geometry, the refs and the sheets still come
   back with the violation beside them. A check is handed a bare solid, usually before the
-  part it becomes exists, so it answers in the solid's own names - `socket-1` - and the run
+  part it becomes exists - or the part itself, which `check_fits`, `check_wall` and
+  `check_overhangs` all take - so it answers in the solid's own names - `socket-1` - and the run
   keeps the shapes each check measured beside its answer, so the scene can say `tote/socket-1`.
   Each part that is a body carries its `mesh` when the run was given a kernel.
   `check_clearance_through(at, least, over=, samples=, contacts=)` is the same question asked

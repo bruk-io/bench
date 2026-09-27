@@ -25,13 +25,19 @@ of the lid below, and the front latch clamps both boxes at once - which is what 
 carry a whole stack by the top handle. There are no hooks here, so these totes stack but a
 stack is not one object. The latch lugs are the beginning of that story, not the end of it.
 
-`check_overhangs` reports one face and it is `socket-1`: the ceiling of a blind pocket is
-horizontal however far its walls are drafted. It is left standing. A flat roof spanning a
-closed sixteen millimetre square is a bridge, which a slicer lays down without support, and
-the check measures the angle a face leans rather than the distance it has to cross - which
-is the honest thing for it to measure and the reason the warning is worth reading rather
-than silencing. `gridfinity_bin.py` reaches the same junction and declines the check
-outright; this one takes the warning instead.
+`check_overhangs` reports eighteen places, in one warning, and every one of them is there.
+Six are bridges. The four socket ceilings are horizontal however far their walls are
+drafted, and a flat roof spanning a closed sixteen millimetre square is a bridge, which a
+slicer lays down without support; the tops of the two grip cut-outs are the same, 2.4 mm
+across. Twelve are not. The two latch lugs and the ten ribs hang off the outside of the
+wall with nothing under them - the lugs 12 mm out, the ribs 3 mm, starting at the floor's
+height rather than the bed's - and a slicer supports those or the first layer of each
+droops. They are left standing, and the check says so: it measures the angle a face leans
+rather than the distance it has to cross, which is the honest thing for it to measure and
+the reason the warning is worth reading rather than silencing. Until task-78 it named only
+the first ceiling it met, `socket-1`, and the lugs and ribs went unreported.
+`gridfinity_bin.py` reaches the same junction and declines the check outright; this one
+takes the warning instead.
 
 Everything is drawn corner-at-origin, the way `rect`, `rounded_rect` and `cuboid` all place
 themselves, so every offset in here is measured from the tub's own front-left-bottom corner
@@ -253,11 +259,12 @@ def build(p: Tote) -> Part:
         f"at {p.draft:.0f} degrees of draft"
     )
 
-    check_wall(tub, material.min_wall)
-    check_overhangs(tub, printed.orient, material)
-    require(check_fits(tub, H2D))
+    tote = part("tote", tub, printed)
+    check_wall(tote, material.min_wall)
+    check_overhangs(tote)
+    require(check_fits(tote, H2D))
 
-    return part("tote", tub, printed)
+    return tote
 
 
 show(build)
