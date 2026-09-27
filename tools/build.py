@@ -1,5 +1,5 @@
 """Run a script or a project directory and keep what it made:
-``uv run python -m tools.build <script.py | project-dir> [--out DIR]``.
+``uv run python -m tools.build <script.py | project-dir> [--out DIR] [--modeller]``.
 
 Decision-9's own shape: a project is a directory with one ``bench.toml`` - ``[project] entry``
 says which script runs, ``[values]`` and ``[reference]`` are what it builds with and what it is
@@ -45,20 +45,31 @@ and the same mapping the app's panel sends. Nothing under ``src/bench`` knows th
 exists: reading it is I/O, and I/O lives at the edges. A script with no file beside it runs
 on its own defaults, which is what every example does today.
 
-No solid modeller is loaded here, so a printed part comes back with every ref, parameter and
-violation it has and no triangles. Cut sheets need no kernel, which is the whole point of
-being able to do this from a command line.
+**With or without the modeller.** By default no solid modeller is loaded, so a printed part
+comes back with every ref, parameter and violation it has and no triangles - and every check
+that has to measure a body (overhangs, fits, contact, clearance) answers ``unchecked``. Cut
+sheets need no kernel, which is the whole point of being able to do this from a command line,
+and the plain run takes a fraction of a second.
+
+``--modeller`` runs the same script the way the app does instead: :func:`bench.script.run`
+inside the pinned Pyodide, with the app's own Manifold modeller as its kernel, on
+:mod:`tools.stack` (task-79). The kernel checks then report what they measured, and ``--out``
+writes the STL and 3MF a printed part makes. It is a flag rather than the default because it
+costs a Node boot, an esbuild bundle and Pyodide's start - seconds rather than milliseconds -
+and needs ``npm ci`` in ``web/``; a plain run that met a check it could not answer says so and
+names the flag, so a person never mistakes ``unchecked`` for a pass.
 """
 
 import importlib
 import sys
 import tomllib
-from base64 import b64decode
+from base64 import b64decode, b64encode
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from tools import stack
 from tools.projects import project_dir, project_file
 
 if TYPE_CHECKING:
@@ -166,7 +177,7 @@ def reference_beside(script: Path) -> dict[str, object] | None:
     return dict(table)
 
 
-def _entry_in(directory: Path) -> Path:
+def entry_in(directory: Path) -> Path:
     """The script ``directory`` runs by default - decision-9's ``entry`` - mirroring
     ``web/src/project-files.ts``'s own rule (``entryOf``) exactly, so the app and this command
     line can never pick different files for the same directory: the document's declared
@@ -332,6 +343,89 @@ def written(scene: OkScene, into: Path) -> list[Path]:
     return made
 
 
+MODELLER = "--modeller"
+"""The flag that runs the script with the shipped modeller as its kernel - see the module's
+own note on why it is a flag."""
+
+_MODELLED = """\
+import base64
+import json
+
+from pyodide.ffi import JsException
+
+from bench.adapters.browser import JsKernel
+from bench.placement import placed, placement
+from bench.script import run
+from bench.survey import mesh_from_stl
+
+
+def main(js, given):
+    given = json.loads(given)
+    reference = None
+    if given["stl"] is not None:
+        reference = mesh_from_stl(base64.b64decode(given["stl"]))
+        if given["table"] is not None:
+            reference = placed(reference, placement(given["table"], reference))
+    scene = run(
+        given["source"],
+        given["values"],
+        reference=reference,
+        kernel=JsKernel(js, JsException),
+        modules=given["modules"],
+    )
+    return json.dumps(scene)
+"""
+"""The program :func:`_modelled` hands :mod:`tools.stack`: the run :func:`main` makes without a
+kernel, made with the modeller the worker binds. The reference is placed inside, from the STL's
+bytes and its table, because a placed mesh is a Python object and cannot cross into Pyodide -
+the same placement :func:`_reference_placed` already made and printed out here."""
+
+
+def _modelled(
+    script: Path,
+    values: dict[str, object],
+    reference_table: dict[str, object] | None,
+    project_root: Path,
+) -> Scene:
+    """``script`` run with the shipped modeller: what :func:`bench.script.run` gives back
+    inside Pyodide with :class:`~bench.adapters.browser.JsKernel` over Manifold's WASM - the
+    worker's own kernel - with the project's other scripts written beside ``bench`` so its
+    imports reach them.
+
+    A stack that cannot run here, or a Node or program that fails, reaches the caller as
+    :func:`tools.stack.run`'s own ``RuntimeError``, unchanged.
+    """
+    stl: str | None = None
+    table: dict[str, object] | None = None
+    if reference_table is not None:
+        stl = b64encode((script.parent / str(reference_table["file"])).read_bytes()).decode()
+        table = reference_table if _placing(reference_table) else None
+    names = _modules_of(project_root, script)
+    scene: Scene = stack.run(
+        _MODELLED,
+        {
+            "source": script.read_text(),
+            "values": values,
+            "stl": stl,
+            "table": table,
+            "modules": sorted(names),
+        },
+        modules={f"{name}.py": (project_root / f"{name}.py").read_text() for name in names},
+    )
+    return scene
+
+
+def _unmeasured(scene: Scene) -> list[str]:
+    """The line a run without the modeller adds when a check could not answer, naming the
+    flag that would have let it - or nothing, when every check answered or the run failed."""
+    if not scene["ok"]:
+        return []
+    count = sum(1 for one in scene["violations"] if one["severity"] == "unchecked")
+    if count == 0:
+        return []
+    return [f"{count} unchecked: no modeller in this run - {MODELLER} measures them"]
+
+
 def _said(scene: Scene) -> list[str]:
     """What the run amounts to, in the words the app's status bar uses."""
     if not scene["ok"]:
@@ -369,16 +463,16 @@ def _resolve(
     A project or script name that is not one plain name, a refused projects root, or an
     unreadable ``bench.toml`` reach the caller as the same ``ValueError``
     :func:`tools.projects.project_dir`, :func:`tools.projects.project_file` and
-    :func:`_entry_in` already raise it as.
+    :func:`entry_in` already raise it as.
     """
     if "--project" in given:
         directory = project_dir(given["--project"], environ)
         if named:
             return project_file(given["--project"], named[0], environ), directory
-        return _entry_in(directory), directory
+        return entry_in(directory), directory
     script = Path(named[0])
     if script.is_dir():
-        return _entry_in(script), script
+        return entry_in(script), script
     return script, script.parent
 
 
@@ -391,7 +485,8 @@ def main(argv: tuple[str, ...] | None = None, environ: Mapping[str, str] | None 
     numbers.
 
     ``--project NAME`` and a bare directory are :func:`_resolve`'s to sort out - see there for
-    what each becomes.
+    what each becomes. ``--modeller`` runs it with the shipped modeller as its kernel
+    (:func:`_modelled`), anywhere among the arguments.
 
     Returns:
         ``0`` if the run produced geometry, ``1`` if it did not - so this can stand in a
@@ -405,6 +500,8 @@ def main(argv: tuple[str, ...] | None = None, environ: Mapping[str, str] | None 
         print(__doc__, file=sys.stderr)
         return 1
     flags = {"--out", "--project"}
+    modelled = MODELLER in args
+    args = tuple(one for one in args if one != MODELLER)
     given = {flag: args[at + 1] for at, flag in enumerate(args[:-1]) if flag in flags}
     named = [
         one
@@ -448,13 +545,20 @@ def main(argv: tuple[str, ...] | None = None, environ: Mapping[str, str] | None 
             else:
                 print(_frame_said(_document_path(script), name, frame))
 
-        scene: Any = run(
-            script.read_text(),
-            values,
-            reference=reference,
-            modules=_modules_of(project_root, script),
-        )
-    for line in _said(scene):
+        if modelled:
+            try:
+                scene: Any = _modelled(script, values, reference_table, project_root)
+            except RuntimeError as exc:
+                print(f"failed: {exc}", file=sys.stderr)
+                return 1
+        else:
+            scene = run(
+                script.read_text(),
+                values,
+                reference=reference,
+                modules=_modules_of(project_root, script),
+            )
+    for line in _said(scene) + ([] if modelled else _unmeasured(scene)):
         print(line)
     if not scene["ok"]:
         return 1
