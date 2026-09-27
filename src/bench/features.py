@@ -9,9 +9,10 @@ tables.
 It sits above :mod:`bench.solids` because it is built out of it: a bore is an extrusion cut
 away, a countersink a loft of two circles, a bridged top a union of stepped squares. That
 is also why the printable-hole geometry is here and not in the print domain -
-:class:`Top`, :func:`teardrop`, :func:`d_bore`, :func:`bridge_steps`, :func:`printable_top`
-and :func:`foot_chamfer` are shapes, public because a lid, a hinge and a bin need them
-without cutting a hole to get them, and :mod:`bench.library.print` imports them back.
+:class:`Top`, :class:`End`, :func:`teardrop`, :func:`d_bore`, :func:`bridge_steps`,
+:func:`printable_top`, :func:`printable_end` and :func:`foot_chamfer` are shapes, public
+because a lid, a hinge and a bin need them without cutting a hole to get them, and
+:mod:`bench.library.print` imports them back.
 
 What a printer can and cannot do is read off a :class:`~bench.model.Printed` - the material
 and the way up - and never guessed: a bore with nothing to read from asks for one by name
@@ -23,10 +24,22 @@ from enum import StrEnum
 from typing import assert_never, cast
 
 from .fasteners import Fit, Insert, Screw, bore
-from .geometry import ORIGIN, TOL, XY, Plane, Point, Vector, raised, translation, unit
+from .geometry import (
+    ORIGIN,
+    TOL,
+    XY,
+    Axis,
+    Plane,
+    Point,
+    Vector,
+    plane,
+    raised,
+    translation,
+    unit,
+)
 from .model import Printed
 from .ops import _at_angle, circle, fill, offset, rect
-from .solids import cut, extrude, loft, name, union
+from .solids import cut, extrude, loft, name, revolve, union
 from .topology import (
     Arc,
     Difference,
@@ -46,10 +59,13 @@ from .topology import (
     Swept,
     Union,
     Wire,
+    face,
     moved,
+    polygon,
     wire,
 )
 from .topology import bounds as _bounds
+from .topology import label as _label
 
 # ---- printable profiles ------------------------------------------------------------
 
@@ -213,6 +229,45 @@ def _lean(axis: Vector, up: Vector) -> float:
     return math.acos(min(1.0, abs(unit(axis) @ unit(up))))
 
 
+class End(StrEnum):
+    """How the far end of a blind bore is made, so that a printer can build it.
+
+    ``FLAT`` is the bore's own floor, square across. ``CONE`` carries the bore on past its
+    depth as a cone narrowing to a point at the material's ``max_overhang``, so a pocket that
+    opens downward as it prints ends in a roof that holds itself up rather than a flat
+    ceiling to bridge - the full diameter still reaches exactly ``depth``, so whatever sits
+    in the pocket seats there, on the ring where the cone begins. ``AUTO`` picks between them
+    - see :func:`printable_end`. It is to a bore's end what :class:`Top` is to its side.
+    """
+
+    AUTO = "auto"
+    FLAT = "flat"
+    CONE = "cone"
+
+
+def printable_end(end: End, *, mouth: Vector, blind: bool, printed: Printed | None) -> End:
+    """Which end a bore opening along ``mouth`` - the normal of the face it is drilled into,
+    out of the material - actually gets.
+
+    Anything but :data:`End.AUTO` is the caller's decision and comes straight back. ``AUTO``
+    gives ``CONE`` to a blind bore standing within :data:`LEANING` of the build direction
+    whose mouth faces down as it prints, since its end is then a ceiling over the whole
+    diameter; everything else is ``FLAT`` - a through bore has no end, a pocket opening
+    upward stands on its floor, and a leaning one is :func:`printable_top`'s to make
+    printable. With no orientation to read it is ``FLAT`` rather than a refusal: a body
+    whose bore reaches here without ``printed`` has already said ``top=`` for itself, which
+    is a bore saying it does not care how it prints.
+    """
+    if end is not End.AUTO:
+        return end
+    if not blind or printed is None:
+        return End.FLAT
+    up = printed.orient.up
+    if mouth @ up >= 0.0 or _lean(mouth, up) >= LEANING:
+        return End.FLAT
+    return End.CONE
+
+
 def hole[T: Shape](
     subject: T,
     at: Point,
@@ -228,6 +283,7 @@ def hole[T: Shape](
     counterbore: bool = False,
     angle: float | None = None,
     top: Top = Top.AUTO,
+    end: End = End.AUTO,
     printed: Printed | None = None,
     label: str | Label,
 ) -> T:
@@ -281,9 +337,16 @@ def hole[T: Shape](
     top to make printable another way either - a caller draws one that is already safe to
     print lying on its side, the way :func:`d_bore` leans on nothing rounder than its own
     arc - so ``top`` stays at its default with a profile, or the refusal below fires.
+    ``end`` is the same rule for a blind bore's far end, :func:`printable_end`: a pocket that
+    opens downward as it prints - a magnet seat in a part standing on its face - is carried
+    on past ``depth`` as a cone at the material's ``max_overhang``, so its full diameter
+    still reaches exactly ``depth`` and what sits in it seats there. Only a round blind bore
+    in a body has an end to shape, so a face, a profile and a through bore refuse
+    ``End.CONE``, and ``AUTO`` leaves them flat.
 
     The tool is labelled, so the bore's own faces answer to ``<label>/side-0``, a head to
-    ``<label>/head`` and each bridging step to ``<label>/bridge-1``. Everything else a hole
+    ``<label>/head``, each bridging step to ``<label>/bridge-1`` and a coned end to
+    ``<label>/side-cone``. Everything else a hole
     can be asked for and cannot do - a bore's options on a flat face, a head with no screw
     to size it, a teardrop with no orientation to point along, a printable top on a profile -
     is refused by name where it is worked out.
@@ -293,7 +356,7 @@ def hole[T: Shape](
             ``profile`` is given, since each says how wide or what shape the hole is and
             they cannot all be right; or if ``profile`` is given alongside ``countersink``,
             ``counterbore`` or a ``top`` other than the default, none of which a profiled
-            bore can do.
+            bore can do, or ``end=End.CONE``, which only a round bore has.
     """
     given = tuple(one for one in (screw, diameter, insert, profile) if one is not None)
     if len(given) != 1:
@@ -309,10 +372,10 @@ def hole[T: Shape](
                 " screw to size one from"
             )
             raise ValueError(msg)
-        if top not in (Top.AUTO, Top.ROUND):
+        if top not in (Top.AUTO, Top.ROUND) or end is End.CONE:
             msg = (
-                "a profile has no round top to make printable another way; draw one already"
-                " safe to print, not top="
+                "a profile has no round top or end to make printable another way; draw one"
+                " already safe to print, not top= or end="
             )
             raise ValueError(msg)
         match subject:
@@ -326,10 +389,23 @@ def hole[T: Shape](
     wide = _hole_diameter(screw, diameter, insert, fit, printed)
     match subject:
         case Face():
-            return cast("T", _face_hole(subject, at, wide, label, depth, countersink, counterbore))
+            return cast(
+                "T", _face_hole(subject, at, wide, label, depth, countersink, counterbore, end)
+            )
         case Solid():
             tool = _bore(
-                subject, at, on, wide, screw, depth, countersink, counterbore, angle, top, printed
+                subject,
+                at,
+                on,
+                wide,
+                screw,
+                depth,
+                countersink,
+                counterbore,
+                angle,
+                top,
+                end,
+                printed,
             )
             return cast("T", cut(subject, tool, label=label))
         case _:
@@ -459,6 +535,7 @@ def _face_hole(
     depth: float | None,
     countersink: bool,
     counterbore: bool,
+    end: End,
 ) -> Face:
     """A round hole cut clean through a flat part - what a laser does and all it does.
 
@@ -473,6 +550,7 @@ def _face_hole(
             ("depth", depth is not None),
             ("countersink", countersink),
             ("counterbore", counterbore),
+            ("a coned end", end is End.CONE),
         )
         if given
     )
@@ -496,10 +574,11 @@ def _bore(
     counterbore: bool,
     angle: float | None,
     top: Top,
+    end: End,
     printed: Printed | None,
 ) -> Solid:
     """The body taken out of a solid to leave the hole: the bore, the head's recess, and
-    whatever a bridged top needs above it.
+    whatever a bridged top needs above it - or a coned end past it.
 
     Raises:
         ValueError: if a head was asked for without a screw to size it, or both at once.
@@ -513,9 +592,13 @@ def _bore(
     chosen = printable_top(
         top, axis=on.normal, diameter=wide, printed=printed, round_matters=counterbore
     )
+    ending = printable_end(end, mouth=on.normal, blind=depth is not None, printed=printed)
     reach = (_through(subject, on) if depth is None else depth) + _OVERSHOOT
     mouth = raised(on, _OVERSHOOT)
-    tool = extrude(fill(_bore_profile(wide, at, chosen, on, printed), on=mouth), -reach)
+    if ending is End.CONE:
+        tool = _coned(subject, wide, at, on, depth, chosen, printed)
+    else:
+        tool = extrude(fill(_bore_profile(wide, at, chosen, on, printed), on=mouth), -reach)
     if counterbore and screw is not None:
         tool = union(tool, _counterbored(screw, at, mouth, label="head"))
         if chosen is Top.BRIDGE:
@@ -524,6 +607,65 @@ def _bore(
     if countersink and screw is not None:
         tool = union(tool, _countersunk(screw, wide, at, on, angle, label="head"))
     return tool
+
+
+def _coned(
+    subject: Solid,
+    wide: float,
+    at: Point,
+    on: Plane,
+    depth: float | None,
+    chosen: Top,
+    printed: Printed | None,
+) -> Solid:
+    """A round blind bore ``wide`` across and ``depth`` deep, carried on past its depth as a
+    cone narrowing to a point, turned in one piece about the bore's own axis.
+
+    One revolve rather than a cone unioned onto a cylinder, because the two would meet on a
+    circle at ``depth`` that the modeller rounds a little differently on each side, leaving
+    a hair of flat ceiling there - the very thing the cone is for. The cone's half-angle is
+    the material's ``max_overhang`` less the bore's own lean, so its steepest side leans
+    exactly the limit off the build direction whichever way the bore stands.
+
+    Raises:
+        ValueError: if there is no depth, no orientation, a teardrop's point to meet, a lean
+            the material cannot hold a cone at, or a cone that would come out through the
+            far side of the body.
+    """
+    if depth is None:
+        msg = "a coned end finishes a blind bore; a through bore has no end - give depth="
+        raise ValueError(msg)
+    if printed is None:
+        msg = "a coned end is cut at the material's own overhang; give printed="
+        raise ValueError(msg)
+    if chosen is Top.TEARDROP:
+        msg = "a coned end is round and a teardrop bore is not; give top=Top.ROUND or end=End.FLAT"
+        raise ValueError(msg)
+    half = printed.material.max_overhang - _lean(on.normal, printed.orient.up)
+    if half <= TOL:
+        msg = (
+            f"a bore leaning {math.degrees(_lean(on.normal, printed.orient.up)):.0f} degrees"
+            f" has no cone {printed.material.name} holds up; give end=End.FLAT"
+        )
+        raise ValueError(msg)
+    r = wide / 2
+    point = depth + r / math.tan(half)
+    if point + _OVERSHOOT >= _through(subject, on):
+        msg = f"a coned end {point:.2f} mm deep comes out through the far side of the body"
+        raise ValueError(msg)
+    centre = on.origin + on.x_dir * at.x + on.y_dir * at.y
+    # Drawn across the axis: x out from it along the plane's own x, y into the material.
+    across = plane(centre, on.y_dir, on.x_dir)
+    corners = (
+        Point(0.0, -_OVERSHOOT),
+        Point(r, -_OVERSHOOT),
+        Point(r, depth),
+        Point(0.0, point),
+    )
+    names = ("mouth", "0", "cone", "axis")
+    outline = polygon(corners)
+    edges = tuple(Edge(e.curve, _label(one)) for e, one in zip(outline.edges, names, strict=True))
+    return revolve(face(wire(edges), on=across), Axis(centre, -on.normal))
 
 
 def _bore_profile(wide: float, at: Point, chosen: Top, on: Plane, printed: Printed | None) -> Wire:

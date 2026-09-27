@@ -8,6 +8,7 @@ measured in the adapter layer, against the real modeller.
 """
 
 import math
+from typing import Any
 
 import pytest
 
@@ -16,6 +17,7 @@ from bench import (
     M3,
     M4,
     XY,
+    End,
     Fit,
     Label,
     Point,
@@ -44,6 +46,7 @@ from bench import (
 from bench.fasteners import BUGLE, COUNTERSINK_82, DRYWALL_8, WOOD_8, Screw
 from bench.library.print import PLA
 from bench.nest import Bed
+from bench.topology import Extrude, Moved, Node, Revolve
 
 pytestmark = pytest.mark.functional
 
@@ -388,6 +391,92 @@ def test_a_bore_that_cannot_tell_which_way_is_up_says_so() -> None:
     assert (
         hole(plate, Point(30, 10), on=front, diameter=6.0, top=Top.ROUND, label="pin") is not None
     )
+
+
+# ---- a pocket's end -----------------------------------------------------------------------
+
+
+def _magnet(face: str, **given: object) -> Solid:
+    """A block with the vent's 12.5 mm magnet pocket, 3 mm deep, drilled into ``face``."""
+    block = cuboid(40, 40, 20)
+    on = plane_of(block, face)
+    middle = Point(20, 20, 0) if face == "bottom" else Point(20, 20, 20)
+    at = Point((middle - on.origin) @ on.x_dir, (middle - on.origin) @ on.y_dir)
+    options: dict[str, Any] = {"printed": PRINT, "diameter": 12.5, "depth": 3.0, **given}
+    return hole(block, at, on=on, label="magnet", **options)
+
+
+def _made(tool: Solid) -> Node:
+    """What a tool was made as, under the move that reads it back as a cavity."""
+    node = tool.node
+    while isinstance(node, Moved):
+        node = node.node
+    return node
+
+
+def test_a_pocket_opening_downward_ends_in_a_cone_without_being_asked() -> None:
+    """The pocket-end rule, through the verb: the part prints standing on its underside,
+    the pocket opens there, so its end would be a ceiling - it is carried on as a cone, the
+    full diameter still reaching exactly the depth asked."""
+    tool = _tool(_magnet("bottom"), "magnet")
+    assert isinstance(_made(tool), Revolve)
+    r = (12.5 + PLA.hole_compensation) / 2
+    box = bounds(tool)
+    assert box.z1 == pytest.approx(3.0 + r / math.tan(PLA.max_overhang)), "a point, r on"
+    assert box.x1 - box.x0 == pytest.approx(2 * r)
+    assert Ref("magnet/side-0") in refs(_magnet("bottom"))
+    assert Ref("magnet/side-cone") in refs(_magnet("bottom"))
+
+
+def test_a_pocket_opening_upward_is_the_same_flat_bore_it_always_was() -> None:
+    """Standing on its floor it needs nothing: ``AUTO`` gives exactly the bore ``FLAT`` does,
+    an extrusion to the depth asked."""
+    assert _magnet("top") == _magnet("top", end=End.FLAT)
+    tool = _tool(_magnet("top"), "magnet")
+    assert isinstance(_made(tool), Extrude)
+    assert bounds(tool).z0 == pytest.approx(17.0)
+
+
+def test_a_pocket_kept_flat_or_with_no_way_up_is_not_coned() -> None:
+    """``End.FLAT`` is the caller's word, and a body with no orientation - ``top`` said for
+    itself - keeps the flat end every bore had before."""
+    flat = _tool(_magnet("bottom", end=End.FLAT), "magnet")
+    assert isinstance(_made(flat), Extrude)
+    unoriented = _tool(_magnet("bottom", printed=None, top=Top.ROUND), "magnet")
+    assert isinstance(_made(unoriented), Extrude)
+
+
+def test_a_coned_end_is_refused_where_there_is_no_round_blind_end_to_cone() -> None:
+    """A face is cut through, a through bore has no end, a profile or a teardrop is not
+    round, a cone is cut at the material's own angle, and a bore leaning as far as the
+    material holds has no cone left - each refused by name."""
+    box = open_box(w=120, d=80, h=50, t=3, finger=12.0)
+    with pytest.raises(ValueError, match="a coned end describes a bore"):
+        hole(box.side_left, Point(40, 25), diameter=20.0, end=End.CONE, label="hole")
+    with pytest.raises(ValueError, match="through bore has no end"):
+        _magnet("bottom", depth=None, end=End.CONE)
+    with pytest.raises(ValueError, match="no round top or end"):
+        _magnet("bottom", diameter=None, profile=d_bore(5.0, 2.0), end=End.CONE)
+    with pytest.raises(ValueError, match="give printed="):
+        _magnet("bottom", printed=None, top=Top.ROUND, end=End.CONE)
+    with pytest.raises(ValueError, match="a teardrop bore is not"):
+        _magnet("bottom", top=Top.TEARDROP, end=End.CONE)
+    block = cuboid(40, 40, 20)
+    front = plane_of(block, "side-front")
+    with pytest.raises(ValueError, match="has no cone PLA holds up"):
+        hole(
+            block,
+            Point(20, 10),
+            on=front,
+            diameter=6.0,
+            depth=3.0,
+            top=Top.ROUND,
+            end=End.CONE,
+            printed=PRINT,
+            label="pin",
+        )
+    with pytest.raises(ValueError, match="out through the far side"):
+        _magnet("bottom", depth=15.0)
 
 
 def test_a_hole_returns_the_kind_of_shape_it_was_given() -> None:

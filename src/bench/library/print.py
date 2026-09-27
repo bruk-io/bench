@@ -25,8 +25,9 @@ The *records* it fills in - :class:`~bench.model.Material`, :class:`~bench.model
 :class:`~bench.model.Printed`, :class:`~bench.model.Volume` - live in :mod:`bench.model`,
 beside ``Stock``, because a :class:`~bench.model.Part` carries one and a check measures
 against another; and the printable-hole *geometry* -
-:class:`~bench.features.Top`, :func:`~bench.features.teardrop`,
+:class:`~bench.features.Top`, :class:`~bench.features.End`, :func:`~bench.features.teardrop`,
 :func:`~bench.features.bridge_steps`, :func:`~bench.features.printable_top`,
+:func:`~bench.features.printable_end`,
 :func:`~bench.features.foot_chamfer` - lives in
 :mod:`bench.features`, because :func:`~bench.features.hole` builds with it and the layer graph runs
 that way round. Both are imported back here so that a script reading the print domain has
@@ -45,7 +46,15 @@ from itertools import pairwise
 from typing import Literal
 
 from ..fasteners import Fit
-from ..features import Top, bridge_steps, foot_chamfer, printable_top, teardrop
+from ..features import (
+    End,
+    Top,
+    bridge_steps,
+    foot_chamfer,
+    printable_end,
+    printable_top,
+    teardrop,
+)
 from ..geometry import TOL, Vector
 from ..model import Material, Orient, Printed, Volume
 from ..ops import offset
@@ -58,6 +67,7 @@ __all__ = [
     "H2D",
     "PETG",
     "PLA",
+    "End",
     "Material",
     "Orient",
     "Printed",
@@ -67,6 +77,7 @@ __all__ = [
     "clearance",
     "eased",
     "foot_chamfer",
+    "printable_end",
     "printable_top",
     "rim",
     "teardrop",
