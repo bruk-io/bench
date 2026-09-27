@@ -97,7 +97,7 @@ and says in its own text what it could not do and why.
 | `fulcrum_hinge.py` | one stack of the rolling hinge in US 10,114,424, posed | a planar linkage swept along its axis, a D passageway cut by hand beside a round one from `hole`, every dimension recorded as the script's own, a pose driven in the patent's order and measured pair by pair with `min_gap`, the whole travel sampled at twenty-one deployments with `check_clearance_through`, and a docstring that says what a static model cannot prove |
 | `wall_vent.py` | a wall vent frame and the attachment that fits over its collar | `mated`: the attachment drawn where it prints, put on the flange by its back face, the contact measured by the call that made it, and the groove round the collar checked with `check_fit` against the slide the table asks |
 | `jar_lid.py` | a jar and the lid that screws onto it | `thread(...)`: a twisted extrusion of an offset circle, the lid's thread opened by `Fit.CLEARANCE` and grown by PLA's hole compensation, the gap measured with `check_clearance` on the bodies, and a helical flank that is one face, `jar/neck/side-0` |
-| `dust_line.py` | a dust collector's branch line: wye, coupler, reducer, elbow and a hood | `library/ducts`: sizes from a table that says which side each is measured on and where the number comes from, every fitting checked for overhangs and walls standing the way it prints, and a coupler slid onto the wye with `check_clearance_through` at the slide the table asks |
+| `dust_line.py` | a dust collector's branch line: wye, coupler, reducer, elbow and a hood | `library/ducts`: sizes from a table that says which side each is measured on and where the number comes from, knobs typed `ducts.SizeName`, every fitting put on the line by `ducts.place` and checked for overhangs and walls where it is, still standing the way it prints, and a coupler slid onto the wye's tap with `check_clearance_through` at the slide the table asks |
 
 ## Layers
 
@@ -381,7 +381,7 @@ and says in its own text what it could not do and why.
   `Size` (name, which `Side` the nominal measures - inside or outside - the diameter, and its
   `source`, or `estimate=True` where no page gave the number) and a table of them (`HOSE_4`,
   `PORT_4`, `HOSE_2_5`, `PORT_2_5`, `VAC_1_25`, `VAC_2_5`, `DUCT_4`, `DUCT_6`; `SIZES` by
-  name). `spigot_diameter` and `socket_diameter` put the fit table's gap on exactly one side
+  name, and `SizeName` the `Literal` of those names a knob is typed with). `spigot_diameter` and `socket_diameter` put the fit table's gap on exactly one side
   of a joint, the one the size is not measured on, so `spigot(s)` slides into `socket(s)` at
   the slide either way. The fittings - `spigot`, `socket`, `coupler`, `reducer`, `elbow`,
   `branch`, `square_to_round` - are plain functions returning a `Solid` drawn standing on
@@ -389,7 +389,13 @@ and says in its own text what it could not do and why.
   `shell`, the elbow its wall's ring swept round a `path`, and every change of diameter a
   cone no steeper than the plastic holds up. An elbow or a branch turns as far as asked;
   past `max_overhang` `check_overhangs` flags it, and it prints best as two fittings and a
-  `coupler`.
+  `coupler`. `square_to_round` takes `corner=0` for a sharp opening. `place(fitting, end,
+  at=, toward=, across=)` puts a fitting (or a `Part`, its way up turned with it) by an
+  `End` - `start`, `end` or a branch's `tap` - on a point facing a way, and `end_of` reads
+  where an end is. A port that has to lie on its side is `keyed_socket`, the hole cut
+  lying in the body it leaves with teardrop bores, and `keyed_spigot`, printed standing and
+  glued in; a spigot printed lying down is not drawn, because its outside - what a hose
+  seals on - leans 87 degrees underneath, measured.
 - `library/gridfinity3d.py` - the printed Gridfinity bin: a frozen `Spec` (units, a height
   that is a union of the four things "how tall" means, wall, floor, divisions, scoop, label
   tab, magnets, screws and the `Fit` it stacks at), `derive()` for the millimetres,

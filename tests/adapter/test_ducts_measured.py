@@ -11,7 +11,11 @@ comes back is checked here against the fit table and arithmetic done by hand:
   slide and no more than a chord's sag over it, and they share nothing;
 * **a socket is as deep and as wide as it was asked** - read off the triangles its bore's
   name is on;
-* **an elbow is the ring swept round its path** - Pappus's volume, to the chords.
+* **an elbow is the ring swept round its path** - Pappus's volume, to the chords;
+* **a port that has to lie on its side is two parts** - a spigot printed lying down leans 87
+  degrees in its bore and again on its outside, which is what a hose seals on; a keyed socket
+  lying in a block leans nothing past the plastic where round bores lean 87, and the keyed
+  spigot, standing, goes into it at the slide by the same ``place``.
 """
 
 import math
@@ -63,6 +67,10 @@ _FITTINGS = (
     "branch_smaller_tap",
     "square_to_round",
     "square_to_round_narrow",
+    "square_to_round_sharp",
+    "square_to_round_sharp_square",
+    "keyed_spigot",
+    "keyed_spigot_small",
 )
 
 
@@ -168,3 +176,49 @@ def test_an_elbow_is_its_ring_swept_round_its_path(measured: dict[str, Any]) -> 
     ring = _polygon_area(outside) - _polygon_area(outside - ducts.WALL)
     pappus = ring * (2 * leg + radius * math.radians(turn))
     assert pappus * (1 - 1e-3) < measured["elbow"] < pappus
+
+
+# ---- a port that lies on its side --------------------------------------------------------
+
+
+def _leans(said: list[Any]) -> int:
+    """How many degrees an overhang finding says its face leans."""
+    return int(said[0].split("leans ")[1].split(" degrees")[0])
+
+
+def test_a_spigot_printed_lying_down_leans_past_the_plastic_inside_and_out(
+    measured: dict[str, Any],
+) -> None:
+    """Why ``ducts`` draws no spigot to print on its side: lying down, the crown of its bore
+    is a ceiling over nothing, and with the bore taken away the underside of its outside
+    still is - the face a hose seals on, which no teardrop or chamfer can take the place of.
+    Both lean far past PLA's 45."""
+    lying = measured["lying"]
+    assert _leans(lying["spigot"]) > 80
+    assert lying["spigot"][1] == ["inside/side-spigot"]
+    assert _leans(lying["outside"]) > 80
+    assert lying["outside"][1] == ["outside/side-0"]
+
+
+def test_a_keyed_socket_lying_in_a_block_prints_where_round_bores_do_not(
+    measured: dict[str, Any],
+) -> None:
+    """The same block, printing up ``+Z``, with the port's socket and inlet cut lying along
+    ``Y``: pointed up by ``place``'s ``across``, nothing leans past 45 and no wall is thin;
+    round, the socket's crown leans 87 degrees."""
+    keyed, round_ = measured["lying"]["keyed_host"], measured["lying"]["round_host"]
+    assert keyed == {"overhangs": None, "wall": None}
+    assert _leans(round_["overhangs"]) > 80
+    assert round_["overhangs"][1] == ["port/socket/side-0"]
+
+
+def test_a_keyed_spigot_goes_into_its_socket_at_the_slide_by_the_same_place(
+    measured: dict[str, Any],
+) -> None:
+    """Put by the same ``place`` as the socket - ``at`` its floor and a stand-off, ``toward``
+    into the block, ``across`` up - the key sits in the socket's point the slide off it all
+    round, and the two share nothing."""
+    lying = measured["lying"]
+    slide = clearance(Fit.SLIDE, PLA)
+    assert slide - _TINY <= lying["gap"] <= clearance(Fit.SLIDE, PLA, concave=True) + _TINY
+    assert lying["shared"] == pytest.approx(0.0, abs=1e-6)

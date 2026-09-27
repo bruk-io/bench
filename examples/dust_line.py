@@ -6,19 +6,22 @@ over, a hopper leaning 45 degrees into a round port - is one call each here, siz
 table of real hoses and ports rather than a knob in inches. `port-4` is a 4 inch fitting's
 port, sold by its outside, so the wye's spigots are drawn at 4 inches and the coupler's
 sockets a slide wider; pick `hose-4` instead and the spigots come out a slide under the
-hose's inside. Which side a size is measured on is the table's, not the script's.
+hose's inside. Which side a size is measured on is the table's, not the script's, and so is
+the menu of sizes: a knob typed `ducts.SizeName` offers every one.
 
-Every fitting is drawn standing on its start the way it prints (`ducts.UPRIGHT`), and each
-one's overhangs and walls are checked there. The elbow's turn stops at 45 degrees, what PLA
-holds up; `ducts.elbow` draws any turn, and past that the overhang check says so. The fit test slides the coupler down onto the
-wye's outlet, the way it goes on, and stops a millimetre short of the socket's stop - past
-that the spigot's end meets the stop, which is where it is meant to be and is a seat, not a
-fit.
+Every fitting is drawn standing on its start the way it prints (`ducts.UPRIGHT`), and
+`ducts.place` puts each one on the line by an end - onto the wye's tap, into the socket
+before it - turning it with the way it prints, so each is checked for overhangs and walls
+where it is shown and still standing as it prints. Two couplers of the tool's size join the
+spigots the reducer, the elbow and the hood end in. The elbow's turn stops at 45 degrees,
+what PLA holds up; `ducts.elbow` draws any turn, and past that the overhang check says so.
+Every spigot goes into its socket to a millimetre short of the stop - past that the spigot's
+end meets the stop, which is where it is meant to be and is a seat, not a fit - and the fit
+test slides the first coupler down the wye's tap to there.
 """
 
 import math
 from dataclasses import dataclass
-from typing import Literal
 
 from bench import *
 from bench.library import ducts
@@ -28,17 +31,15 @@ stock = Printed(PLA, ducts.UPRIGHT)  # every fitting stands on its start, rising
 
 slide = clearance(Fit.SLIDE, PLA)
 
-Named = Literal[
-    "hose-4", "port-4", "hose-2.5", "port-2.5", "vac-1.25", "vac-2.5", "duct-4", "duct-6"
-]
+seat = ducts.SOCKET_DEPTH - 1.0  # how far each spigot goes into its socket
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Line:
     """The two sizes the line joins, the elbow's turn, the hood's opening, and the fit test."""
 
-    main: Named = knob("port-4", label="Main line")
-    drop: Named = knob("port-2.5", label="Drop to the tool")
+    main: ducts.SizeName = knob("port-4", label="Main line")
+    drop: ducts.SizeName = knob("port-2.5", label="Drop to the tool")
     turn: float = knob(45.0, min=10.0, max=45.0, step=5.0, label="Elbow turn (degrees)")
     hood_w: float = knob(120.0, min=60.0, max=200.0, step=5.0, label="Hood opening width")
     hood_d: float = knob(50.0, min=30.0, max=120.0, step=5.0, label="Hood opening depth")
@@ -46,44 +47,48 @@ class Line:
     samples: int = knob(5, min=3, max=21, step=2, label="Fit test poses")
 
 
+def joined(name: str, body: Solid, onto: Plane, end: ducts.End = "start") -> Part:
+    """``body``'s ``end`` put ``seat`` into the opening ``onto`` - a socket over a spigot, or a
+    spigot into a socket - facing back along it."""
+    at = onto.origin - onto.normal * seat
+    return ducts.place(part(name, body, stock), end, at=at, toward=-onto.normal)
+
+
 def build(p: Line) -> Assembly:
     main, drop = ducts.SIZES[p.main], ducts.SIZES[p.drop]
-    wye = ducts.branch(main, wall=p.wall)
-    coupler = ducts.coupler(main, wall=p.wall)
-    reducer = ducts.reducer(main, drop, wall=p.wall)
-    elbow = ducts.elbow(drop, math.radians(p.turn), wall=p.wall)
-    hood = ducts.square_to_round(p.hood_w, p.hood_d, drop, wall=p.wall)
-
-    fittings = (
-        ("wye", wye),
-        ("coupler", coupler),
-        ("reducer", reducer),
-        ("elbow", elbow),
-        ("hood", hood),
+    wye = part("wye", ducts.branch(main, wall=p.wall), stock)
+    tap = ducts.end_of(wye.shape, "tap")
+    coupler_body = ducts.coupler(main, wall=p.wall)
+    coupler = joined("coupler", coupler_body, tap)
+    reducer = joined("reducer", ducts.reducer(main, drop, wall=p.wall), ducts.end_of(coupler.shape))
+    sleeve = ducts.coupler(drop, wall=p.wall)
+    lower = joined("coupler-2", sleeve, ducts.end_of(reducer.shape))
+    elbow = joined(
+        "elbow", ducts.elbow(drop, math.radians(p.turn), wall=p.wall), ducts.end_of(lower.shape)
     )
-    for _, body in fittings:
-        require(check_fits(body, H2D))
-        check_overhangs(body, stock.orient, PLA)
-        check_wall(body, PLA.min_wall)
+    upper = joined("coupler-3", sleeve, ducts.end_of(elbow.shape))
+    hood = joined(
+        "hood",
+        ducts.square_to_round(p.hood_w, p.hood_d, drop, wall=p.wall),
+        ducts.end_of(upper.shape),
+        "end",
+    )
 
-    # The coupler slid down onto the wye's outlet: well clear above it at 0, and at 1 with
-    # the outlet's end a millimetre short of the socket's stop.
-    outlet = bounds(wye).z1
-    home = outlet + 1.0 - ducts.SOCKET_DEPTH
+    fittings = (wye, coupler, reducer, lower, elbow, upper, hood)
+    for one in fittings:
+        require(check_fits(one, H2D))
+        check_overhangs(one.shape, one.stock.orient, PLA)
+        check_wall(one.shape, PLA.min_wall)
 
+    # The coupler slid down the wye's tap: well clear of it at 0, and at 1 where it is seated.
     def slid(t: float) -> Assembly:
-        at = home + (1.0 - t) * (ducts.SOCKET_DEPTH + 5.0)
+        off = (1.0 - t) * (ducts.SOCKET_DEPTH + 5.0)
+        on = Plane(tap.origin + tap.normal * off, tap.normal, tap.x_dir)
         return assembly(
-            "slid",
-            (
-                Placed(part("wye", wye, stock), XY),
-                Placed(part("coupler", move(coupler, Vector(0.0, 0.0, at)), stock), XY),
-            ),
-            posed=True,
+            "slid", (Placed(wye, XY), Placed(joined("coupler", coupler_body, on), XY)), posed=True
         )
 
-    seated = move(coupler, Vector(0.0, 0.0, home))
-    print(f"coupler round the wye's outlet: {check_fit(seated, wye, Fit.SLIDE, PLA)}")
+    print(f"coupler round the wye's tap: {check_fit(coupler.shape, wye.shape, Fit.SLIDE, PLA)}")
     print(
         f"sliding the coupler on: {check_clearance_through(slid, slide * 0.99, samples=p.samples)}"
     )
@@ -97,7 +102,7 @@ def build(p: Line) -> Assembly:
     for size in (main, drop):
         if size.estimate:
             print(f"{size.name}: {size.source}")
-    return assembly("line", tuple(Placed(part(name, body, stock), XY) for name, body in fittings))
+    return assembly("line", tuple(Placed(one, XY) for one in fittings), posed=True)
 
 
 show(build)

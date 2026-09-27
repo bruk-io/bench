@@ -7,7 +7,8 @@ for each hose and duct a print has to match, and the fittings between them - a
 bodies subtracted wherever one body can be: a straight fitting is an outline turned about its
 axis and hollowed with :func:`~bench.shell.shell`, an elbow the wall's own ring carried round
 a :func:`~bench.sweep.path`. The branch and the square-to-round are two and three pieces, and
-say why they are cut instead.
+say why they are cut instead. A port that has to lie on its side is a :func:`keyed_socket`
+and a :func:`keyed_spigot`, and :func:`place` puts any of them where it goes by an end.
 
 **Where pieces join they overlap, and a hollow is one body cut once or a ring swept whole.**
 When this was written, two solids set face to face could stay two on the modeller the app
@@ -828,8 +829,9 @@ def _turned(runs: tuple[_Run, ...], wall: float, material: Material) -> Solid:
     Every edge of the outline is named, so every face is: a run's outside is
     ``side-<name>``, a cone's ``side-<below>-<above>``, the two ends ``side-start`` and
     ``side-end``, and the bore under each ``inside/side-...`` of the same. A revolve's faces
-    have no one plane, so none of these takes a mate by name: a turned fitting is placed on
-    its axis, coaxial with what it joins, the way ``dust_line.py`` slides its coupler on.
+    have no one plane, so none of these takes a mate by name: a turned fitting is put by its
+    ends with :func:`place`, which finds them on its axis, the way ``dust_line.py`` puts its
+    couplers on.
     """
     run_of_cone = math.tan(material.max_overhang)
     corners: list[tuple[float, float, str]] = [(0.0, 0.0, "start")]
