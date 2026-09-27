@@ -195,6 +195,35 @@ def test_a_check_that_needs_a_kernel_answers_unchecked_rather_than_passing() -> 
         assert one is not None and "no kernel in this run" in one.message
 
 
+def test_the_print_checks_take_a_printed_part_and_ask_nothing_more() -> None:
+    """task-81: a ``Part`` on ``Printed`` stock already says which way up and in what, so
+    ``overhangs`` needs no ``orient`` or ``material`` beside it, and ``wall`` takes the part
+    as it takes the solid - the same thing handed to every print check, as ``fits`` already
+    is. No kernel here, so each answers ``UNCHECKED`` rather than refusing."""
+    printed = part("block", cuboid(10, 10, 10), Printed(PLA, Orient(up=Y)))
+    for one in (overhangs(printed, kernel=None), wall(printed, 1.2, kernel=None)):
+        assert one is not None and one.severity is Severity.UNCHECKED
+
+
+def test_a_body_nothing_says_the_printing_of_is_refused_before_any_kernel() -> None:
+    """task-81 AC#2: a bare solid still says both itself - there is no way up to guess, and
+    a check that guessed ``+Z`` would pass a part printed on its side. Refused with no kernel
+    at all, so the browser before its modeller loads refuses the same script the desk does.
+    A part on sheet stock has no way up either, and a flat part has no body to measure."""
+    block = cuboid(10, 10, 10)
+    with pytest.raises(ValueError, match="say orient and material"):
+        overhangs(block, kernel=None)
+    with pytest.raises(ValueError, match="say material"):
+        overhangs(block, Orient(), kernel=None)
+    with pytest.raises(ValueError, match="say orient and material"):
+        overhangs(part("panel", block, Stock(3.0, "ply")), kernel=None)
+    flat = part("panel", fill(rect(10, 10)), Stock(3.0, "ply"))
+    with pytest.raises(ValueError, match="panel is a flat face"):
+        overhangs(flat, Orient(), PLA, kernel=None)
+    with pytest.raises(ValueError, match="panel is a flat face"):
+        wall(flat, 1.2, kernel=None)
+
+
 def test_a_violation_is_a_plain_frozen_record() -> None:
     """Refs and a line, both optional: the line is filled in at the edge by the closure
     :mod:`bench.script` injects, because only the edge knows whose stack it is."""
