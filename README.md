@@ -151,15 +151,18 @@ and says in its own text what it could not do and why.
   written on a kernel that cannot sweep - and `pattern(shape, count, step)` takes a `Turn` as
   readily as a vector, while `grid` numbers a rectangular array in one flat run.
   `hole(subject, at, *, on, screw | insert | diameter, fit, depth,
-  countersink, counterbore, angle, top, printed, label)` is one verb over the `Face | Solid`
-  union - a circle in a flat part, a bore in a body - and `Top`, `teardrop`, `bridge_steps`,
-  `printable_top` and `foot_chamfer` are the printable-hole geometry it builds with.
+  countersink, counterbore, angle, top, end, printed, label)` is one verb over the
+  `Face | Solid` union - a circle in a flat part, a bore in a body - and `Top`, `End`,
+  `teardrop`, `bridge_steps`, `printable_top`, `printable_end` and `foot_chamfer` are the
+  printable-hole geometry it builds with.
 - `shell.py` - a body hollowed to a wall. `shell(body, wall, *, open, inside, label)` makes an
   extrusion, a revolve or a two-profile loft again from its profile inset by `wall` and cuts
   that out under `inside`, so the inner faces are named (`inside/bottom`, `inside/side-...`)
   and face into the hollow; a face named in `open` is cut through instead of walled. No kernel
   offsets a surface here: a loft's wall is measured level with its profiles, so a side leaning
-  `a` is `wall * cos(a)` through, and `wall()` is what measures it.
+  `a` is `wall * cos(a)` through, and `wall()` is what measures it. A union of sweeps set end
+  to end - an elbow and the spigot swept on from its `end` - is hollowed as one run, its
+  cavity one sweep along every piece's path, so no join is left inside it to misread.
 - `sweep.py` - a profile carried along a path. `path(start, heading, *legs)` writes the route
   as `Straight(length)` and `Bend(radius, angle, toward)` legs - an elbow, an S-bend, an
   offset - and `sweep(profile, along)` carries the profile along it without twisting, its

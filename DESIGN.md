@@ -406,11 +406,20 @@ Printable-hole geometry is in `features.py`, because `hole` builds with it:
   `bridge_max` a bridged top is available to a hole that has to stay round, and past that
   only a teardrop will do. `Top.AUTO` with no orientation raises **"this part has no print
   orientation, so top=Top.AUTO cannot tell which way is up"**.
+- `End` is `AUTO | FLAT | CONE` and `printable_end(end, *, mouth, blind, printed)` is the
+  same rule for a blind bore's far end (task-82). A pocket standing within 30 degrees of
+  `up` whose mouth faces down - a magnet seat in a part printed on its face - has a ceiling
+  for an end, so `AUTO` carries it on past `depth` as a cone at the material's
+  `max_overhang` less the bore's own lean: the full diameter still reaches exactly `depth`,
+  and what sits in the pocket seats there on the ring where the cone begins. Everything else
+  is `FLAT`, and with no orientation `AUTO` is `FLAT` rather than a refusal, since `Top`
+  has already asked. The cone is one revolve with the bore, never a cone unioned onto a
+  cylinder, which would leave a hair of flat ceiling where the two meet.
 
 ```python
 hole(subject: Shape, at, *, on=XY, screw=None, diameter=None, insert=None,
      fit=Fit.CLEARANCE, depth=None, countersink=False, counterbore=False,
-     angle=None, top=Top.AUTO, printed=None, label) -> Shape
+     angle=None, top=Top.AUTO, end=End.AUTO, printed=None, label) -> Shape
 ```
 
 One verb over the closed union, a `match` ending in `assert_never`, and the subject's own

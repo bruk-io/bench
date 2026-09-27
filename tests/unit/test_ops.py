@@ -11,8 +11,10 @@ from bench import (
     Circle,
     Curve,
     Edge,
+    End,
     Label,
     Line,
+    Orient,
     Plane,
     Point,
     Printed,
@@ -66,6 +68,7 @@ from bench import (
     plane_of,
     pocket,
     polygon,
+    printable_end,
     printable_top,
     profile_rings,
     raised,
@@ -1019,6 +1022,31 @@ def test_the_horizontal_hole_rule_leaves_a_told_top_alone() -> None:
     second-guessed even where the rule would have chosen differently."""
     for told in (Top.ROUND, Top.TEARDROP, Top.BRIDGE):
         assert printable_top(told, axis=X, diameter=20.0, printed=None) is told
+
+
+def test_the_pocket_end_rule_cones_a_blind_bore_whose_mouth_faces_down() -> None:
+    """``mouth`` is the normal of the face drilled into: a blind bore opening downward
+    stands its end overhead and gets a cone; opening upward it stands on its floor, lying on
+    its side it is the top rule's, and through it has no end at all."""
+    pla = Printed(PLA)
+    assert printable_end(End.AUTO, mouth=-Z, blind=True, printed=pla) is End.CONE
+    assert printable_end(End.AUTO, mouth=Z, blind=True, printed=pla) is End.FLAT
+    assert printable_end(End.AUTO, mouth=X, blind=True, printed=pla) is End.FLAT
+    assert printable_end(End.AUTO, mouth=-Z, blind=False, printed=pla) is End.FLAT
+    leaning = Vector(math.sin(math.radians(20.0)), 0.0, -math.cos(math.radians(20.0)))
+    assert printable_end(End.AUTO, mouth=leaning, blind=True, printed=pla) is End.CONE
+    # the way up is the part's, not the world's: a lid printed face down turns it over
+    over = Printed(PLA, Orient(up=-Z))
+    assert printable_end(End.AUTO, mouth=Z, blind=True, printed=over) is End.CONE
+    assert printable_end(End.AUTO, mouth=-Z, blind=True, printed=over) is End.FLAT
+
+
+def test_the_pocket_end_rule_leaves_a_told_end_alone_and_guesses_flat_without_a_way_up() -> None:
+    """Only ``AUTO`` is a rule, and with nothing to read it keeps the flat end every bore
+    had before the rule - the top rule has already asked for ``printed=`` if it cared."""
+    for told in (End.FLAT, End.CONE):
+        assert printable_end(told, mouth=Z, blind=False, printed=None) is told
+    assert printable_end(End.AUTO, mouth=-Z, blind=True, printed=None) is End.FLAT
 
 
 def test_auto_on_a_part_with_no_orientation_says_so() -> None:

@@ -14,13 +14,17 @@ from bench import (
     ORIGIN,
     XY,
     Axis,
+    Bend,
     Plane,
     Point,
     Printed,
     Solid,
+    Straight,
     Thread,
     Vector,
+    X,
     Y,
+    Z,
     bounds,
     circle,
     cuboid,
@@ -32,18 +36,20 @@ from bench import (
     move,
     near,
     part,
+    path,
     plane_of,
     raised,
     rect,
     refs,
     revolve,
     shell,
+    sweep,
     thread,
     union,
 )
 from bench.library.print import PLA
 from bench.shell import PAST
-from bench.topology import Difference, Moved, Revolve, curve_start
+from bench.topology import Difference, Moved, Revolve, Swept, curve_start
 
 pytestmark = pytest.mark.functional
 
@@ -195,6 +201,64 @@ def test_a_loft_open_at_both_ends_is_its_two_profiles_inset_and_run_past_each_en
     assert cavity.x1 == pytest.approx(28.0)
 
 
+# ---- a run swept in pieces ----------------------------------------------------------------
+
+
+def _elbow_and_spigot(radius: float = 20.0, spigot: float = 20.0) -> tuple[Solid, Solid]:
+    """An elbow turned 30 degrees and a spigot of ``spigot`` radius swept on from its end."""
+    elbow = sweep(
+        fill(circle(radius)),
+        path(ORIGIN, Z, Straight(20.0), Bend(60.0, math.radians(30.0), X)),
+    )
+    end = plane_of(elbow, "end")
+    tail = sweep(
+        fill(circle(spigot), on=end), path(end.origin, end.normal, Straight(30.0)), label="spigot"
+    )
+    return elbow, tail
+
+
+def test_a_run_swept_in_pieces_is_hollowed_as_one_sweep_along_both_paths() -> None:
+    """The cavity is the first profile, inset, swept once along the elbow's path and the
+    spigot's joined - so there is no join inside it - and run on past both open ends."""
+    elbow, tail = _elbow_and_spigot()
+    hollow = shell(union(elbow, tail), 2.0, open=("start", "spigot/end"))
+    cavity = _cavity(hollow)
+    assert isinstance(cavity.node, Swept)
+    assert len(cavity.node.path.edges) == 3, "the elbow's straight and bend, and the spigot's"
+    found = refs(hollow)
+    assert "inside/side-0" in {str(r) for r in found}
+    assert "spigot/start" in {str(r) for r in found}, "the pieces keep their own faces"
+
+
+def test_a_run_swept_in_pieces_opens_only_at_its_two_ends() -> None:
+    """A join is no face of the hollowed body: naming one is refused, and the refusal names
+    the two ends the run does have, each under its own piece's label."""
+    elbow, tail = _elbow_and_spigot()
+    with pytest.raises(ValueError, match="it opens at spigot/end, start"):
+        shell(union(elbow, tail), 2.0, open=("start", "end"))
+
+
+def test_a_run_whose_pieces_do_not_carry_on_from_each_other_is_refused() -> None:
+    """A spigot narrower than the elbow, or one set off somewhere else, is not the same
+    sweep carried on, and a cavity swept from the first profile would not fit it."""
+    elbow, narrow = _elbow_and_spigot(spigot=15.0)
+    with pytest.raises(ValueError, match="spigot does not"):
+        shell(union(elbow, narrow), 2.0, open=("start", "spigot/end"))
+    elbow, tail = _elbow_and_spigot()
+    with pytest.raises(ValueError, match="spigot does not"):
+        shell(union(elbow, move(tail, Vector(0.0, 1.0, 0.0))), 2.0)
+
+
+def test_a_run_swept_in_pieces_is_hollowed_where_it_was_moved() -> None:
+    """Moves above the union and above a piece are carried with it: the whole run moved is
+    the same run, and hollowed there."""
+    elbow, tail = _elbow_and_spigot()
+    moved_run = move(union(elbow, tail), Vector(5.0, 0.0, 0.0))
+    here = bounds(_cavity(shell(union(elbow, tail), 2.0)))
+    there = bounds(_cavity(shell(moved_run, 2.0)))
+    assert there.x0 == pytest.approx(here.x0 + 5.0)
+
+
 # ---- what is refused -----------------------------------------------------------------------
 
 
@@ -205,6 +269,7 @@ def test_a_shell_needs_a_wall(wall: float) -> None:
 
 
 def test_a_body_with_no_one_recipe_is_refused() -> None:
+    """A union is hollowed only as a run of sweeps set end to end; boxes are not one."""
     with pytest.raises(ValueError, match="union"):
         shell(union(cuboid(10, 10, 10), cuboid(5, 5, 20, label="post")), 1.0)
 
