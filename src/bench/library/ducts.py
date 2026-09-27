@@ -631,10 +631,11 @@ def keyed_spigot(
     ``+X``, and the rest is the round spigot a hose slips over.
 
     **A port that has to lie on its side is two parts, and this is the one that prints
-    upright.** A spigot printed lying down is refused rather than drawn: its bore's crown is
-    a ceiling over nothing, and so is the underside of its outside, all the way down to the
-    bed - both lean 90 degrees, measured (``tests/adapter/test_ducts_measured.py``). A
-    teardrop bore fixes the first and not the second, and the second is the face a hose seals
+    upright.** There is no spigot here to print lying down, and on purpose: its bore's crown
+    is a ceiling over nothing, and so is the underside of its outside, all the way down to
+    the bed - both lean 87 degrees on the modeller the app ships, measured
+    (``tests/adapter/test_ducts_measured.py``). A teardrop bore fixes the first and not the
+    second, and the second is the face a hose seals
     on, so no chamfer or point under it can go round without leaking. The wall vent's
     manifold (``projects/vent``) found the way that does print: the port a part of its own,
     standing on its end, glued into a socket in the body it leaves - a socket that *can* be a
@@ -680,10 +681,12 @@ def keyed_socket(
 
     Drawn the way a spigot is, its start at the origin: the socket's floor, where the key
     stops, with the socket running up ``+Z`` to its mouth and the inlet down ``-Z``. So the
-    pair goes where it goes with one :func:`place` said twice - each by its start, ``at``
-    the stop, ``toward`` into the body, ``across`` the way the body prints upward. Each end
-    reaches a little past where it is asked to stop, so a cut through a wall that thick
-    leaves no skin.
+    pair goes where it goes with one :func:`place` said twice - each by its start,
+    ``toward`` into the body, ``across`` the way the body prints upward - the socket ``at``
+    its floor and the spigot a stand-off above it, its ``key`` that much shorter than
+    ``depth``: a spigot on the floor itself is a seat, not a fit, and the wall vent stands
+    its port off by twice the slide for the glue. Each end of the hole reaches a little past
+    where it is asked to stop, so a cut through a wall that thick leaves no skin.
 
     Raises:
         ValueError: if ``wall`` is under the material's minimum or eats the bore, or

@@ -357,16 +357,22 @@ def test_across_says_which_way_an_elbow_turns() -> None:
 
 
 def test_a_placed_part_still_prints_standing_on_its_start() -> None:
-    """A part's way up turns with it: a spigot laid along ``-X`` prints with ``+X`` up in the
-    place it now is, which is standing on its start as it was drawn."""
-    placed = ducts.place(
-        part("port", ducts.spigot(ducts.PORT_4), Printed(PLA, ducts.UPRIGHT)),
-        at=ORIGIN,
-        toward=X,
-    )
+    """A part's way up turns with it: a spigot whose start faces ``+X`` runs from there along
+    ``-X``, and prints with ``-X`` up - standing on its start as it was drawn. So does an
+    elbow put by its end facing any way at all: its start still faces straight down the way
+    it prints."""
+    stock = Printed(PLA, ducts.UPRIGHT)
+    placed = ducts.place(part("port", ducts.spigot(ducts.PORT_4), stock), at=ORIGIN, toward=X)
     assert isinstance(placed.stock, Printed)
     up = placed.stock.orient.up
     assert (up.x, up.y, up.z) == pytest.approx((-1.0, 0.0, 0.0))
+    elbow = ducts.elbow(ducts.PORT_2_5, math.radians(30.0))
+    turned = ducts.place(
+        part("elbow", elbow, stock), "end", at=Point(1.0, 2.0, 3.0), toward=Vector(1.0, -2.0, 0.5)
+    )
+    assert isinstance(turned.stock, Printed) and isinstance(turned.shape, Solid)
+    up, start = turned.stock.orient.up, ducts.end_of(turned.shape, "start").normal
+    assert (up.x, up.y, up.z) == pytest.approx((-start.x, -start.y, -start.z))
 
 
 def test_a_placement_that_cannot_be_is_refused() -> None:

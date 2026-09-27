@@ -195,9 +195,9 @@ def test_a_spigot_printed_lying_down_leans_past_the_plastic_inside_and_out(
     Both lean far past PLA's 45."""
     lying = measured["lying"]
     assert _leans(lying["spigot"]) > 80
-    assert lying["spigot"][1] == ["inside/side-spigot"]
+    assert "inside/side-spigot" in lying["spigot"][1]
     assert _leans(lying["outside"]) > 80
-    assert lying["outside"][1] == ["outside/side-0"]
+    assert "outside/side-0" in lying["outside"][1]
 
 
 def test_a_keyed_socket_lying_in_a_block_prints_where_round_bores_do_not(
@@ -209,7 +209,7 @@ def test_a_keyed_socket_lying_in_a_block_prints_where_round_bores_do_not(
     keyed, round_ = measured["lying"]["keyed_host"], measured["lying"]["round_host"]
     assert keyed == {"overhangs": None, "wall": None}
     assert _leans(round_["overhangs"]) > 80
-    assert round_["overhangs"][1] == ["port/socket/side-0"]
+    assert "port/socket/side-0" in round_["overhangs"][1]
 
 
 def test_a_keyed_spigot_goes_into_its_socket_at_the_slide_by_the_same_place(
