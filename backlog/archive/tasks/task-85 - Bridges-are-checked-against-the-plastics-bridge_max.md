@@ -4,6 +4,7 @@ title: Bridges are checked against the plastic's bridge_max
 status: To Do
 assignee: []
 created_date: '2026-09-27 19:19'
+updated_date: '2026-09-27 21:42'
 labels:
   - checks
 dependencies: []
@@ -22,3 +23,9 @@ Found by task-84 (PR #32): the systainer tote's four socket ceilings span 14.6 m
 - [ ] #2 A bridge within bridge_max is not an overhang finding; one past it is, naming its span and the limit
 - [ ] #3 The tote's socket ceilings either fit bridge_max or are reported
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-09-27: not doing. The owner judged bridge analysis too much for bench - it stays a slicer's concern. check_overhangs reports flat ceilings as 90 degree places, and a reader tells bridge from ledge.
+<!-- SECTION:NOTES:END -->
