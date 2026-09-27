@@ -25,19 +25,28 @@ of the lid below, and the front latch clamps both boxes at once - which is what 
 carry a whole stack by the top handle. There are no hooks here, so these totes stack but a
 stack is not one object. The latch lugs are the beginning of that story, not the end of it.
 
-`check_overhangs` reports eighteen places, in one warning, and every one of them is there.
-Six are bridges. The four socket ceilings are horizontal however far their walls are
-drafted, and a flat roof spanning a closed sixteen millimetre square is a bridge, which a
-slicer lays down without support; the tops of the two grip cut-outs are the same, 2.4 mm
-across. Twelve are not. The two latch lugs and the ten ribs hang off the outside of the
-wall with nothing under them - the lugs 12 mm out, the ribs 3 mm, starting at the floor's
-height rather than the bed's - and a slicer supports those or the first layer of each
-droops. They are left standing, and the check says so: it measures the angle a face leans
-rather than the distance it has to cross, which is the honest thing for it to measure and
-the reason the warning is worth reading rather than silencing. Until task-78 it named only
-the first ceiling it met, `socket-1`, and the lugs and ribs went unreported.
+`check_overhangs` reports six places, in one warning, and every one of them is a bridge:
+the four socket ceilings, horizontal however far their walls are drafted and 14.6 mm across
+at the default `boss` and `draft`, and the tops of the two grip cut-outs, 2.4 mm across.
+The socket ceilings are past PETG's own `bridge_max` of 8 mm (10 for PLA, 6 for ASA), so a
+slicer bridging one really does sag more than the table says it should - a real mismatch,
+not a rounding one, and left as a warning rather than papered over: the check measures the
+angle a face leans rather than the distance it has to cross, which is the honest thing for
+it to measure and the reason the warning is worth reading rather than silencing.
 `gridfinity_bin.py` reaches the same junction and declines the check outright; this one
 takes the warning instead.
+
+Before task-84 there were eighteen places, not six: the two latch lugs and the ten ribs hung
+off the outside of the wall with nothing under them - the lugs 12 mm out, the ribs 3 mm,
+starting at the floor's height rather than the bed's - and a slicer had to support those or
+the first layer of each drooped. A rib is already as wide as it needs to be, so it now
+simply starts at the bed instead of the floor: its underside is the first layer, which the
+check does not count as an overhang. A lug has to keep its full footprint to latch
+anything, so instead it stands on a `_gusset` - an extruded triangle, wall on one side and
+the lug's own footprint on the other, whose one exposed face leans exactly the material's
+`max_overhang` off vertical. Until task-78 the check named only the first ceiling it met,
+`socket-1`, and the lugs and ribs went unreported; task-84 is what fixed them once seeing
+them all made it worth doing.
 
 Everything is drawn corner-at-origin, the way `rect`, `rounded_rect` and `cuboid` all place
 themselves, so every offset in here is measured from the tub's own front-left-bottom corner
@@ -96,6 +105,25 @@ def _tapered(size: float, at: Point, z: float, height: float, draft: float, r: f
             on=raised(XY, z + height),
         ),
     )
+
+
+def _gusset(width: float, out: float, at: Point, top: float, lean: float) -> Solid:
+    """A wedge `width` mm wide along X, standing on the wall at `at.x, at.y` and closing
+    the gap under a ledge that steps `out` mm off it at `top`.
+
+    The wedge is a triangle - the wall's own face for one edge, the ledge's footprint for
+    another, and the third the only face left exposed - extruded along X, so its underside
+    leans exactly `lean` off vertical rather than the flat `out` mm the ledge would
+    otherwise hang unsupported. `lean` is the material's own `max_overhang`, not a number
+    typed here, so ASA's shallower limit gets a taller wedge than PETG's.
+    """
+    rise = abs(out) / math.tan(lean)
+    upright = plane(Point(at.x, at.y, 0.0), X, Y)
+    corner = Point(0.0, top - rise)
+    wall_top = Point(0.0, top)
+    tip = Point(out, top)
+    tri = polygon((corner, tip, wall_top) if out > 0 else (corner, wall_top, tip))
+    return extrude(fill(tri, on=upright), width)
 
 
 def build(p: Tote) -> Part:
@@ -190,6 +218,11 @@ def build(p: Tote) -> Part:
             tub = cut(tub, one, label=f"socket-{i + 1}")
 
     # ---- buttress ribs down the long walls -------------------------------------------
+    #
+    # Stood on the bed rather than on the floor (task-84): the honest fix, and the simpler
+    # one - a rib has no named face to keep, unlike a lug, so it can just run all the way
+    # down. Its underside is then the bed itself, and the check leaves out everything within
+    # one layer of the lowest point, so it needs no support to print.
 
     if p.ribs >= 1:
         span = p.w - 2 * p.radius - rib_w
@@ -199,8 +232,8 @@ def build(p: Tote) -> Part:
             rib = cuboid(
                 rib_w,
                 RIB_T,
-                p.h - p.floor - 10.0,
-                at=Point(start, y, p.floor),
+                p.h - 10.0,
+                at=Point(start, y, 0.0),
                 label=f"rib-{side}",
             )
             for one in pattern(rib, p.ribs, X * step):
@@ -220,16 +253,27 @@ def build(p: Tote) -> Part:
     # The bore leans 90 degrees off the build direction, so `Top.AUTO` with a `printed` in
     # hand cuts it as a teardrop: every surface of it is then within the material's overhang
     # angle, which is what `check_overhangs` measures.
+    #
+    # A lug hangs `LUG_D` mm off the wall with nothing under it (task-84), so it stands on a
+    # `_gusset` that closes that gap at the material's own `max_overhang` - the honest fix
+    # for a ledge that has to keep its full footprint, where a rib can just reach the bed
+    # instead.
 
-    for y, side, face_name in ((-LUG_D, "front", "side-front"), (p.d, "back", "side-back")):
+    lug_z = p.h - LUG_H - 8.0
+    for y, wall_y, side, face_name, out in (
+        (-LUG_D, 0.0, "front", "side-front", -LUG_D),
+        (p.d, p.d, "back", "side-back", LUG_D),
+    ):
         lug = cuboid(
             LUG_W,
             LUG_D,
             LUG_H,
-            at=Point((p.w - LUG_W) / 2, y, p.h - LUG_H - 8.0),
+            at=Point((p.w - LUG_W) / 2, y, lug_z),
             label=f"latch-{side}",
         )
         tub = union(tub, lug)
+        gusset = _gusset(LUG_W, out, Point((p.w - LUG_W) / 2, wall_y), lug_z, material.max_overhang)
+        tub = union(tub, name(gusset, f"gusset-{side}"))
         tub = hole(
             tub,
             Point(LUG_W / 2, LUG_H / 2),
