@@ -3,9 +3,10 @@ id: task-84
 title: >-
   The systainer tote's latch lugs and ribs hang off its walls with nothing under
   them
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-27 18:33'
+updated_date: '2026-09-27 19:19'
 labels:
   - examples
 milestone: m-12
@@ -21,7 +22,13 @@ Found by task-78 (PR #29): once check_overhangs reported every place, examples/s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Lugs and ribs print without support: no overhang past the limit on them, measured
-- [ ] #2 The tote still fits a Systainer as before (its fit tests pass)
-- [ ] #3 Docstring updated to what is true
+- [x] #1 Lugs and ribs print without support: no overhang past the limit on them, measured
+- [x] #2 The tote still fits a Systainer as before (its fit tests pass)
+- [x] #3 Docstring updated to what is true
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+PR #32. Latch lugs stand on a gusset whose face leans exactly material.max_overhang; ribs start on the bed. check_overhangs on the shipped kernel: 18 places -> 6 (four socket ceilings, two grip tops). No dedicated Systainer fit test exists; require(check_fits) and the examples-run-clean test pin it.
+<!-- SECTION:NOTES:END -->

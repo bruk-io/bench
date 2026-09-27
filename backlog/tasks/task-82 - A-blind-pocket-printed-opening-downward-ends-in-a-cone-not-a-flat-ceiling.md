@@ -1,10 +1,10 @@
 ---
 id: task-82
 title: 'A blind pocket printed opening downward ends in a cone, not a flat ceiling'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-26 16:34'
-updated_date: '2026-09-27 17:52'
+updated_date: '2026-09-27 19:07'
 labels:
   - features
 milestone: m-12
@@ -20,7 +20,13 @@ Found in the vent (2026-09-26): the adapter's 12.5 mm magnet pockets open downwa
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 hole()/pocket option gives an upright blind pocket a 45 degree (material max_overhang) cone end, keeping a stated seat depth and diameter
-- [ ] #2 Chosen automatically from printed= when the pocket's end faces down in print, as Top is for horizontal holes
-- [ ] #3 Measured on the shipped kernel: no overhang past the limit, seat at the asked depth
+- [x] #1 hole()/pocket option gives an upright blind pocket a 45 degree (material max_overhang) cone end, keeping a stated seat depth and diameter
+- [x] #2 Chosen automatically from printed= when the pocket's end faces down in print, as Top is for horizontal holes
+- [x] #3 Measured on the shipped kernel: no overhang past the limit, seat at the asked depth
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+PR #31. hole(..., end=End.CONE|AUTO): full diameter to depth, then a cone at max_overhang, built as one revolve. AUTO picks it from printed= when the mouth faces down within 30 degrees of the build direction. The seat is where the cut diameter ends (asked + hole compensation); the vent's hand-drawn cone seats at the magnet's own diameter - a seat= option would be needed to port it. A pocket leaning 30 degrees or more keeps a flat end (documented).
+<!-- SECTION:NOTES:END -->
