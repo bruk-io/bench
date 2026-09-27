@@ -445,8 +445,9 @@ fits(shape: Shape | Part, volume, orient=None) -> Violation | None
 clearance_between(a, b, least, *, kernel) -> Violation | None
 fit_between(a, b, fit: Fit | Contact, asked, *, kernel, pair: RoundPair | None = None) -> Fitted
                                              # measured beside asked; a pair: over its shared length
-wall(solid, least, *, kernel) -> Violation | None
-overhangs(solid, orient, material, *, kernel) -> Violation | None
+wall(shape: Solid | Part, least, *, kernel) -> Violation | None
+overhangs(shape: Solid | Part, orient=None, material=None, *, kernel) -> Violation | None
+                                             # every place past the limit, steepest first
 ```
 
 Pure functions that take the kernel as a **parameter**, exactly as `kernel.py` takes no
@@ -474,6 +475,26 @@ that runs by itself. `overhangs` classifies each triangle's normal against `up` 
 leaning theta from the build direction has a normal theta off the horizontal - and leaves
 out everything within one layer of the lowest point, because the first layer is not an
 overhang, it is what the part stands on.
+
+`overhangs` reports **every** place that leans past the limit, not only the worst
+(task-78). The leaning triangles are grouped into patches that share a corner, a patch
+narrower than `CHORD` is dropped as facets (task-77), and each patch is split by the face its
+triangles carry, so a ledge and a tube run into it are two places. All of them come back in
+one `Violation`, steepest first and the larger first between two that lean alike: its
+sentence names each with its lean, area and box across the bed, up to `_LISTED` (five) of
+them and a count of the rest, and its refs name every face, in the same order. One finding
+and not one per place, because a check is one question and `require` stops on one answer -
+and the status bar's count stays a count of checks that found something. Before, it named
+the worst and at a tie the first it met: the tote read `socket-1`, and its latch lugs and
+ribs, which hang off the wall with nothing under them, went unreported.
+
+Every check whose answer depends on how a part prints takes the `Part` (task-81): `fits`
+reads a `Printed` part's `Orient`, `overhangs` its `Orient` and its `Material`, and an
+`orient` or `material` given overrides the part's own. `wall` takes the part too and reads
+only its body - a wall is as thick lying down as standing up. A bare solid still says both
+itself, and `overhangs` handed one with neither refuses before any kernel is asked, so the
+browser with no modeller refuses the same script the desk does. There is no bridge check
+yet; the only other print check, `fits`, already read the part (task-68).
 
 **Two slacks, both named, both because a measurement off a mesh is not exact arithmetic.**
 A mesh's vertices are single precision, so two faces drawn 0.10 mm apart measure 0.099998
