@@ -600,8 +600,8 @@ def _namespace(
         printed part's ``stock`` names its own ``Orient`` - is measured standing the way it
         prints, not lying however it was drawn, without saying so again; a bare ``Solid``,
         usually asked about before the part it becomes exists, has no ``Part.stock`` yet to
-        read one off, so ``orient`` states it instead - the same record ``check_overhangs``
-        takes - and overrides a ``Part``'s own when both are given. Neither, and the box
+        read one off, so ``orient`` states it instead - as it does for ``check_overhangs`` -
+        and overrides a ``Part``'s own when both are given. Neither, and the box
         measured is the shape's own, exactly as before.
         """
         with timed(tracer, "bench.check.fits"):
@@ -819,17 +819,29 @@ def _namespace(
             recorded = _recorded(recorder, fitted.finding, (a, b))
             return replace(fitted, finding=recorded or fitted.finding)
 
-    def check_wall(solid: Solid, least: float) -> Violation | None:
-        """Check that every wall of ``solid`` is at least ``least`` millimetres thick, and
-        record what it finds."""
+    def check_wall(shape: Solid | Part, least: float) -> Violation | None:
+        """Check that every wall of ``shape`` - a bare solid, or the part it became - is at
+        least ``least`` millimetres thick, and record what it finds."""
         with timed(tracer, "bench.check.wall"):
-            return _recorded(recorder, wall(solid, least, kernel=kernel), (solid,))
+            subject = shape.shape if isinstance(shape, Part) else shape
+            return _recorded(recorder, wall(shape, least, kernel=kernel), (subject,))
 
-    def check_overhangs(solid: Solid, orient: Orient, material: Material) -> Violation | None:
-        """Check that nothing on ``solid`` leans further off ``orient``'s build direction
-        than ``material`` can hold up, and record what it finds."""
+    def check_overhangs(
+        shape: Solid | Part, orient: Orient | None = None, material: Material | None = None
+    ) -> Violation | None:
+        """Check that nothing on ``shape`` leans further off its build direction than its
+        plastic can hold up, and record every place that does - steepest first, in one
+        finding.
+
+        A part on ``Printed`` stock already says which way up it prints and in what, and is
+        read, the way ``check_fits`` reads one; a bare ``Solid`` says both with ``orient``
+        and ``material``, which also override a part's own. Nothing saying either stops the
+        run - there is no way up to guess.
+        """
         with timed(tracer, "bench.check.overhangs"):
-            return _recorded(recorder, overhangs(solid, orient, material, kernel=kernel), (solid,))
+            subject = shape.shape if isinstance(shape, Part) else shape
+            found = overhangs(shape, orient, material, kernel=kernel)
+            return _recorded(recorder, found, (subject,))
 
     def require(violation: Violation | None) -> None:
         """Stop the run if a check found something.

@@ -77,6 +77,26 @@ check_fits(hood, H2D)
 show(hood)
 """
 
+HANDED_THE_PART = """\
+from bench import *
+from bench.library.print import PLA
+
+block = part("block", cuboid(40, 40, 40), Printed(PLA, Orient(up=Y)))
+check_wall(block, 1.2)
+check_overhangs(block)
+check_overhangs(block, Orient())
+show(block)
+"""
+
+NO_WAY_UP = """\
+from bench import *
+from bench.library.print import PLA
+
+block = cuboid(40, 40, 40)
+check_overhangs(block)
+show(part("block", block, Printed(PLA)))
+"""
+
 CHECKED_BEFORE_IT_WAS_A_PART = """\
 from bench import *
 from bench.library.print import PLA, H2D
@@ -305,6 +325,25 @@ def test_a_check_with_no_kernel_is_unchecked_and_does_not_stop_a_require() -> No
     # And it points at nothing: nothing was measured, so there is no finding about the block
     # to mark on its row, however surely the block is the shape each check was handed.
     assert all(one["refs"] == [] for one in scene["violations"])
+
+
+def test_the_print_checks_are_handed_the_part_and_read_how_it_prints() -> None:
+    """task-81: ``check_overhangs`` and ``check_wall`` take the part a script made, as
+    ``check_fits`` does, and ``check_overhangs`` asks for nothing beside it - its ``Printed``
+    stock says the way up and the plastic, and an ``orient`` given still overrides. With no
+    kernel each is ``UNCHECKED``, and the run goes on."""
+    scene = _ok(run(HANDED_THE_PART))
+    assert [one["check"] for one in scene["violations"]] == ["wall", "overhangs", "overhangs"]
+    assert {one["severity"] for one in scene["violations"]} == {Severity.UNCHECKED}
+    assert [one["line"] for one in scene["violations"]] == [5, 6, 7]
+
+
+def test_a_bare_solid_with_no_way_up_stops_the_run_at_the_line_that_asked() -> None:
+    """task-81 AC#2: a bare solid says how it prints itself, as it always had to - there is
+    no way up to guess - and saying nothing stops the run there, kernel or none."""
+    error = _error(run(NO_WAY_UP))
+    assert error["line"] == 5
+    assert "say orient and material" in error["message"]
 
 
 # ---- which part a finding is about ------------------------------------------------------

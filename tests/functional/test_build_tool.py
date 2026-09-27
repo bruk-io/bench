@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from bench import Mesh, stl
+from tests import fixture_project
 from tools import build, projects
 
 pytestmark = pytest.mark.functional
@@ -515,3 +516,62 @@ def test_a_run_writes_no_bytecode_into_the_project_directory(tmp_path: Path) -> 
 
     assert build.main((str(project / "entry.py"),)) == 0
     assert not (project / "__pycache__").exists()
+
+
+# ---- the fixture project, without the modeller (task-79) -----------------------------------
+
+
+def test_a_check_only_a_kernel_can_answer_reads_unchecked_and_names_the_flag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Without the modeller the stand's overhang check has nothing to measure: it says so
+    rather than passing, and the run says which flag would have measured it - so a person
+    reading the output never takes ``unchecked`` for clean."""
+    root = tmp_path / "projects"
+    fixture_project.seeded(root)
+
+    assert build.main(("--project", fixture_project.NAME), {projects.VARIABLE: str(root)}) == 0
+    printed = capsys.readouterr().out
+    assert "unchecked overhangs" in printed
+    # Counted off the findings printed above it, not pinned: which checks a printed part
+    # gets without asking is not this tool's to say.
+    count = sum(1 for line in printed.splitlines() if line.strip().startswith("unchecked "))
+    said = f"{count} unchecked: no modeller in this run - {build.MODELLER} measures them"
+    assert said in printed
+
+
+def test_a_run_every_check_answered_says_nothing_about_the_modeller(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The project's cut plate has no check a kernel is needed for, so there is no hint."""
+    root = tmp_path / "projects"
+    fixture_project.seeded(root)
+    environ = {projects.VARIABLE: str(root)}
+
+    assert build.main(("--project", fixture_project.NAME, fixture_project.OTHER), environ) == 0
+    assert build.MODELLER not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        (build.MODELLER, "gone.py"),
+        ("gone.py", build.MODELLER),
+        ("gone.py", build.MODELLER, "--out", "somewhere"),
+        ("--out", "somewhere", build.MODELLER, "gone.py"),
+    ],
+)
+def test_the_modeller_flag_is_never_taken_for_the_script(
+    args: tuple[str, ...], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A flag with no value of its own, wherever it stands: the script is still the one
+    named, which is not there, and that is what is said - before any stack is booted."""
+    assert build.main(args) == 1
+    assert "no script at gone.py" in capsys.readouterr().err
+
+
+def test_the_modeller_flag_alone_prints_what_the_tool_is_for(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert build.main((build.MODELLER,)) == 1
+    assert "--modeller" in capsys.readouterr().err

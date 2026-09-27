@@ -185,8 +185,11 @@ and says in its own text what it could not do and why.
   once a maker declares the two are meant to seat against each other, which asks whether they
   share material rather than whether they stand apart, because `min_gap` reads a touch and a
   collision alike as zero -
-  `wall(solid, least, *, kernel)` and `overhangs(solid, orient, material, *, kernel)`. The
-  kernel is a parameter, never an import, and a check that needs one and has none answers
+  `wall(shape, least, *, kernel)` and `overhangs(shape, orient=None, material=None, *,
+  kernel)` - each takes a bare solid or the `Part` it became, and `overhangs` reads a
+  `Printed` part's own way up and plastic, `orient` and `material` overriding them (task-81);
+  it reports every place that leans past the limit, steepest first, in one finding
+  (task-78). The kernel is a parameter, never an import, and a check that needs one and has none answers
   `Severity.UNCHECKED` instead of passing. `Sampled` and `sampling(over, samples)` are what a
   question asked of a whole motion answers with and where its poses are - a record that says
   how many poses were measured and how far apart, because a check made at twenty-one poses
@@ -339,7 +342,8 @@ and says in its own text what it could not do and why.
   check records a `Violation` with the line of the script that asked and hands it back, and
   a failed check never aborts the run - the geometry, the refs and the sheets still come
   back with the violation beside them. A check is handed a bare solid, usually before the
-  part it becomes exists, so it answers in the solid's own names - `socket-1` - and the run
+  part it becomes exists - or the part itself, which `check_fits`, `check_wall` and
+  `check_overhangs` all take - so it answers in the solid's own names - `socket-1` - and the run
   keeps the shapes each check measured beside its answer, so the scene can say `tote/socket-1`.
   Each part that is a body carries its `mesh` when the run was given a kernel.
   `check_clearance_through(at, least, over=, samples=, contacts=)` is the same question asked
@@ -440,7 +444,8 @@ this has been skipped.
 Looking at the app rather than checking it is the other command:
 
 ```
-uv run python -m tools.qa [example.py ...]
+uv run python -m tools.qa [example.py ...] [--out DIR]
+uv run python -m tools.qa --project NAME [script.py ...] [--out DIR]
 ```
 
 It builds the app if anything it is made from has changed, serves it, walks the examples
@@ -448,17 +453,25 @@ named (three representative ones by default), and leaves a screenshot of each be
 of everything the app said - the console, anything the page threw, any request that failed,
 and the panels a person reads: what was built, what the script printed, what was violated
 and what went wrong. It asserts nothing and fails at nothing; the answer is in `web/qa/out`
-for someone to read. Both it and the `e2e` layer drive the same built app through
-`tools/preview.py`.
+(or `--out DIR`) for someone to read. Both it and the `e2e` layer drive the same built app
+through `tools/preview.py`.
+
+The second form looks at a host project instead - the one `NAME` names under the projects root
+(below) - and visits the scripts named, or the project's entry when none are. The project is
+copied onto a root of the walk's own and served from there, so nothing the app does on the way
+touches the original; each script is opened as the app reopens a project and shot with the
+Problems panel in front and on its own, then its parameters and its Files tab. The browser's
+modeller builds every body, so the checks that measure one report what they found.
 
 Running a script without a browser at all is the third command:
 
 ```
-uv run python -m tools.build <script.py> [--out DIR]
-uv run python -m tools.build --project NAME <script.py> [--out DIR]
+uv run python -m tools.build <script.py> [--out DIR] [--modeller]
+uv run python -m tools.build --project NAME [script.py] [--out DIR] [--modeller]
 ```
 
-The second form reads the script from a project under the host's projects root -
+The second form reads the script - or, when none is named, the project's entry - from a
+project under the host's projects root -
 `$BENCH_PROJECTS` (an absolute path), or `projects/` here when it is unset - the same root the
 app's `/__bench/projects` route serves, resolved by the same rule (`tools/projects.py` and
 `web/server/projects.ts`), so the command line and the app cannot disagree about where a
@@ -466,9 +479,15 @@ project is. See `web/README.md` for what the route does and refuses.
 
 It runs the script, says what was made and what the checks found, and with `--out` writes
 every file the run produced - the sheet SVGs and DXFs, a printed part's STL and 3MF, whatever
-the build brought with it. No solid modeller is loaded, so a printed part comes back with
-every ref, parameter and violation and no triangles; cut sheets need no kernel, which is what
-makes this worth having.
+the build brought with it. By default no solid modeller is loaded, so a printed part comes
+back with every ref, parameter and violation and no triangles, and every check that has to
+measure a body - overhangs, fits, contact, clearance - reads `unchecked`, with a closing line
+saying how many and naming the flag; cut sheets need no kernel, which is what makes this worth
+having. `--modeller` runs the script the way the app does instead - inside the pinned Pyodide
+with the app's own Manifold modeller, on `tools/stack.py` - so those checks report what they
+measured and `--out` writes the printed body's STL and 3MF. It is a flag rather than the
+default because it needs `npm ci` in `web/` and costs a Node and Pyodide boot: a second or two
+for a small project, 13 s for a five-part printed one, against a fraction of a second without.
 
 A TOML beside the script says which one of that thing to build:
 
