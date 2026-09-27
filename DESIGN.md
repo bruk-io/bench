@@ -915,6 +915,24 @@ shells set end to end stay three bodies, and the checks read the faces between t
 wall check reads as 0.64 mm. Overlapping pieces and one cut, or a ring swept whole, leave
 neither - and every fitting in PLA and ASA passes `overhangs` and `wall` standing up.
 
+**A fitting is put by an end, not rotated by hand** (task-80). `place(fitting, end, at=,
+toward=, across=)` lays an `End` - `start`, `end`, a branch's `tap` - on a point, its
+opening facing a way, turned the least way that does so unless `across` says where the
+fitting's `+X` goes; `end_of` reads an end off a fitting as drawn or moved whole, which is
+how one fitting is put into the next. A `Part` is moved with its `Orient`, so it still
+prints on its start. `SizeName` is the table's names as a `Literal`, so a knob is a menu
+of them without a copy. `square_to_round` takes a sharp corner - only the inside; the
+outside is still the opening grown a wall.
+
+**A port that lies on its side is two parts.** A spigot printed lying down leans 87 degrees
+in its bore's crown and again under its outside, which is the face a hose seals on, so
+neither a teardrop bore nor a chamfer under it makes one that prints and seals: it is not
+drawn. What the wall vent proved instead is offered: `keyed_socket`, the hole cut lying in
+the body it leaves, socket and inlet both teardrops, and `keyed_spigot`, printed standing,
+whose key fills the socket's point at the fit - one `place` puts each where it goes.
+Measured: the block with the keyed hole leans nothing past 45, the same block with round
+bores 87.
+
 ## web/ [done]
 
 Vite + TypeScript, no framework. Pyodide 315.0.0-alpha.2 from npm (Python

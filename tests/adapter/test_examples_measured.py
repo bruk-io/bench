@@ -562,7 +562,7 @@ def test_the_dust_lines_fittings_all_print_standing_and_the_coupler_slides_on_at
     assert [one["check"] for one in scene["violations"]] == []
     said = scene["stdout"].splitlines()
     seated = said[0]
-    assert seated.startswith("coupler round the wye's outlet: clear by ")
+    assert seated.startswith("coupler round the wye's tap: clear by ")
     assert seated.endswith(", asked 0.200 (slide)")
     gap = float(seated.split("clear by ")[1].split(" mm")[0])
     assert clearance(Fit.SLIDE, PLA) <= gap <= clearance(Fit.SLIDE, PLA, concave=True) + _TINY
@@ -572,10 +572,13 @@ def test_the_dust_lines_fittings_all_print_standing_and_the_coupler_slides_on_at
 
 def test_the_dust_lines_coupler_is_bored_to_the_ports_socket(measured: dict[str, Any]) -> None:
     """A 4 inch port is sold by its outside, so the socket that takes it is the port and the
-    slide both sides - measured across the coupler's bore, found by its name."""
+    slide both sides - measured across the coupler's bore, found by its name. The coupler is
+    placed on the wye's 45 degree tap, so across it is ``Y`` and the line square to both
+    ``Y`` and the tap."""
     mesh = _mesh(_scene(measured, "dust_line.py"), "coupler")
     bore = _points(mesh, "coupler/inside/side-inlet")
     wide = ducts.socket_diameter(ducts.PORT_4)
     assert wide == pytest.approx(101.6 + 2 * clearance(Fit.SLIDE, PLA, concave=True))
-    assert _measures(_span(bore, Vector(1, 0, 0)), wide)
+    half = math.sqrt(0.5)
+    assert _measures(_span(bore, Vector(half, 0, -half)), wide)
     assert _measures(_span(bore, Vector(0, 1, 0)), wide)
