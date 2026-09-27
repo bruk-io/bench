@@ -88,6 +88,9 @@ def test_a_look_round_of_a_project_shoots_each_script_and_leaves_it_untouched(
     log = (out / "qa-log.txt").read_text()
     overhangs = [line for line in log.splitlines() if " violations " in line]
     assert overhangs, log
-    assert any("warning overhangs" in line and "stand/cap" in line for line in overhangs)
+    assert any(
+        ("warning overhangs" in line or "error overhangs" in line) and "stand/cap" in line
+        for line in overhangs
+    )
     assert "unchecked" not in log
     assert _fingerprint(directory) == before

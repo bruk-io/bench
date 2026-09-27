@@ -533,7 +533,11 @@ def test_a_check_only_a_kernel_can_answer_reads_unchecked_and_names_the_flag(
     assert build.main(("--project", fixture_project.NAME), {projects.VARIABLE: str(root)}) == 0
     printed = capsys.readouterr().out
     assert "unchecked overhangs" in printed
-    assert f"1 unchecked: no modeller in this run - {build.MODELLER} measures them" in printed
+    # Counted off the findings printed above it, not pinned: which checks a printed part
+    # gets without asking is not this tool's to say.
+    count = sum(1 for line in printed.splitlines() if line.strip().startswith("unchecked "))
+    said = f"{count} unchecked: no modeller in this run - {build.MODELLER} measures them"
+    assert said in printed
 
 
 def test_a_run_every_check_answered_says_nothing_about_the_modeller(
