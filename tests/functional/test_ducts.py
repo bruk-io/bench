@@ -327,7 +327,11 @@ def test_an_end_put_on_a_point_facing_a_way_is_there_facing_that_way() -> None:
     a coupler by its start, even facing straight back the way it did."""
     elbow = ducts.elbow(ducts.PORT_2_5, math.radians(30.0))
     toward = Vector(1.0, 2.0, -2.0)
-    for fitting, end in ((elbow, "end"), (ducts.coupler(ducts.PORT_4), "start")):
+    ends: tuple[tuple[Solid, ducts.End], ...] = (
+        (elbow, "end"),
+        (ducts.coupler(ducts.PORT_4), "start"),
+    )
+    for fitting, end in ends:
         for way in (toward, Z, -Z):
             placed = ducts.place(fitting, end, at=Point(5.0, 6.0, 7.0), toward=way)
             there = ducts.end_of(placed, end)

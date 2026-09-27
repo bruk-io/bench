@@ -54,7 +54,7 @@ fittings and a :func:`coupler`.
 import math
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, overload
 
 from ..fasteners import Fit
 from ..geometry import (
@@ -748,14 +748,32 @@ def end_of(fitting: Solid, end: End = "end") -> Plane:
     return plane(at @ frame.origin, at @ frame.normal, at @ frame.x_dir)
 
 
-def place[T: Solid | Part](
-    fitting: T,
+@overload
+def place(
+    fitting: Solid,
     end: End = "start",
     *,
     at: Point,
     toward: Vector,
     across: Vector | None = None,
-) -> T:
+) -> Solid: ...
+@overload
+def place(
+    fitting: Part,
+    end: End = "start",
+    *,
+    at: Point,
+    toward: Vector,
+    across: Vector | None = None,
+) -> Part: ...
+def place(
+    fitting: Solid | Part,
+    end: End = "start",
+    *,
+    at: Point,
+    toward: Vector,
+    across: Vector | None = None,
+) -> Solid | Part:
     """``fitting`` moved so its ``end`` - see :func:`end_of` - sits on ``at`` facing
     ``toward``: the way the opening there faces, out of the fitting.
 
@@ -769,7 +787,8 @@ def place[T: Solid | Part](
     with it, so it still prints standing on its start and every overhang is what it was.
 
     Raises:
-        ValueError: if ``toward`` has no length, or ``across`` runs along it.
+        ValueError: if ``toward`` has no length, ``across`` runs along it, or a part is cut
+            from sheet rather than a body.
     """
     if abs(toward) < TOL:
         msg = "toward= is the way the end faces, and has no length"
@@ -792,11 +811,10 @@ def place[T: Solid | Part](
         return moved(fitting, t)
     placed = moved_part(fitting, t)
     stock = placed.stock
-    if isinstance(stock, Printed):
-        return replace(
-            placed, stock=replace(stock, orient=Orient(t @ stock.orient.up, stock.orient.bed_face))
-        )
-    return placed
+    if not isinstance(stock, Printed):
+        return placed
+    orient = Orient(t @ stock.orient.up, stock.orient.bed_face)
+    return replace(placed, stock=replace(stock, orient=orient))
 
 
 def _least_turn(was: Vector, to: Vector, spare: Vector) -> Transform:
