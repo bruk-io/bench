@@ -4,8 +4,10 @@ title: 'Checks take a Part and read how it prints, all of them alike'
 status: To Do
 assignee: []
 created_date: '2026-09-26 16:07'
+updated_date: '2026-09-27 17:52'
 labels:
   - checks
+milestone: m-12
 dependencies: []
 priority: low
 ---

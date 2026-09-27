@@ -4,8 +4,10 @@ title: 'A blind pocket printed opening downward ends in a cone, not a flat ceili
 status: To Do
 assignee: []
 created_date: '2026-09-26 16:34'
+updated_date: '2026-09-27 17:52'
 labels:
   - features
+milestone: m-12
 dependencies: []
 priority: low
 ---

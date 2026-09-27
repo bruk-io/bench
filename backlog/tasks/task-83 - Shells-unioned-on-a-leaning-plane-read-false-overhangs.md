@@ -4,9 +4,11 @@ title: Shells unioned on a leaning plane read false overhangs
 status: To Do
 assignee: []
 created_date: '2026-09-26 16:37'
+updated_date: '2026-09-27 17:52'
 labels:
   - operations
   - checks
+milestone: m-12
 dependencies:
   - task-77
 priority: low
