@@ -51,19 +51,40 @@ fittings and a :func:`coupler`.
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
+from typing import Literal
 
 from ..fasteners import Fit
-from ..geometry import ORIGIN, TOL, XY, Axis, Point, X, Y, Z, plane, raised
-from ..model import Material, Orient
+from ..geometry import (
+    ORIGIN,
+    TOL,
+    XY,
+    Axis,
+    Plane,
+    Point,
+    Transform,
+    Vector,
+    X,
+    Y,
+    Z,
+    cross,
+    identity,
+    plane,
+    raised,
+    rotation,
+    to_local,
+    to_world,
+    unit,
+)
+from ..model import Material, Orient, Part, Printed, moved_part, refs
 from ..ops import circle, fill, rounded_rect
 from ..shell import PAST, shell
-from ..solids import cut, cylinder, extrude, hull, revolve, union
+from ..solids import cut, cylinder, extrude, hull, plane_of, revolve, union
 from ..sweep import Bend, Straight, path, sweep
-from ..topology import Edge, Line, Solid, Wire, face, wire
+from ..topology import Edge, Line, Moved, Solid, Wire, bounds, face, moved, wire
 from ..topology import label as _label
-from .print import PLA, clearance
+from .print import PLA, clearance, teardrop
 
 IN = 25.4
 """Millimetres in an inch: every size in the table is sold in inches."""
@@ -182,7 +203,13 @@ DUCT_6 = Size(
 )
 """The 6 inch round duct, taken the same way as :data:`DUCT_4`."""
 
-SIZES = frozendict(
+SizeName = Literal[
+    "hose-4", "port-4", "hose-2.5", "port-2.5", "vac-1.25", "vac-2.5", "duct-4", "duct-6"
+]
+"""The short name of every size in :data:`SIZES`, as a type: a knob annotated with it is a
+menu of the table's sizes, and nobody copies the list to make one."""
+
+SIZES: frozendict[SizeName, Size] = frozendict(
     {
         "hose-4": HOSE_4,
         "port-4": PORT_4,
@@ -194,7 +221,7 @@ SIZES = frozendict(
         "duct-6": DUCT_6,
     }
 )
-"""Every size in the table by a short name, so a script's panel can offer them."""
+"""Every size in the table by its :data:`SizeName`, so a script's panel can offer them."""
 
 
 # ---- the two sides of a joint ------------------------------------------------------------
@@ -483,8 +510,15 @@ def square_to_round(
     fit: Fit = Fit.SLIDE,
     material: Material = PLA,
 ) -> Solid:
-    """A rectangular opening ``width`` by ``deep`` inside, corners rounded to ``corner``, to a
-    spigot for ``size`` - a register boot, a hood's throat.
+    """A rectangular opening ``width`` by ``deep`` inside, corners rounded to ``corner`` - or
+    square, at 0 - to a spigot for ``size``: a register boot, a hood's throat.
+
+    **A sharp opening is drawn as asked.** Only the inside is square at ``corner=0``; the
+    outside keeps a corner of ``wall`` round it, which is the inside grown by a wall and so
+    no thinner at the corner than along the sides. The loft from a sharp corner to the round
+    leans no further than from a rounded one - the corner's reach is what sets the loft's
+    height either way - so it prints the same (``tests/adapter/test_ducts_measured.py``
+    measures one), and a chamber with square corners can be matched without rounding it.
 
     A ``collar`` of the rectangle straight up off the bed, a loft from it to the round, and
     the spigot ``length`` on up from that - ``collar``, ``transition`` and ``spigot`` in the
@@ -508,7 +542,7 @@ def square_to_round(
 
     Raises:
         ValueError: if ``wall`` leaning the most the loft leans is under the material's
-            minimum, if the opening, ``corner`` or ``length`` is not positive, if the
+            minimum, if the opening or ``length`` is not positive or ``corner`` negative, if the
             ``collar`` is no taller than the wall, or the spigot's bore closes up.
     """
     lean = material.max_overhang
@@ -519,10 +553,11 @@ def square_to_round(
         radius - wall,
         width=width,
         deep=deep,
-        corner=corner,
         length=length,
         collar=collar - wall,
     )
+    if refused is None and corner < -TOL:
+        refused = f"corner is a radius or 0 for a sharp one, not {corner}"
     if refused is not None:
         raise ValueError(refused)
     # How far the rectangle's outside reaches past the round's at its corners, and falls
@@ -576,6 +611,200 @@ def _lofted(
         fill(circle(radius), on=raised(XY, high + run_on)),
         label=name,
     )
+
+
+# ---- a port that lies on its side ------------------------------------------------------
+
+
+def keyed_spigot(
+    size: Size,
+    *,
+    key: float = SOCKET_DEPTH,
+    length: float = SPIGOT_LENGTH,
+    wall: float = WALL,
+    fit: Fit = Fit.SLIDE,
+    material: Material = PLA,
+) -> Solid:
+    """A spigot for ``size`` that stands ``length`` out of a :func:`keyed_socket`: its first
+    ``key`` is the key that goes into the socket, its outside there a teardrop pointing
+    ``+X``, and the rest is the round spigot a hose slips over.
+
+    **A port that has to lie on its side is two parts, and this is the one that prints
+    upright.** A spigot printed lying down is refused rather than drawn: its bore's crown is
+    a ceiling over nothing, and so is the underside of its outside, all the way down to the
+    bed - both lean 90 degrees, measured (``tests/adapter/test_ducts_measured.py``). A
+    teardrop bore fixes the first and not the second, and the second is the face a hose seals
+    on, so no chamfer or point under it can go round without leaking. The wall vent's
+    manifold (``projects/vent``) found the way that does print: the port a part of its own,
+    standing on its end, glued into a socket in the body it leaves - a socket that *can* be a
+    teardrop, because nothing seals on its bore but glue.
+
+    The key is what makes that joint tight. A round spigot in a pointed bore leaves the
+    point open, and a way for air round the hose; keyed, the gap is the fit's all the way
+    round, and the key goes in only one way up. Printed standing, it is a straight prism off
+    the bed and leans nothing. Faces: ``key`` and ``spigot`` outside, ``bore`` inside.
+
+    Raises:
+        ValueError: if ``wall`` is under the material's minimum or eats the bore, or ``key``
+            or ``length`` is not positive.
+    """
+    radius = spigot_diameter(size, fit=fit, material=material) / 2
+    refused = _refusal(wall, material, radius - wall, key=key, length=length)
+    if refused is not None:
+        raise ValueError(refused)
+    outside = union(
+        extrude(fill(teardrop(2 * radius, up=X)), key, label="key"),
+        cylinder(radius, length, at=Point(0.0, 0.0, key), label="spigot"),
+    )
+    return cut(
+        outside,
+        cylinder(radius - wall, key + length + 2 * PAST, at=Point(0.0, 0.0, -PAST)),
+        label="bore",
+    )
+
+
+def keyed_socket(
+    size: Size,
+    through: float,
+    *,
+    depth: float = SOCKET_DEPTH,
+    wall: float = WALL,
+    fit: Fit = Fit.SLIDE,
+    material: Material = PLA,
+) -> Solid:
+    """The hole a :func:`keyed_spigot` is glued into, to be cut out of the body it goes in:
+    a ``socket`` ``depth`` deep that takes the key at ``fit``, and an ``inlet`` - the
+    spigot's own bore - ``through`` on through the wall behind it. Both are teardrops pointing
+    ``+X``, so a body printing with ``+X`` up has nothing over either bore but 45 degrees.
+
+    Drawn the way a spigot is, its start at the origin: the socket's floor, where the key
+    stops, with the socket running up ``+Z`` to its mouth and the inlet down ``-Z``. So the
+    pair goes where it goes with one :func:`place` said twice - each by its start, ``at``
+    the stop, ``toward`` into the body, ``across`` the way the body prints upward. Each end
+    reaches a little past where it is asked to stop, so a cut through a wall that thick
+    leaves no skin.
+
+    Raises:
+        ValueError: if ``wall`` is under the material's minimum or eats the bore, or
+            ``through`` or ``depth`` is not positive.
+    """
+    radius = spigot_diameter(size, fit=fit, material=material) / 2
+    refused = _refusal(wall, material, radius - wall, through=through, depth=depth)
+    if refused is not None:
+        raise ValueError(refused)
+    socket = socket_diameter(size, fit=fit, material=material)
+    return union(
+        extrude(fill(teardrop(socket, up=X)), depth + PAST, label="socket"),
+        extrude(
+            fill(teardrop(2 * (radius - wall), up=X), on=raised(XY, -through - PAST)),
+            through + 2 * PAST,
+            label="inlet",
+        ),
+    )
+
+
+# ---- putting a fitting where it goes -----------------------------------------------------
+
+End = Literal["start", "end", "tap"]
+"""An end of a fitting: the ``start`` it stands on as it prints, the ``end`` at the top of
+it, or a :func:`branch`'s ``tap``."""
+
+_NAMED: frozendict[End, tuple[str, ...]] = frozendict(
+    {"end": ("end", "run/top", "spigot/top"), "tap": ("tap/end",)}
+)
+"""The flat face each end is where a fitting has one: an elbow's, a branch's and a
+square-to-round's. A turned fitting's ends are open, so have no face, and lie on its axis."""
+
+
+def end_of(fitting: Solid, end: End = "end") -> Plane:
+    """Where ``end`` of a fitting from this module is: a frame on its axis at the opening,
+    its normal out of the fitting along the axis - the way something joined on there comes
+    in - and its X the fitting's own ``+X`` carried round to it, the way an elbow turns.
+
+    It reads the fitting as drawn, or moved whole by :func:`place` or
+    :func:`~bench.solids.move` and :func:`~bench.solids.rotate`: every move on top of it is
+    peeled off and put back on the frame. Not a fitting unioned into something else - the
+    union has no one end.
+
+    Raises:
+        LookupError: if ``end`` is a ``tap`` and the fitting is not a :func:`branch`.
+    """
+    at, drawn = identity(), fitting.node
+    while isinstance(drawn, Moved):
+        at, drawn = at @ drawn.at, drawn.node
+    body = Solid(drawn, fitting.label)
+    if end == "start":
+        frame = plane(ORIGIN, -Z, X)
+    else:
+        named = [one for one in _NAMED[end] if one in {str(r) for r in refs(body)}]
+        if named:
+            frame = plane_of(body, named[0])
+        elif end == "end":
+            frame = plane(Point(0.0, 0.0, bounds(body).z1), Z, X)
+        else:
+            msg = f"only a branch has a tap, and this fitting has {', '.join(map(str, refs(body)))}"
+            raise LookupError(msg)
+    return plane(at @ frame.origin, at @ frame.normal, at @ frame.x_dir)
+
+
+def place[T: Solid | Part](
+    fitting: T,
+    end: End = "start",
+    *,
+    at: Point,
+    toward: Vector,
+    across: Vector | None = None,
+) -> T:
+    """``fitting`` moved so its ``end`` - see :func:`end_of` - sits on ``at`` facing
+    ``toward``: the way the opening there faces, out of the fitting.
+
+    It is turned the least way that does that - about the line square to both the way the
+    end faced and ``toward`` - so whatever lay across both stays where it was; an end turned
+    right round is turned about its own X. ``across`` says instead where the fitting's own
+    ``+X`` goes, which is the way an elbow turns and a keyed port's key points: square to
+    ``toward``, or its part that is.
+
+    A :class:`~bench.model.Part` is moved with the way it prints: its ``Orient.up`` turned
+    with it, so it still prints standing on its start and every overhang is what it was.
+
+    Raises:
+        ValueError: if ``toward`` has no length, or ``across`` runs along it.
+    """
+    if abs(toward) < TOL:
+        msg = "toward= is the way the end faces, and has no length"
+        raise ValueError(msg)
+    body = fitting if isinstance(fitting, Solid) else fitting.shape
+    if not isinstance(body, Solid):
+        msg = f"{fitting.label} is cut from sheet, and a fitting is a body"
+        raise ValueError(msg)
+    frame = end_of(body, end)
+    facing = unit(toward)
+    if across is None:
+        turned = _least_turn(frame.normal, facing, frame.x_dir) @ frame.x_dir
+    else:
+        turned = across - facing * (across @ facing)
+        if abs(turned) < TOL:
+            msg = "across= is where the fitting's X goes, and it cannot run along toward="
+            raise ValueError(msg)
+    t = to_world(plane(at, facing, turned)) @ to_local(frame)
+    if isinstance(fitting, Solid):
+        return moved(fitting, t)
+    placed = moved_part(fitting, t)
+    stock = placed.stock
+    if isinstance(stock, Printed):
+        return replace(
+            placed, stock=replace(stock, orient=Orient(t @ stock.orient.up, stock.orient.bed_face))
+        )
+    return placed
+
+
+def _least_turn(was: Vector, to: Vector, spare: Vector) -> Transform:
+    """The rotation that takes the unit ``was`` to the unit ``to`` about the line square to
+    both, or half a turn about ``spare`` where the two are opposed."""
+    about = cross(was, to)
+    if abs(about) < TOL:
+        return identity() if was @ to > 0 else rotation(Axis(ORIGIN, spare), math.pi)
+    return rotation(Axis(ORIGIN, about), math.atan2(abs(about), was @ to))
 
 
 # ---- turned outlines ------------------------------------------------------------------------
