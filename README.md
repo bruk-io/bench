@@ -437,7 +437,8 @@ this has been skipped.
 Looking at the app rather than checking it is the other command:
 
 ```
-uv run python -m tools.qa [example.py ...]
+uv run python -m tools.qa [example.py ...] [--out DIR]
+uv run python -m tools.qa --project NAME [script.py ...] [--out DIR]
 ```
 
 It builds the app if anything it is made from has changed, serves it, walks the examples
@@ -445,17 +446,25 @@ named (three representative ones by default), and leaves a screenshot of each be
 of everything the app said - the console, anything the page threw, any request that failed,
 and the panels a person reads: what was built, what the script printed, what was violated
 and what went wrong. It asserts nothing and fails at nothing; the answer is in `web/qa/out`
-for someone to read. Both it and the `e2e` layer drive the same built app through
-`tools/preview.py`.
+(or `--out DIR`) for someone to read. Both it and the `e2e` layer drive the same built app
+through `tools/preview.py`.
+
+The second form looks at a host project instead - the one `NAME` names under the projects root
+(below) - and visits the scripts named, or the project's entry when none are. The project is
+copied onto a root of the walk's own and served from there, so nothing the app does on the way
+touches the original; each script is opened as the app reopens a project and shot with the
+Problems panel in front and on its own, then its parameters and its Files tab. The browser's
+modeller builds every body, so the checks that measure one report what they found.
 
 Running a script without a browser at all is the third command:
 
 ```
-uv run python -m tools.build <script.py> [--out DIR]
-uv run python -m tools.build --project NAME <script.py> [--out DIR]
+uv run python -m tools.build <script.py> [--out DIR] [--modeller]
+uv run python -m tools.build --project NAME [script.py] [--out DIR] [--modeller]
 ```
 
-The second form reads the script from a project under the host's projects root -
+The second form reads the script - or, when none is named, the project's entry - from a
+project under the host's projects root -
 `$BENCH_PROJECTS` (an absolute path), or `projects/` here when it is unset - the same root the
 app's `/__bench/projects` route serves, resolved by the same rule (`tools/projects.py` and
 `web/server/projects.ts`), so the command line and the app cannot disagree about where a
@@ -463,9 +472,15 @@ project is. See `web/README.md` for what the route does and refuses.
 
 It runs the script, says what was made and what the checks found, and with `--out` writes
 every file the run produced - the sheet SVGs and DXFs, a printed part's STL and 3MF, whatever
-the build brought with it. No solid modeller is loaded, so a printed part comes back with
-every ref, parameter and violation and no triangles; cut sheets need no kernel, which is what
-makes this worth having.
+the build brought with it. By default no solid modeller is loaded, so a printed part comes
+back with every ref, parameter and violation and no triangles, and every check that has to
+measure a body - overhangs, fits, contact, clearance - reads `unchecked`, with a closing line
+saying how many and naming the flag; cut sheets need no kernel, which is what makes this worth
+having. `--modeller` runs the script the way the app does instead - inside the pinned Pyodide
+with the app's own Manifold modeller, on `tools/stack.py` - so those checks report what they
+measured and `--out` writes the printed body's STL and 3MF. It is a flag rather than the
+default because it needs `npm ci` in `web/` and costs a Node and Pyodide boot: a second or two
+for a small project, 13 s for a five-part printed one, against a fraction of a second without.
 
 A TOML beside the script says which one of that thing to build:
 
