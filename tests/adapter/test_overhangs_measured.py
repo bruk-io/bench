@@ -119,24 +119,27 @@ def test_past_five_places_the_sentence_counts_the_rest_and_the_refs_name_them(
     assert refs == [f"cap-{n}/bottom" for n in range(7)]
 
 
-def test_the_totes_finding_names_every_place_not_only_socket_1(measured: dict[str, Any]) -> None:
-    """AC#1 on a shipped example: the tote read ``socket-1`` alone. It has eighteen places -
-    four socket ceilings, two grip tops, and the undersides of two latch lugs and ten ribs
-    that hang off the wall with nothing under them - still one finding, so the status bar's
-    one warning is unchanged; the latch lugs first, the largest of the ceilings alike at
-    305 mm2 each, and every place named in the refs."""
+def test_the_totes_finding_names_only_the_bridges_once_the_lugs_and_ribs_are_fixed(
+    measured: dict[str, Any],
+) -> None:
+    """AC#1 on a shipped example: before task-78's fix the tote read ``socket-1`` alone, and
+    after it eighteen places - four socket ceilings, two grip tops, and the undersides of
+    two latch lugs and ten ribs hanging off the wall with nothing under them. task-84 gave
+    each lug a gusset and stood each rib on the bed, so six places are left - the same
+    sockets and grip tops as before, 14.6 by 14.6 mm and 96.0 by 2.4 mm across, still one
+    finding - and none of them a lug, a gusset or a rib."""
     scene = measured["tote"]
     assert scene["ok"], scene
     (found,) = [one for one in scene["violations"] if one["check"] == "overhangs"]
-    assert found["message"].startswith("18 places lean")
-    assert found["message"].endswith("; and 13 more")
+    assert found["message"].startswith("6 places lean")
+    assert "14.6 by 14.6 mm across" in found["message"]
+    assert "96.0 by 2.4 mm across" in found["message"]
     named = found["refs"]
-    assert named[:2] == ["tote/latch-front/bottom", "tote/latch-back/bottom"]
     sockets = {f"tote/socket-{n}" for n in range(1, 5)}
-    ribs = {f"tote/rib-{side}-{n}/bottom" for side in ("front", "back") for n in range(1, 6)}
     grips = {"tote/grip-left/top", "tote/grip-right/top"}
-    assert set(named) == {*named[:2], *sockets, *ribs, *grips}
-    assert len(named) == 18
+    assert set(named) == sockets | grips
+    assert len(named) == 6
+    assert not any("latch" in one or "gusset" in one or "rib-" in one for one in named)
     assert set(named) <= set(scene["refs"])
 
 
