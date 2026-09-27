@@ -252,11 +252,13 @@ def printable_end(end: End, *, mouth: Vector, blind: bool, printed: Printed | No
     Anything but :data:`End.AUTO` is the caller's decision and comes straight back. ``AUTO``
     gives ``CONE`` to a blind bore standing within :data:`LEANING` of the build direction
     whose mouth faces down as it prints, since its end is then a ceiling over the whole
-    diameter; everything else is ``FLAT`` - a through bore has no end, a pocket opening
-    upward stands on its floor, and a leaning one is :func:`printable_top`'s to make
-    printable. With no orientation to read it is ``FLAT`` rather than a refusal: a body
-    whose bore reaches here without ``printed`` has already said ``top=`` for itself, which
-    is a bore saying it does not care how it prints.
+    diameter; everything else is ``FLAT`` - a through bore has no end, and a pocket opening
+    upward stands on its floor. **A limit, stated:** a pocket leaning :data:`LEANING` or more
+    keeps its flat end too, though opening downward that end still leans past the limit; its
+    side is :func:`printable_top`'s, and its end nothing's yet. With no orientation to read
+    it is ``FLAT`` rather than a refusal: a body whose bore reaches here without ``printed``
+    has already said ``top=`` for itself, which is a bore saying it does not care how it
+    prints.
     """
     if end is not End.AUTO:
         return end
