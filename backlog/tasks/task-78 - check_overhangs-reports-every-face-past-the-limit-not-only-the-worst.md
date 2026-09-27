@@ -1,10 +1,10 @@
 ---
 id: task-78
 title: 'check_overhangs reports every face past the limit, not only the worst'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-26 16:06'
-updated_date: '2026-09-27 17:52'
+updated_date: '2026-09-27 18:33'
 labels:
   - checks
 milestone: m-12
@@ -20,8 +20,14 @@ Found moving the vent onto ducts (2026-09-26): check_overhangs names one face pe
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every face (or connected region of faces) leaning past the material's limit is reported, each with its lean, area/span and ref
-- [ ] #2 Findings for one part stay readable: grouped per region, ordered by severity, without one line per triangle
-- [ ] #3 A test with two separate overhangs of equal lean reports both; the vent-like case (a ledge plus a side tube) reports both
-- [ ] #4 Existing callers (require, the Problems panel, ducts and examples' no-findings tests) still work
+- [x] #1 Every face (or connected region of faces) leaning past the material's limit is reported, each with its lean, area/span and ref
+- [x] #2 Findings for one part stay readable: grouped per region, ordered by severity, without one line per triangle
+- [x] #3 A test with two separate overhangs of equal lean reports both; the vent-like case (a ledge plus a side tube) reports both
+- [x] #4 Existing callers (require, the Problems panel, ducts and examples' no-findings tests) still work
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+PR #29. Still one finding per call; its sentence names the five steepest places (lean, area, width, face) then 'and N more', and its refs name every face. Places are #27's kept patches split by face name, so the check passes exactly when it did before. Ties compared at the printed whole degree. Five chosen from the tote (18 places, ~1500 chars in full).
+<!-- SECTION:NOTES:END -->
