@@ -65,7 +65,9 @@ threads = ["geometry", "topology", "model", "fasteners", "ops", "solids", "telem
 # shell hollows a body by making it again: the recipe of an extrusion, a revolve or a loft run
 # on its profile inset by `ops.offset`, and cut out of it with `solids`' own verbs. It evaluates
 # nothing and needs no kernel, which is the whole point of doing it at the level of the recipe.
-shell = ["geometry", "topology", "ops", "solids"]
+# `sweep` is task-83's: a run swept in pieces is hollowed along the pieces' paths joined into
+# one, and `sweep` is what says that joined path runs on without a corner.
+shell = ["geometry", "topology", "ops", "solids", "sweep"]
 # sweep is a profile carried along a path of lines and arcs: the path's legs, the checks that
 # the result is a solid, and the `Swept` record from `topology`. Like every verb it evaluates
 # nothing; how a sweep is meshed is `meshing`'s, because the modeller has no sweep.

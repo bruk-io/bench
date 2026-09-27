@@ -11,6 +11,7 @@ the standard library, and decides nothing: every assertion is in the test module
 
 import math
 from collections.abc import Callable
+from functools import partial
 
 from bench import (
     ORIGIN,
@@ -36,6 +37,7 @@ from bench import (
     overhangs,
     path,
     plane,
+    plane_of,
     polygon,
     raised,
     rounded_rect,
@@ -110,6 +112,39 @@ def _elbow(turn: float, *legs: Straight | Bend) -> Solid:
     return shell(sweep(fill(circle(radius)), route), WALL, open=("start", "end"))
 
 
+TURNS = (20.0, 33.0, 40.0)
+"""The elbow turns, in degrees, a spigot shelled onto the far end of was measured at (task-83):
+read 70, 57 and 50 degrees on the spigot's ``start`` when each piece was hollowed alone."""
+
+SPIGOT = 60.0
+"""How long the spigot set on the elbow's end runs, in mm."""
+
+
+def _elbow_and_spigot(turn: float) -> tuple[Solid, Solid]:
+    """A 4 inch hose's spigot swept up and round ``turn`` degrees, and a spigot of the same
+    size swept on from its leaning ``end`` - the two pieces, not yet hollowed."""
+    radius = ducts.spigot_diameter(ducts.HOSE_4) / 2
+    route = path(ORIGIN, Z, Straight(ducts.SPIGOT_LENGTH), Bend(3 * radius, math.radians(turn), X))
+    elbow = sweep(fill(circle(radius)), route)
+    end = plane_of(elbow, "end")
+    spigot = sweep(
+        fill(circle(radius), on=end), path(end.origin, end.normal, Straight(SPIGOT)), label="spigot"
+    )
+    return elbow, spigot
+
+
+def _run(turn: float) -> Solid:
+    """The elbow and its spigot hollowed whole: one shell of their union."""
+    return shell(union(*_elbow_and_spigot(turn)), WALL, open=("start", "spigot/end"))
+
+
+def _one_by_one(turn: float) -> Solid:
+    """The elbow and its spigot each hollowed alone and then unioned - task-83's case."""
+    elbow, spigot = _elbow_and_spigot(turn)
+    both = ("start", "end")
+    return union(shell(elbow, WALL, open=both), shell(spigot, WALL, open=both))
+
+
 def _tap_body() -> tuple[Solid, float]:
     """A wye whose tap is drilled straight into a run of its own size: two rods unioned, two
     bores unioned and cut out of them, the tap setting off from the run's axis at ``TAP``
@@ -157,6 +192,9 @@ BODIES: dict[str, Callable[[], Solid]] = {
     "tap": lambda: _tap_body()[0],
     "elbow_too_far": lambda: _elbow(60.0, Straight(ducts.SPIGOT_LENGTH)),
     "ledge": lambda: _ledge(0.4),
+    **{f"run_{turn:.0f}": partial(_run, turn) for turn in TURNS},
+    "run_too_far": lambda: _run(60.0),
+    **{f"one_by_one_{turn:.0f}": partial(_one_by_one, turn) for turn in TURNS},
     "thin_elbow": lambda: shell(
         sweep(
             fill(circle(20.0)),
@@ -166,7 +204,9 @@ BODIES: dict[str, Callable[[], Solid]] = {
         open=("start", "end"),
     ),
 }
-"""Every body measured: the four joins first, then a real overhang and a real thin wall."""
+"""Every body measured: the four joins first, then a real overhang and a real thin wall, then
+task-83's elbow and spigot - hollowed whole at three turns and one too far, and hollowed one
+by one at the same three."""
 
 
 def _lip(kernel: Kernel) -> dict[str, object]:

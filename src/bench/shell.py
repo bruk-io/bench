@@ -28,14 +28,26 @@ profiles were given in - ``bottom`` the first, ``top`` the second - a revolve at
 join into one body wherever their ends meet square to the axes, measured (task-77,
 ``tests/adapter/test_seams_measured.py``). Where they meet on a leaning plane - a spigot
 shelled on an elbow's far end - the two cavities' walls coincide along a leaning line that
-no float lands on exactly, and slivers are left between them: measured, a 60 mm spigot on a
-20 degree elbow read a face leaning 87 degrees. Run one piece a wall's length on into the
-other there, or sweep the whole run in one, the way :mod:`bench.library.ducts` does.
+no float lands on exactly, and slivers are left between them: measured (task-83), a 4 in
+hose's spigot on elbows turned 20, 33 and 40 degrees read faces leaning 70, 57 and 50
+degrees on the spigot's ``start``, and walls of 0.13, 0.00 and 0.17 mm. Running the spigot a
+wall's length back into the elbow does not cure it: a straight run backed into a bend
+really does leave the bend's surface, and reads walls of 0.05 to 0.70 mm.
+
+**So a run swept in pieces is hollowed whole**: ``shell(union(elbow, spigot), wall,
+open=("start", "spigot/end"))``. The pieces are sweeps, each setting off from the one
+before's ``end`` with the same profile, and the cavity is that profile swept once along all
+their paths joined - there is no join inside it to leave a sliver, and on the same elbows it
+reads neither a false overhang nor a false wall. A union of anything else is refused: pieces
+hollowed one by one and their cavities unioned were measured leaving ledges where one
+cavity runs on into another that narrows. Sweeping the whole run in one, the way
+:mod:`bench.library.ducts` does, is the same cavity.
 """
 
 import math
 from collections.abc import Collection
 from dataclasses import replace
+from itertools import pairwise
 from typing import assert_never
 
 from .geometry import (
@@ -53,7 +65,8 @@ from .geometry import (
     unit,
 )
 from .ops import fill, offset, rect
-from .solids import cut, extrude, hull, move, name, rotate, union
+from .solids import cut, extrude, hull, move, name, plane_of, rotate, union
+from .sweep import sweep
 from .topology import (
     Arc,
     Circle,
@@ -79,8 +92,10 @@ from .topology import (
     curve_start,
     face,
     faces_of,
+    flat_ring,
     moved,
     straight,
+    under,
     wire,
 )
 from .topology import label as _label
@@ -117,12 +132,17 @@ def shell(
     its cavity would be the inset profile swept straight, which neither turns with the
     twist nor narrows with the taper, so the wall would run thin and thick round it.
 
+    A :func:`~bench.solids.union` of sweeps set end to end - an elbow and the spigot swept on
+    from its ``end`` - is hollowed as one run: the first profile swept along every piece's
+    path joined, open at the first piece's ``start`` and the last's ``end`` as each piece
+    names them, and never at a join (see the module's own note and task-83).
+
     Raises:
         ValueError: if ``wall`` is not positive, if ``body`` is not a recipe that can be run
-            again (a union, a cut, a hull of anything but two profiles, an import), if it is
-            an extrusion that twists or tapers, if a name in ``open`` is not a face that can
-            be opened on it, or if the wall is too thick for the body - the inset profile
-            collapses or the floor meets the roof.
+            again (a union of anything but sweeps set end to end, a cut, a hull of anything
+            but two profiles, an import), if it is an extrusion that twists or tapers, if a
+            name in ``open`` is not a face that can be opened on it, or if the wall is too
+            thick for the body - the inset profile collapses or the floor meets the roof.
     """
     if wall <= TOL:
         msg = f"a shell needs a wall to leave, not {wall}"
@@ -138,7 +158,9 @@ def shell(
             cavity = _lofted_cavity(parts, wall, opened)
         case Swept():
             cavity = _swept_cavity(node, wall, opened)
-        case Union() | Difference() | Intersection() | Imported() | Moved():
+        case Union():
+            cavity = _chained_cavity(node, wall, opened)
+        case Difference() | Intersection() | Imported() | Moved():
             msg = (
                 "shell hollows an extrusion, a revolve, a loft of two profiles or a sweep by "
                 f"making it again; a {type(node).__name__.lower()} has no one profile to inset"
@@ -412,6 +434,103 @@ def _shortened(leg: Curve, wall: float, end: str) -> Line:
     if end == "start":
         return Line(leg.start + run * wall, leg.end)
     return Line(leg.start, leg.end - run * wall)
+
+
+# ---- a run swept in pieces --------------------------------------------------------------
+
+
+def _chained_cavity(node: Union, wall: float, opened: frozenset[str]) -> Solid:
+    """The cavity of a run swept in pieces and unioned: the pieces' paths joined into one and
+    the first piece's profile swept along all of it, inset by ``wall`` as one sweep's is - so
+    there is no join inside the cavity at all, only on the outside, where the pieces meet
+    face to face.
+
+    The pieces are read in union order, ``a`` before ``b``, through any moves and nested
+    unions, and each has to set off exactly where the one before it stops: its profile the
+    same shape, drawn on that piece's own ``end`` in the frame
+    :func:`bench.solids.plane_of` gives there - which is what sweeping the next piece
+    ``on=plane_of(piece, "end")`` makes. The run opens at the first piece's ``start`` and
+    the last piece's ``end``, each named under its own piece's label; a join is not a face
+    of the hollowed body, so it is neither opened nor walled.
+
+    Only sweeps, and measured why (task-83): pieces hollowed one by one and their cavities
+    unioned leave ledges where one cavity runs on past a join into another that narrows - a
+    false 90 degree ceiling on a register boot - and a cavity run on round a bend meets the
+    next piece's straight one a few micrometres off - a false 0.01 mm wall. Only one sweep
+    along the whole run has neither.
+
+    Raises:
+        ValueError: if a piece is not a sweep, if a piece does not set off where the one
+            before it stops with the same profile square on it, if the joined path turns a
+            corner, or if ``opened`` names anything but the run's two ends.
+    """
+    pieces = _swept_pieces(Solid(node), identity(), "")
+    first = pieces[0][0].profile
+    for (before, _), (after, called) in pairwise(pieces):
+        seat = plane_of(Solid(before), "end")
+        own = after.profile
+        if (
+            abs(own.plane.origin - seat.origin) > TOL
+            or abs(own.plane.normal - seat.normal) > TOL
+            or abs(own.plane.x_dir - seat.x_dir) > TOL
+            or not _drawn_alike(own, first)
+        ):
+            msg = (
+                "shell hollows a union as one run swept in pieces, each setting off where the"
+                " one before it stops with the same profile drawn on its end, and"
+                f" {called or 'the unlabelled piece'} does not"
+            )
+            raise ValueError(msg)
+    ends = (under(pieces[0][1], Label("start")), under(pieces[-1][1], Label("end")))
+    _refused("this run", opened, ends)
+    joined = Wire(tuple(e for piece, _ in pieces for e in piece.path.edges))
+    sweep(first, joined)  # refuses a corner where two pieces meet, as it would in one sweep
+    kept = frozenset(
+        end for end, called in zip(("start", "end"), ends, strict=True) if called in opened
+    )
+    return _swept_cavity(Swept(first, joined), wall, kept)
+
+
+def _drawn_alike(one: Face, other: Face) -> bool:
+    """Whether two profiles are the same drawing, each read in its own plane's frame - the
+    wires lie wherever their planes put them, so it is the flattened rings that are
+    compared, point for point."""
+    wires = ((one.outer, *one.inner), (other.outer, *other.inner))
+    if len(wires[0]) != len(wires[1]):
+        return False
+    for a, b in zip(*wires, strict=True):
+        ra = flat_ring(a, one.plane, (0,) * len(a.edges)).points
+        rb = flat_ring(b, other.plane, (0,) * len(b.edges)).points
+        if len(ra) != len(rb) or any(math.dist(p, q) > TOL for p, q in zip(ra, rb, strict=True)):
+            return False
+    return True
+
+
+def _swept_pieces(solid: Solid, at: Transform, prefix: str) -> list[tuple[Swept, str]]:
+    """Every sweep under a union, in union order, each carried into place by the moves above
+    it, with the ref its faces answer to.
+
+    Raises:
+        ValueError: if a piece is anything but a sweep.
+    """
+    called = under(prefix, solid.label)
+    match solid.node:
+        case Union(a, b):
+            return [*_swept_pieces(a, at, called), *_swept_pieces(b, at, called)]
+        case Moved(inner, t):
+            return _swept_pieces(Solid(inner, solid.label), at @ t, prefix)
+        case Swept(profile, path):
+            return [(Swept(moved(profile, at), moved(path, at)), called)]
+        case Extrude() | Revolve() | Hull() | Difference() | Intersection() | Imported():
+            kind = type(solid.node).__name__.lower()
+            msg = (
+                "shell hollows a union only as one run swept in pieces, and"
+                f" {called or 'the unlabelled piece'} is no sweep but a {kind} node: hollowed"
+                " one by one, pieces leave ledges and slivers where their cavities meet"
+            )
+            raise ValueError(msg)
+        case _:
+            assert_never(solid.node)
 
 
 # ---- a loft ------------------------------------------------------------------------------

@@ -20,6 +20,11 @@ kept both; the third was the shell laying a ring of its cavity on the leaning en
 the fourth is facets, and the overhang check now leaves out a patch narrower than
 :data:`~bench.topology.CHORD`. Beside them, a real overhang and a real thin wall, which the
 checks still find.
+
+task-83 is the join task-77 left: a spigot hollowed alone and set on an elbow's leaning
+``end``. That is now built by hollowing the two whole - ``shell(union(elbow, spigot))`` cuts
+one cavity along both paths - which reads clean, and still finds the same run turned too
+far. The pieces hollowed one by one still misread, and a test below says so by name.
 """
 
 import math
@@ -30,7 +35,7 @@ import pytest
 
 from bench.library.print import ASA
 from bench.topology import CHORD
-from tests.adapter.seam_cases import TAP
+from tests.adapter.seam_cases import TAP, TURNS
 from tools import stack
 
 pytestmark = pytest.mark.adapter
@@ -151,3 +156,44 @@ def test_a_shelled_elbow_under_the_plastics_wall_is_still_thin(
     assert thin is not None
     through = float(thin.split("wall is ")[1].split(" mm")[0])
     assert 0.5 - CHORD - 0.01 <= through <= 0.5
+
+
+# ---- task-83: a run swept in pieces, hollowed whole -------------------------------------------
+
+
+@pytest.mark.parametrize("plastic", ["PLA", "ASA"])
+@pytest.mark.parametrize("turn", TURNS)
+def test_an_elbow_and_its_spigot_hollowed_whole_read_no_false_overhang_or_wall(
+    measured: dict[str, Any], turn: float, plastic: str
+) -> None:
+    """Each piece hollowed alone read 70, 57 and 50 degrees on ``spigot/start`` and walls of
+    0.13, 0.00 and 0.17 mm at these turns; one shell of their union reads neither."""
+    found = _found(measured, f"run_{turn:.0f}", plastic)
+    assert found["overhangs"] is None, found["overhangs"]
+    assert found["wall"] is None, found["wall"]
+
+
+@pytest.mark.parametrize("plastic", ["PLA", "ASA"])
+def test_an_elbow_and_its_spigot_hollowed_whole_and_turned_too_far_still_overhang(
+    measured: dict[str, Any], plastic: str
+) -> None:
+    """The same construction turned 60 degrees: the spigot beyond the bend leans 60, and that
+    is found - hollowing the run whole hides nothing that is there."""
+    message, refs = _found(measured, "run_too_far", plastic)["overhangs"]
+    assert "leans 60 degrees" in message
+    assert refs
+
+
+@pytest.mark.parametrize("plastic", ["PLA", "ASA"])
+@pytest.mark.parametrize("turn", TURNS)
+def test_known_limit_pieces_hollowed_one_by_one_on_a_leaning_join_still_misread(
+    measured: dict[str, Any], turn: float, plastic: str
+) -> None:
+    """A known limit, pinned so that it cannot go unnoticed either way: the elbow and spigot
+    each hollowed alone and then unioned still read a false overhang on the spigot's
+    ``start``, where the two cavities meet along a leaning line no float lands on. The fix is
+    the construction above; if this starts reading clean, the modeller has changed and
+    ``shell``'s note on it wants rewriting."""
+    message, refs = _found(measured, f"one_by_one_{turn:.0f}", plastic)["overhangs"]
+    assert "leans" in message
+    assert refs == ["spigot/start"]
