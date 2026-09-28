@@ -210,7 +210,17 @@ export class BenchInspector extends LitElement {
         flex: 1;
         min-height: 0;
         overflow: auto;
-        padding-bottom: 16px;
+        /* What is scrolled to - a face's row revealed in the tree - stops above the export's
+           heading held at the foot, rather than under it. */
+        scroll-padding-bottom: 44px;
+      }
+
+      /* The room under the last section, as a box rather than the column's own padding: a
+         heading held at the foot sits inside the padding, and would stop short of the edge. */
+      .body::after {
+        content: "";
+        display: block;
+        height: 16px;
       }
 
       section {

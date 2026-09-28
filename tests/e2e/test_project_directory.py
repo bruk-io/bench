@@ -242,7 +242,7 @@ def test_which_project_is_open_is_each_browsers_own(
                 else None
             ),
         )
-        desk.click("#rail-files")
+        desk.wait_for_selector("#sidebar", state="visible")
         desk.click("#project-switcher")
         desk.locator("bench-explorer .project", has_text="beta").click()
         desk.wait_for_function(f"() => ({BODIES})() === 2", timeout=BOOT_MS)

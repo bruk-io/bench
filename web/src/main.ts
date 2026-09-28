@@ -105,7 +105,7 @@ import {
   worstPlace,
 } from "./subjects";
 // `remember`/`forget` are still here for what belongs to this browser rather than to a
-// project - the hang fingerprint, the rail's container, the panel. The projects themselves
+// project - the hang fingerprint, the layout, the panel. The projects themselves
 // go through `store` (see `store.ts` on what does not travel).
 import { type Host, host as hostClient } from "./host";
 import { type OutboxState, outbox } from "./outbox";
@@ -158,8 +158,7 @@ const ui = {
   run: need<HTMLButtonElement>("run"),
   stop: need<HTMLButtonElement>("stop"),
   shell: need<HTMLDivElement>("shell"),
-  rail: need<HTMLElement>("rail"),
-  railFiles: need<HTMLButtonElement>("rail-files"),
+  filesToggle: need<HTMLButtonElement>("files-toggle"),
   sidebar: need<HTMLElement>("sidebar"),
   explorer: need<BenchExplorer>("explorer"),
   examples: need<BenchExamplesMenu>("examples-menu"),
@@ -172,7 +171,6 @@ const ui = {
   adoptYes: need<HTMLButtonElement>("adopt-yes"),
   adoptNo: need<HTMLButtonElement>("adopt-no"),
   lease: need<BenchLeaseChip>("lease"),
-  standing: need<HTMLSpanElement>("standing"),
   layout: need<BenchLayoutSwitch>("layout"),
   groups: need<HTMLDivElement>("groups"),
   editorTabs: need<HTMLDivElement>("editor-tabs"),
@@ -347,7 +345,7 @@ function showNoHost(why: string): void {
   ui.reach.textContent = "no host";
   ui.reach.title = why;
   ui.reach.dataset.state = "error";
-  for (const away of [ui.rail, ui.sidebar, ui.examples, ui.editorTabs, ui.panelScript]) {
+  for (const away of [ui.filesToggle, ui.sidebar, ui.examples, ui.editorTabs, ui.panelScript]) {
     away.inert = true;
   }
   ui.run.disabled = true;
@@ -487,8 +485,8 @@ function show(next: Workspace): void {
 // ---- the write lease: who may write the open project -----------------------------------
 
 /** Say where this tab stands on the open project, everywhere it changes what a person can do:
- * the header's chip with whose it is, the status bar, the editor taking typing or not,
- * the knobs' own container, and every control that would write. */
+ * the header's chip with whose it is - its one home (task-94) - the editor taking typing or
+ * not, the knobs' own container, and every control that would write. */
 function showStanding(): void {
   const standing = lease?.standing() ?? null;
   const reading = standing?.kind === "reader" && standing.project === workspace.current ? standing : null;
@@ -502,17 +500,13 @@ function showStanding(): void {
   if (reading === null) {
     ui.lease.words = null;
     ui.lease.lost = false;
-    ui.standing.hidden = true;
     if (reach !== null && reachPutAway) showReach(reach.state());
     return;
   }
   const words = readOnlyWords(reading.project, reading.holder, reading.lost);
   ui.lease.words = words;
   ui.lease.lost = reading.lost;
-  ui.standing.hidden = false;
   if (reach !== null) showReach(reach.state());
-  ui.standing.textContent = words.chip;
-  ui.standing.title = words.chipTitle;
 }
 
 /** The lease came back to this tab after somebody else had it: what is on the host now is read
@@ -1278,26 +1272,27 @@ function showStreams(said: { readonly stdout: string; readonly stderr: string })
 
 // ---- the sidebar: the project, and only the project -------------------------------
 
-/** Whether the sidebar and the centre are sharing the room rather than sitting side by side -
- * the one width at which putting the sidebar away means anything. */
-const sharing = (): boolean => window.matchMedia("(max-width: 1000px)").matches;
+/** Whether the files are on screen - which the stylesheet decides from `data-sidebar` and
+ * the width: `auto` shows them beside the work, folds them in the View layout, and keeps them
+ * folded on a narrow window, where showing them takes the centre's place. */
+const filesShown = (): boolean => getComputedStyle(ui.sidebar).display !== "none";
 
-// The sidebar is the project and its files and nothing else (decision-12), so the rail has one
-// button, which says the sidebar is showing - and which, on a narrow window, is how it is
-// asked for and put away again, since there it takes the centre's place.
-ui.railFiles.setAttribute("aria-pressed", "true");
-ui.railFiles.addEventListener("click", () => {
-  // Side by side there is nowhere for the sidebar to go, and a click that silently did nothing
-  // would be worse than one that re-shows.
-  if (sharing() && ui.shell.classList.contains("is-open")) {
-    ui.shell.classList.remove("is-open");
-    return;
-  }
-  // "The maker asked for the sidebar", which is only ever true of a click. Setting it on the
-  // first paint instead is what made a narrow window open on the sidebar with the script and
-  // the view nowhere to be seen.
-  ui.shell.classList.add("is-open");
+/** Say on the header's button whether the files are showing. */
+function showFilesToggle(): void {
+  ui.filesToggle.setAttribute("aria-pressed", String(filesShown()));
+}
+
+// The sidebar is the project and its files and nothing else (decision-12), and the header's
+// files button shows it or folds it away (task-94) - at any width and in any layout, where the
+// rail's one button only ever re-showed it. What a click asks for lasts until the layout
+// changes, which goes back to what that layout does by itself. "The maker asked for the files"
+// is only ever true of a click: set on the first paint instead, it is what once made a narrow
+// window open on the files with the script and the view nowhere to be seen.
+ui.filesToggle.addEventListener("click", () => {
+  ui.shell.dataset["sidebar"] = filesShown() ? "folded" : "shown";
+  showFilesToggle();
 });
+window.matchMedia("(max-width: 1000px)").addEventListener("change", showFilesToggle);
 
 // ---- the editor group: the script, its values, and any sheet or report opened beside them ----
 
@@ -2101,7 +2096,11 @@ let layout: Layout = FIRST_LAYOUT;
 function showLayout(next: Layout): void {
   layout = next;
   ui.groups.dataset["layout"] = next;
+  // The shell reads it too: View folds the files, so the view takes all but the inspector.
+  ui.shell.dataset["layout"] = next;
+  ui.shell.dataset["sidebar"] = "auto";
   ui.layout.layout = next;
+  showFilesToggle();
 }
 
 /** A layout the person chose, by the control or the shortcut: shown, and remembered for this

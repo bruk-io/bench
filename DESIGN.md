@@ -987,6 +987,20 @@ Export all), a part (its findings as places, its faces tree, its files), a face,
 mesh (survey, detect faces, placement). A status bar shows run state and errors (with line
 highlighted in the editor), and its count of findings selects the part worst off.
 
+The knobs sit at the top of the inspector whatever the subject - open on the project, folded
+to their heading on anything selected - so a knob turns without leaving the part being read; a
+section with nothing in it is not drawn; and the export's heading holds to the foot of the
+column while the export is further down (task-94). The header's files button shows the
+project's files or folds them away, and the View layout folds them by itself, so the view takes
+all but the inspector. Who holds the write lease is said once, by the header's chip.
+
+A place a finding names is framed when clicked: every part's scene carries `sights` - for each
+named face, each node above one and the part itself, the box its triangles fill and the unit
+direction to look from, which is the way the place faces leaned toward the standing
+three-quarter view and never straight along Z - summed in Python in the same pass as the face
+areas. The view only applies it, *On bed* through the placement the body is already drawn
+with, so an underside is looked at from underneath.
+
 The viewer is **one view of every part** (three.js). A laser part is drawn as the plate it
 is cut from, swept in Python (`bench.plates`) to its stock's thickness with its engravings
 on top, and a printed part as the body the kernel built; they lie in wrapping rows on one
