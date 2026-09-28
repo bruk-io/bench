@@ -25,7 +25,7 @@ describe("launch: which slicer, and the command that opens the file in it", () =
     const env = { [SLICER_VARIABLE]: "/opt/slicers/prusa-slicer" };
     expect(launch(null, env, "linux", FILE)).toEqual({
       argv: ["/opt/slicers/prusa-slicer", FILE],
-      slicer: "/opt/slicers/prusa-slicer",
+      slicer: "prusa-slicer",
       said: "environment",
     });
     expect(launch("OrcaSlicer", env, "darwin", FILE)).toEqual({
@@ -41,12 +41,11 @@ describe("launch: which slicer, and the command that opens the file in it", () =
 
   it("runs a path to a program on macOS, and opens a path to an .app as the application", () => {
     expect(launch("/usr/local/bin/record-argv", {}, "darwin", FILE).argv).toEqual(["/usr/local/bin/record-argv", FILE]);
-    expect(launch("/Applications/OrcaSlicer.app", {}, "darwin", FILE).argv).toEqual([
-      "open",
-      "-a",
-      "/Applications/OrcaSlicer.app",
-      FILE,
-    ]);
+    expect(launch("/Applications/OrcaSlicer.app", {}, "darwin", FILE)).toEqual({
+      argv: ["open", "-a", "/Applications/OrcaSlicer.app", FILE],
+      slicer: "OrcaSlicer",
+      said: "project",
+    });
   });
 
   it("keeps a name with spaces or a shell's punctuation in it one argument, never a command", () => {

@@ -130,7 +130,7 @@ def test_the_file_lands_in_prints_and_the_hosts_slicer_is_started_with_it(hosted
     assert answer.status == 200, answer
     assert answer.json() == {
         "file": "prints/cabinet.3mf",
-        "slicer": str(hosted.server.root.parent / "bin" / "host-slicer"),
+        "slicer": "host-slicer",
         "said": "environment",
     }
     landed = hosted.server.root / "cabinet" / "prints" / "cabinet.3mf"

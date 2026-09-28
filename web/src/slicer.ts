@@ -58,9 +58,14 @@ export function launch(
   }
   const app = platform === "darwin" && (!chosen.includes("/") || /\.app\/?$/i.test(chosen));
   return app
-    ? { argv: ["open", "-a", chosen, file], slicer: chosen, said }
-    : { argv: [chosen, file], slicer: chosen, said };
+    ? { argv: ["open", "-a", chosen, file], slicer: called(chosen), said }
+    : { argv: [chosen, file], slicer: called(chosen), said };
 }
+
+/** A slicer as a person names it: the last part of a path, without an application's `.app` -
+ * `/Applications/OrcaSlicer.app` is OrcaSlicer, and a bare name is itself. */
+const called = (chosen: string): string =>
+  (chosen.replace(/\/+$/, "").split("/").pop() ?? chosen).replace(/\.app$/i, "") || chosen;
 
 /** How a launch failed: the program was not there to start (`code`, Node's `ENOENT` or
  * `EACCES`), or it started and said no - its exit status and what it wrote to stderr. */
@@ -82,17 +87,19 @@ const HOW_TO_NAME =
  * what happened, and what to set to choose another. */
 export function unlaunched(chosen: Launch, failed: Failure): string {
   const command = chosen.argv.slice(0, -1).join(" ");
+  // The slicer as it was named - a whole path, where a person has to see which one was meant.
+  const program = (chosen.argv[0] === "open" ? chosen.argv[2] : chosen.argv[0]) ?? chosen.slicer;
   if ("code" in failed) {
     const why = failed.code === "EACCES" ? "is there but cannot be run" : "is not there";
-    return `No slicer was found: ${chosen.slicer} (${WHERE[chosen.said]}) ${why}. ${HOW_TO_NAME}`;
+    return `No slicer was found: ${program} (${WHERE[chosen.said]}) ${why}. ${HOW_TO_NAME}`;
   }
   const said = failed.stderr.trim().split(/\r?\n/)[0] ?? "";
   // `open -a` names an application it cannot find this way, and exits 1.
   if (chosen.argv[0] === "open" && /unable to find application/i.test(said)) {
-    return `No slicer was found: ${chosen.slicer} (${WHERE[chosen.said]}) is not installed. ${HOW_TO_NAME}`;
+    return `No slicer was found: ${program} (${WHERE[chosen.said]}) is not installed. ${HOW_TO_NAME}`;
   }
   const status = failed.exit === null ? "was stopped" : `exited ${String(failed.exit)}`;
-  return `${chosen.slicer} (${WHERE[chosen.said]}) would not open the file: ${command} ${status}${
+  return `${program} (${WHERE[chosen.said]}) would not open the file: ${command} ${status}${
     said === "" ? "" : ` - ${said}`
   }. ${HOW_TO_NAME}`;
 }
