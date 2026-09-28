@@ -3,7 +3,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { SheetView } from "../../scene";
 import type { BenchFileRow } from "../molecules/file-row";
 import "./exports";
-import type { BenchExports, FileSaveDetail, FilesSaveAllDetail, SheetOpenDetail } from "./exports";
+import type {
+  BenchExports,
+  FileSaveDetail,
+  FilesSaveAllDetail,
+  SheetOpenDetail,
+  SlicerOpenDetail,
+} from "./exports";
 
 const SHEET: SheetView = {
   name: "sheet-3mm-01",
@@ -18,7 +24,7 @@ const ONE_PIECE: SheetView = { ...SHEET, name: "sheet-6mm-01", thickness: 6, par
 /** 2048 zero bytes as base64: 2.0 kB of file, 2.7 kB of string. */
 const STL = btoa("\0".repeat(2048));
 
-type Fields = Partial<Pick<BenchExports, "sheets" | "files" | "onlyPart">>;
+type Fields = Partial<Pick<BenchExports, "sheets" | "files" | "onlyPart" | "slicer" | "opening">>;
 
 async function mounted(fields: Fields = {}): Promise<BenchExports> {
   const list = document.createElement("bench-exports");
@@ -141,5 +147,71 @@ describe("bench-exports, one part's files", () => {
     const list = await mounted({ sheets: [SHEET], files, onlyPart: { ref: "runner", label: "runner" } });
     expect(rows(list)).toHaveLength(0);
     expect(inside(list, ".quiet")?.textContent).toContain("no file of its own");
+  });
+});
+
+describe("bench-exports, open in slicer (task-86)", () => {
+  const files = {
+    "sheet-3mm-01.svg": "<svg/>",
+    "part-front.svg": "<svg/>",
+    "knob.stl": STL,
+    "cabinet.3mf": STL,
+  };
+
+  /** The rows that offer *Open in slicer*, by name. */
+  const offered = (list: BenchExports): string[] =>
+    rows(list)
+      .filter((row) => row.querySelector(".slicer") !== null)
+      .map((row) => row.name);
+
+  it("offers it on every file a printer reads, and only when a host is serving the project", async () => {
+    const hosted = await mounted({ sheets: [SHEET], files, slicer: true });
+    expect(offered(hosted)).toEqual(["knob.stl", "cabinet.3mf"]);
+    const hostless = await mounted({ sheets: [SHEET], files });
+    expect(offered(hostless)).toEqual([]);
+  });
+
+  it("offers it beside a part's own body", async () => {
+    const list = await mounted({ files, onlyPart: { ref: "knob", label: "knob" }, slicer: true });
+    expect(offered(list)).toEqual(["knob.stl"]);
+  });
+
+  it("sends the file up to be opened rather than opening anything itself", async () => {
+    const list = await mounted({ files, slicer: true });
+    let detail: SlicerOpenDetail | null = null;
+    list.addEventListener("slicer-open", (event) => {
+      detail = (event as CustomEvent<SlicerOpenDetail>).detail;
+    });
+    rows(list)
+      .find((row) => row.name === "cabinet.3mf")
+      ?.querySelector<HTMLButtonElement>(".slicer")
+      ?.click();
+    expect(detail).toEqual({ name: "cabinet.3mf", data: STL });
+  });
+
+  it("says under the row how it went, and holds the button while it is on its way", async () => {
+    const list = await mounted({
+      files,
+      slicer: true,
+      opening: {
+        "cabinet.3mf": { state: "opening" },
+        "knob.stl": { state: "failed", message: "No slicer was found: BambuStudio is not installed." },
+      },
+    });
+    const said = (name: string): HTMLElement | null => inside(list, `.opening[data-file="${name}"]`);
+    expect(said("cabinet.3mf")?.textContent.trim()).toBe("Opening cabinet.3mf in the slicer…");
+    expect(said("knob.stl")?.classList.contains("failed")).toBe(true);
+    expect(said("knob.stl")?.textContent.trim()).toBe("No slicer was found: BambuStudio is not installed.");
+    const button = (name: string): HTMLButtonElement | null | undefined =>
+      rows(list)
+        .find((row) => row.name === name)
+        ?.querySelector<HTMLButtonElement>(".slicer");
+    expect(button("cabinet.3mf")?.disabled).toBe(true);
+    expect(button("knob.stl")?.disabled).toBe(false);
+
+    list.opening = { "cabinet.3mf": { state: "opened", message: "Opened prints/cabinet.3mf in BambuStudio." } };
+    await list.updateComplete;
+    expect(said("cabinet.3mf")?.textContent.trim()).toBe("Opened prints/cabinet.3mf in BambuStudio.");
+    expect(said("knob.stl")).toBeNull();
   });
 });

@@ -45,13 +45,14 @@ import type { BenchLayoutSwitch } from "./components/molecules/layout-switch";
 import type { BenchViewModes } from "./components/molecules/view-modes";
 import type { BenchExamplesMenu } from "./components/organisms/examples-menu";
 import type { BenchExplorer } from "./components/organisms/explorer";
+import type { Opening } from "./components/organisms/exports";
 import type { BenchInspector } from "./components/organisms/inspector";
 import type { BenchLeaseChip } from "./components/organisms/lease-chip";
 import type { BenchPanel } from "./components/organisms/panel";
 import { treeOf } from "./components/organisms/refs-tree";
 import { buttons } from "./components/styles";
 import { deferred3d } from "./deferred3d";
-import { save, zip } from "./downloads";
+import { contentOf, save, zip } from "./downloads";
 import * as editor from "./editor";
 import { pictured } from "./exports";
 import {
@@ -301,6 +302,8 @@ async function chosenStore(): Promise<Chosen> {
     }
     if (listing !== null && listing.ok) {
       client = route;
+      // A host is what opens a file in the slicer, so *Open in slicer* is offered once one is.
+      ui.inspector.slicer = true;
       reach = box;
       return { store: hostStore(route, box) };
     }
@@ -1751,6 +1754,57 @@ document.addEventListener("file-save", (event) => {
 });
 document.addEventListener("files-save-all", (event) => {
   save("bench-cut-files.zip", zip(event.detail.files));
+});
+
+/** `project` on the host before a file goes into its `prints/`: a write of it still on its way -
+ * an example picked a moment ago is a project whose first files have not landed yet - is
+ * waited for, the way a rename waits (`store-host.ts`), so the host does not answer that there
+ * is no such project. A fresh host's untouched first example is not on the host at all, and
+ * the host says so; the shipped one makes nothing a printer reads. */
+async function onHost(project: string): Promise<void> {
+  const box = reach;
+  if (box === null) return;
+  const waiting = async (): Promise<boolean> =>
+    [...(await box.pending()).values()].some((one) => one.project === project);
+  for (let tries = 0; (await waiting()) && tries < 25; tries += 1) {
+    box.drain();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+}
+
+/** Hand the file called `name` - a 3MF or an STL the newest run made, as the scene carries it -
+ * to the host, which writes it into the open project's `prints/` and opens it in its slicer
+ * (task-86); what the host said is shown under the row it was asked from. */
+async function openInSlicer(name: string, data: string): Promise<void> {
+  const route = client;
+  const project = workspace.current;
+  if (route === null || project === "") return;
+  const said = (one: Opening): void => {
+    ui.inspector.opening = { ...ui.inspector.opening, [name]: one };
+  };
+  said({ state: "opening" });
+  try {
+    await onHost(project);
+    const answer = await route.print(project, name, contentOf(name, data));
+    if (answer.ok) {
+      said({ state: "opened", message: `Opened ${answer.value.file} in ${answer.value.slicer}.` });
+      log("info", "bench.slicer", "a file was opened in the slicer", {
+        "bench.file": answer.value.file,
+        "bench.slicer": answer.value.slicer,
+      });
+    } else {
+      said({ state: "failed", message: answer.refusal.message });
+      log("warn", "bench.slicer", "the host did not open a file in the slicer", {
+        "bench.file": name,
+        "bench.refused": answer.refusal.refused,
+      });
+    }
+  } catch {
+    said({ state: "failed", message: "The host did not answer, so nothing was opened." });
+  }
+}
+document.addEventListener("slicer-open", (event) => {
+  void openInSlicer(event.detail.name, event.detail.data);
 });
 
 ui.panel.addEventListener("click", () => {

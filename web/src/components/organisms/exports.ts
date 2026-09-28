@@ -6,8 +6,13 @@
  * container, which said the same thing twice; a sheet's row here does both jobs, taking the
  * sheet away as SVG or DXF, and opening it beside the script on a click on its picture.
  *
- * Everything comes down as properties, and a click goes back up: `file-save`, `files-save-all`
- * and `sheet-open`. The grouping itself is `exports.ts`'s, which is pure.
+ * Everything comes down as properties, and a click goes back up: `file-save`, `files-save-all`,
+ * `sheet-open` and `slicer-open`. The grouping itself is `exports.ts`'s, which is pure.
+ *
+ * *Open in slicer* (task-86) sits on every row a printer reads - the run's 3MF and each part's
+ * STL - when a host is serving the project (`slicer`), since it is the host that writes the
+ * file into the project's `prints/` and opens it. How each one went comes back down as
+ * `opening`, and is said under its row, where the click was.
  */
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
@@ -27,6 +32,19 @@ export interface FileSaveDetail {
 export interface FilesSaveAllDetail {
   readonly files: Readonly<Record<string, string>>;
 }
+
+/** A file a person asked to open in the host's slicer: its name and what is in it (base64). */
+export interface SlicerOpenDetail {
+  readonly name: string;
+  readonly data: string;
+}
+
+/** How opening one file in the slicer is going: on its way, opened - and in which slicer, as
+ * the host said it - or refused, with the host's reason in its own words. */
+export type Opening =
+  | { readonly state: "opening" }
+  | { readonly state: "opened"; readonly message: string }
+  | { readonly state: "failed"; readonly message: string };
 
 /** Which sheet a person asked to look at. */
 export interface SheetOpenDetail {
@@ -99,6 +117,19 @@ export class BenchExports extends LitElement {
         justify-self: start;
         margin-top: 8px;
       }
+
+      /* How opening a file in the slicer went, under the row it was asked from. */
+      .opening {
+        margin: 0 0 4px;
+        font-size: 11px;
+        line-height: 1.35;
+        color: var(--fg-dim);
+        overflow-wrap: anywhere;
+      }
+
+      .opening.failed {
+        color: var(--danger);
+      }
     `,
   ];
 
@@ -110,6 +141,12 @@ export class BenchExports extends LitElement {
 
   /** The part whose files these are - or `null` for the whole project's, with *Download all*. */
   @property({ attribute: false }) onlyPart: { readonly ref: string; readonly label: string } | null = null;
+
+  /** Whether a host is serving the project, and so can open a file in its slicer. */
+  @property({ type: Boolean }) slicer = false;
+
+  /** How each file asked for in the slicer is going, by name. */
+  @property({ attribute: false }) opening: Readonly<Record<string, Opening>> = {};
 
   override render() {
     const { sheets, printed, others } =
@@ -126,7 +163,7 @@ export class BenchExports extends LitElement {
         ${printed.length === 0
           ? nothing
           : html`<p class="group">for the printer (${printed.length})</p>
-              ${printed.map((row) => this.row(row, false))}`}
+              ${printed.map((row) => this.row(row, false, this.slicer))}`}
         ${others.length === 0
           ? nothing
           : html`<p class="group">other files (${others.length})</p>
@@ -138,7 +175,8 @@ export class BenchExports extends LitElement {
     `;
   }
 
-  private row(row: Row, sheet: boolean) {
+  private row(row: Row, sheet: boolean, slicer = false) {
+    const opening = slicer ? this.opening[row.name] : undefined;
     return html`
       <bench-file-row name=${row.name} meta=${row.meta}>
         ${sheet && row.preview !== undefined
@@ -166,8 +204,38 @@ export class BenchExports extends LitElement {
             </button>
           `,
         )}
+        ${slicer
+          ? html`<button
+              class="slicer"
+              type="button"
+              title="Write ${row.name} into the project's prints folder and open it in the slicer"
+              ?disabled=${opening?.state === "opening"}
+              @click=${() => {
+                this.openInSlicer(row);
+              }}
+            >
+              Open in slicer
+            </button>`
+          : nothing}
       </bench-file-row>
+      ${opening === undefined
+        ? nothing
+        : html`<p class="opening ${opening.state}" role="status" data-file=${row.name}>
+            ${opening.state === "opening" ? `Opening ${row.name} in the slicer…` : opening.message}
+          </p>`}
     `;
+  }
+
+  private openInSlicer(row: Row): void {
+    const [download] = row.downloads;
+    if (download === undefined) return;
+    this.dispatchEvent(
+      new CustomEvent<SlicerOpenDetail>("slicer-open", {
+        bubbles: true,
+        composed: true,
+        detail: { name: download.name, data: download.data },
+      }),
+    );
   }
 
   private open(name: string): void {
@@ -202,6 +270,7 @@ declare global {
     "file-save": CustomEvent<FileSaveDetail>;
     "files-save-all": CustomEvent<FilesSaveAllDetail>;
     "sheet-open": CustomEvent<SheetOpenDetail>;
+    "slicer-open": CustomEvent<SlicerOpenDetail>;
   }
 
   /** The two saves bubble out of every shadow root and are listened for on the document,
@@ -209,5 +278,6 @@ declare global {
   interface DocumentEventMap {
     "file-save": CustomEvent<FileSaveDetail>;
     "files-save-all": CustomEvent<FilesSaveAllDetail>;
+    "slicer-open": CustomEvent<SlicerOpenDetail>;
   }
 }

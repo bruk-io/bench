@@ -86,7 +86,7 @@ function bytes(text: string): Uint8Array<ArrayBuffer> {
 }
 
 /** One file of a scene as the bytes to write, decoded if the name says it is bytes. */
-const contentOf = (name: string, text: string): Uint8Array<ArrayBuffer> =>
+export const contentOf = (name: string, text: string): Uint8Array<ArrayBuffer> =>
   isBinary(name) ? bytes(text) : encoder.encode(text);
 
 /** How big the file called `name` really is, in bytes - not how long its string is. */

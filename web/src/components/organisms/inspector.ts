@@ -21,8 +21,8 @@
  * `subject-pick` from the breadcrumb, a part row or a face's part, `insert-ref`, `insert-fit`,
  * `params-reset` and `refs-show-all` from here, and whatever the organisms inside it say
  * (`param-change`, `place-pick`, `ref-pick`, `ref-visibility`, `ref-isolate`, `reference-pick`,
- * `goto-line`, `file-save`, `files-save-all`, `sheet-open`, the reference tools'), all composed,
- * so the page listens on this one element.
+ * `goto-line`, `file-save`, `files-save-all`, `sheet-open`, `slicer-open`, the reference tools'),
+ * all composed, so the page listens on this one element.
  *
  * **The faces tree is one element across a part and its faces.** It is drawn by one template at
  * one place in the column for both subjects, so clicking a face in it - which makes the face the
@@ -53,6 +53,7 @@ import "../molecules/reference-list";
 import "../molecules/violation-list";
 import { base, buttons } from "../styles";
 import "./exports";
+import type { Opening } from "./exports";
 import "./params";
 import "./reference-tools";
 import type { ReferenceToolsView } from "./reference-tools";
@@ -409,6 +410,11 @@ export class BenchInspector extends LitElement {
   @property({ attribute: false }) warnings: readonly string[] = [];
   @property({ attribute: false }) sheets: readonly SheetView[] = [];
   @property({ attribute: false }) files: Readonly<Record<string, string>> = {};
+
+  /** Whether a host is serving the project, so *Open in slicer* can be offered, and how each
+   * file asked for in the slicer is going (task-86). */
+  @property({ type: Boolean }) slicer = false;
+  @property({ attribute: false }) opening: Readonly<Record<string, Opening>> = {};
 
   /** The printer's bed the printed parts are laid on, or `null` when nothing named one. */
   @property({ attribute: false }) bed: BedView | null = null;
@@ -825,6 +831,8 @@ export class BenchInspector extends LitElement {
           .sheets=${this.sheets}
           .files=${this.files}
           .onlyPart=${part === null ? null : { ref: part.ref, label: part.label }}
+          ?slicer=${this.slicer}
+          .opening=${this.opening}
         ></bench-exports>
       </section>
     `;
