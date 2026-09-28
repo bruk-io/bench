@@ -39,9 +39,17 @@ export class BenchExports extends LitElement {
     base,
     buttons,
     css`
+      /* One column the width of the inspector, never wider: a row's name is what gives way,
+         so every row's buttons stay in reach. */
       :host {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
         gap: 2px;
+      }
+
+      #outputs {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
       }
 
       .quiet {
