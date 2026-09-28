@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from bench import script
-from bench.scene import OkScene
+from bench.scene import ContextView, MeshView, OkScene
 from bench.transport import scene_json, scene_wire
 
 pytestmark = pytest.mark.functional
@@ -86,6 +86,37 @@ def test_a_part_with_no_body_keeps_its_nulls() -> None:
     text, buffers = scene_wire(_ok(PRINTED_ONLY))
     [part] = json.loads(text)["parts"]
     assert (part["mesh"], part["marks"], buffers) == (None, None, [])
+
+
+def _shown_with_context(scene: OkScene) -> OkScene:
+    """``scene`` with two context bodies beside it: one with a mesh of one named triangle, and
+    one a run had no kernel to build. A value like any other scene, written out by hand, since
+    a run with no kernel builds no context mesh for this layer to wire."""
+    pin = MeshView(
+        positions=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0], ref_index=[1], refs=["pin/top"]
+    )
+    return {
+        **scene,
+        "context": [ContextView(ref="pin", mesh=pin), ContextView(ref="ghost", mesh=None)],
+    }
+
+
+def test_a_context_body_takes_the_two_buffers_after_every_parts() -> None:
+    scene = _shown_with_context(_ok(SCORED))
+    text, buffers = scene_wire(scene)
+    pin, ghost = json.loads(text)["context"]
+    assert pin == {"ref": "pin", "mesh": {"positions": 4, "ref_index": 5, "refs": ["pin/top"]}}
+    assert ghost == {"ref": "ghost", "mesh": None}
+    assert (buffers[4].typecode, len(buffers[4])) == ("f", 9)
+    assert (buffers[5].typecode, list(buffers[5])) == ("I", [1])
+    assert len(buffers) == 6, "the plate's mesh and marks first, then the pin, and no more"
+
+
+def test_a_scene_with_no_context_is_wired_exactly_as_it_was() -> None:
+    scene = _ok(SCORED)
+    text, buffers = scene_wire(scene)
+    assert json.loads(text)["context"] == []
+    assert len(buffers) == 4
 
 
 def test_a_failed_run_is_its_json_and_no_buffers() -> None:

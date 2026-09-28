@@ -19,6 +19,7 @@ from bench.stage import (
     positions,
     ref_table,
     shifted,
+    widened,
 )
 
 pytestmark = pytest.mark.unit
@@ -101,6 +102,26 @@ def test_a_posed_part_with_nothing_to_show_takes_no_place_either() -> None:
 
 def test_a_posed_stage_with_no_bodies_is_the_same_empty_room() -> None:
     assert as_given([None]) == ((None,), EMPTY)
+
+
+# ---- widened: room for a body shown for context -------------------------------------------
+
+
+def test_a_stage_is_widened_to_hold_a_context_body_where_it_stands() -> None:
+    """A pipe through a bracket reaches past it either side; nothing moves it, so the stage
+    grows round it instead."""
+    assert widened(Box(0, 0, 0, 20, 10, 5), [_slab(-15, 2, 1, 35, 8, 9)]) == Box(
+        -15, 0, 0, 35, 10, 9
+    )
+
+
+def test_a_stage_no_part_stands_on_is_the_context_alone() -> None:
+    """``None`` rather than :data:`EMPTY`: the small room is not something anybody drew."""
+    assert widened(None, [_slab(100, 100, 0, 110, 120, 30)]) == Box(100, 100, 0, 110, 120, 30)
+
+
+def test_nothing_at_all_is_still_the_empty_room() -> None:
+    assert widened(None, [Mesh((), (), ())]) == EMPTY
 
 
 def test_the_grid_is_a_quarter_wider_than_the_work_in_whole_cells() -> None:

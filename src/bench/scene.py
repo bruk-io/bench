@@ -155,6 +155,20 @@ class PartView(TypedDict, closed=True):
     frames: dict[str, FrameView]
 
 
+class ContextView(TypedDict, closed=True):
+    """A body a script showed for context - what a part mates with, a reference piece in its
+    seated pose, the ghost of a body round the part - drawn where it was drawn and made of
+    nothing: it is not a part, so it is on no sheet, in no file and in no count.
+
+    ``ref`` is the label the script gave it, and every named face of ``mesh`` is under it the
+    way a part's are - ``pipe/side-0`` - so a click on one names it; a triangle of no named
+    face, which is every triangle of an imported mesh, indexes nothing and names nothing.
+    ``mesh`` is ``None`` without a kernel to build it."""
+
+    ref: str
+    mesh: MeshView | None
+
+
 class ViolationView(TypedDict, closed=True):
     """One thing a check found, as the app shows it: which check, what it says, how much it
     matters, the refs to highlight, and the line of the script that asked - so a violation
@@ -201,6 +215,10 @@ class OkScene(TypedDict, closed=True):
     nothing else: it names no faces - every one of its triangles indexes nothing, which is
     what keeps it out of a selection - it is not a part, it is nested onto no sheet and it
     reaches no exported file. ``None`` when the host offered nothing.
+
+    ``context`` is every body the script showed with ``context(...)`` rather than as a part,
+    in the order it said them: drawn translucent beside the parts, and - like ``reference`` -
+    never a part, never nested and never in ``files``. Empty when it showed none.
     """
 
     ok: Literal[True]
@@ -217,6 +235,7 @@ class OkScene(TypedDict, closed=True):
     stdout: str
     stderr: str
     reference: MeshView | None
+    context: list[ContextView]
 
 
 class ErrorScene(TypedDict, closed=True):
