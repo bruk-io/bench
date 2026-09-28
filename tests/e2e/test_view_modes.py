@@ -184,6 +184,7 @@ def test_the_view_opens_assembled_with_no_bed_and_no_section(printed_page: Page)
     assert _data(page, "mode") == "assembled"
     assert page.locator("#mode-assembled").get_attribute("aria-checked") == "true"
     assert _data(page, "section") == ""
+    assert _data(page, "floor") == "", "an assembly has no bed"
     assert page.locator("#section-bar").is_hidden()
     assert _counted(page, CUT) == 0
 
@@ -204,9 +205,11 @@ def test_on_bed_lays_the_printed_part_on_the_printers_bed(
         assert (_data(page, "bed"), _data(page, "plates"), _data(page, "laid")) == ("H2D", "1", "1")
         assert _data(page, "unfit") == "0"
         assert _data(page, "section") == ""
+        assert _data(page, "floor") == "on"
         page.screenshot(path=str(screenshots / "89-on-bed-bin.png"))
     finally:
         _mode(page, "assembled")
+    assert _data(page, "floor") == ""
 
 
 @pytest.mark.e2e
@@ -286,6 +289,7 @@ def test_section_cuts_a_context_body_as_well_as_the_part_and_fills_both(
         low, high = _span(page)
         _cut_at(page, "y", (low + high) / 2)
         assert _data(page, "section").startswith("y:")
+        assert _data(page, "floor") == "", "a section is of the assembly, which has no bed"
         assert _counted(page, CUT) > ENOUGH, "the bracket's cut face is not filled"
         assert _counted(page, CONTEXT_CUT) > ENOUGH, "the pipe's cut face is not filled"
         page.screenshot(path=str(screenshots / "89-section-pipe-bracket.png"))

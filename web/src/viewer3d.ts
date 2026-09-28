@@ -40,7 +40,8 @@
  * box it fills, `data-selected` and `data-pointed` for the refs lit, `data-lit` for how many
  * triangles are painted as selected, `data-distance` for how far the camera stands from what
  * it looks at, `data-datum` for how long the origin's own X/Y/Z arms are drawn,
- * `data-mode` for the way of looking, `data-section` for the axis and position a section is
+ * `data-mode` for the way of looking, `data-floor` for whether a bed's floor is drawn (only
+ * ever *On bed*), `data-section` for the axis and position a section is
  * clipping at (empty unless in *Section*), `data-bed` for the printer *On bed* lays parts on
  * and `data-plates` for how many of its plates they take, `data-laid` for how many parts it
  * lays,
@@ -795,6 +796,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     capping.visible = cutting;
     if (cutting && section !== null) layCaps(section);
     bedGroup.visible = onBed;
+    container.dataset["floor"] = onBed && bedGroup.children.length > 0 ? "on" : "";
     let unfit = 0;
     for (const body of bodies) {
       const laid = onBed ? body.placement : null;

@@ -120,3 +120,28 @@ def test_a_script_naming_a_volume_is_laid_on_it_with_no_host_printer_at_all() ->
     assert bed is not None
     assert bed["volume"] == [500.0, 400.0, 300.0]
     assert Volume(*bed["volume"]) == Volume(500, 400, 300)
+
+
+BAD_BED_FACE = """\
+from bench import *
+from bench.library.print import PLA
+
+block = part("block", cuboid(10, 6, 3), Printed(PLA, Orient(bed_face="no-such-face")))
+show(block)
+"""
+"""A ``bed_face`` naming nothing on the part."""
+
+
+def test_a_bed_face_naming_nothing_stops_a_run_that_has_a_bed_to_lay_it_on() -> None:
+    """Laying a part on the bed reads its ``bed_face``, the way writing its STL does with a
+    modeller: a face the part has not got is the script's mistake, and the run says so rather
+    than laying the part at a turn nobody asked for - with or without a modeller now, where
+    before task-89 a run with no modeller never read it at all."""
+    scene = run(BAD_BED_FACE, printer=PRINTER)
+    assert scene["ok"] is False
+    assert "no-such-face" in scene["error"]["message"]
+
+
+def test_a_bed_face_naming_nothing_is_not_read_without_a_bed() -> None:
+    """No printer and no modeller: nothing lays the part down, so nothing reads the face."""
+    assert run(BAD_BED_FACE)["ok"] is True
