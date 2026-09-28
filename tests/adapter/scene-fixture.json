@@ -2294,5 +2294,6 @@
   "warnings": [],
   "stdout": "carcass 188.5 x 97.0 x 273.3 mm\n6 drawers of 175.0 x 91.0 x 36.0 mm\n",
   "stderr": "",
-  "reference": null
+  "reference": null,
+  "context": []
 }

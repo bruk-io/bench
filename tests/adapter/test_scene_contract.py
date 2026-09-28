@@ -249,6 +249,20 @@ def test_an_override_crosses_the_json_boundary() -> None:
 
 
 @pytest.mark.adapter
+def test_a_scene_with_a_body_shown_for_context_is_an_ok_scene() -> None:
+    """The cabinet shows no context, so its ``context`` is an empty list that says nothing
+    about :class:`~bench.scene.ContextView`'s own keys; a script that shows one does."""
+    scene = _ran(
+        "from bench import *\n\n"
+        "context(cylinder(5, 20), label='pin')\n"
+        "show(part('plate', fill(rect(10, 10)), Stock(3, 'ply')))\n"
+    )
+    assert scene["ok"] is True, scene.get("error")
+    assert _problems(scene, OkScene, "scene") == []
+    assert scene["context"] == [{"ref": "pin", "mesh": None}]
+
+
+@pytest.mark.adapter
 def test_a_script_that_raises_is_an_error_scene_on_its_line() -> None:
     scene = _ran("from bench import *\n\nshow(1 / 0)\n")
     assert scene["ok"] is False

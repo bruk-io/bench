@@ -279,3 +279,55 @@ def test_a_bed_face_naming_nothing_fails_the_run_rather_than_exporting_something
     scene = measured["bad_bed_face"]
     assert scene["ok"] is False
     assert "no-such-face" in scene["error"]["message"]
+
+
+# ---- context bodies: drawn, and never in a file (task-90) ---------------------------------
+
+
+def test_the_same_script_twice_exports_the_same_bytes(measured: dict[str, Any]) -> None:
+    """The control for the test after it: were a run's files not the same bytes every time,
+    a context body could change them and nothing below would be able to tell."""
+    once = _ok(measured["mated"])
+    again = _ok(measured["mated_again"])
+    assert once["files"] == again["files"]
+
+
+def test_an_export_with_context_bodies_is_byte_identical_to_one_without(
+    measured: dict[str, Any],
+) -> None:
+    """task-90's AC#3: the pin and the ghost are built by the same kernel in the same run, and
+    every file - each STL and the 3MF, compared as the bytes a maker downloads - and every
+    record a part is made of is exactly what the run without them wrote."""
+    plain = _ok(measured["mated"])
+    shown = _ok(measured["mated_in_context"])
+    assert sorted(shown["files"]) == sorted(plain["files"]) == ["base.stl", "pair.3mf", "plate.stl"]
+    for name, text in plain["files"].items():
+        assert b64decode(shown["files"][name]) == b64decode(text), name
+    for key in ("parts", "refs", "sheets", "summary", "violations", "warnings"):
+        assert shown[key] == plain[key], key
+    assert plain["context"] == []
+
+
+def test_a_context_body_is_built_and_named_under_its_label(measured: dict[str, Any]) -> None:
+    """Built by the kernel like a part's body and drawn where it was drawn: the pin's faces
+    answer to ``pin/...``, and the ghost - a hull, which names nothing under it - to nothing,
+    so a click on it names nothing either."""
+    pin, ghost = _ok(measured["mated_in_context"])["context"]
+    assert (pin["ref"], ghost["ref"]) == ("pin", "ghost")
+    assert pin["mesh"] is not None
+    assert ghost["mesh"] is not None
+    assert set(pin["mesh"]["refs"]) == {"pin/top", "pin/bottom", "pin/side-0"}
+    zs = pin["mesh"]["positions"][2::3]
+    assert (min(zs), max(zs)) == pytest.approx((-10.0, 20.0), abs=_TINY)
+    assert ghost["mesh"]["refs"] == []
+    assert set(ghost["mesh"]["ref_index"]) == {0}
+
+
+def test_the_stage_makes_room_for_the_context(measured: dict[str, Any]) -> None:
+    """The pin reaches ten below the pair and the ghost wider than it; the stage - and so the
+    floor and the camera's frame - is the box round all three, worked out in Python."""
+    plain = _ok(measured["mated"])["stage"]["bounds"]
+    shown = _ok(measured["mated_in_context"])["stage"]["bounds"]
+    assert shown[2] == pytest.approx(-10.0, abs=_TINY)
+    assert (shown[3], shown[4]) == pytest.approx((60.0, 60.0), abs=_TINY)
+    assert plain[2] == pytest.approx(0.0, abs=_TINY)
