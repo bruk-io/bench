@@ -714,9 +714,12 @@ triangle, little-endian floats in millimetres. The facet normal is computed from
 rather than trusted, so it can never disagree with the corners beside it. Names do not
 survive - an STL is a bag of triangles.
 
-`three_mf(objects) -> bytes` takes `(name, mesh)` pairs and writes a 3MF package: a zip of
+`three_mf(objects, at) -> bytes` takes `(name, mesh)` pairs and writes a 3MF package: a zip of
 exactly `[Content_Types].xml`, `_rels/.rels` and `3D/3dmodel.model`, the model carrying
-`unit="millimeter"`, one `<object>` per part with its name, and one `<build><item>` each.
+`unit="millimeter"`, one `<object>` per part with its name, and one `<build><item>` each -
+carrying, when `at` gives one, the translation that stands the object at its place on the
+printer's bed, the place *On bed* draws it (task-86); the object itself stays the mesh its
+STL is.
 Nothing else goes in - in particular **no `project_settings.config` and no
 `slice_info.config`**: those are one slicer's settings for one printer, and writing them
 means telling a maker how to print a thing we were only asked to describe. Every entry

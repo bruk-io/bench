@@ -40,6 +40,20 @@ export const PREFIX = "/__bench/projects";
  * origin rules as the projects themselves. */
 export const LEASES = "/__bench/leases";
 
+/** Where a file a run made is handed to the host's slicer (task-86): `POST
+ * /__bench/prints/<project>/<file>` with the file's bytes, which the host writes into the
+ * project's `PRINTS` directory and opens in the slicer it is configured with. Beside the
+ * projects rather than under them, because it is not a write to a project's sources: it answers
+ * to no lease, and only ever to the machine the slicer runs on (`remoteRefused`). */
+export const OPEN = "/__bench/prints";
+
+/** The directory in a project the files handed to the slicer are written into - made the first
+ * time one is, with an ignore file of its own, since what is in it any run makes again. */
+export const PRINTS = "prints";
+
+/** The only kinds of file handed to a slicer: the run's 3MF, and a part's STL. */
+export const PRINTABLE: readonly string[] = [".3mf", ".stl"];
+
 /** The header a client names its lease holder id in - on every write, so the route can refuse
  * one from a client that does not hold the project, and on every lease it asks about. */
 export const HOLDER = "x-bench-holder";
@@ -107,6 +121,11 @@ export type Reason =
   | "leased"
   /** A method this path does not take. */
   | "method"
+  /** A request to launch a program, from anywhere but the machine the program would run on. */
+  | "remote"
+  /** The host was asked to open a slicer and could not: none is installed where it looked, or
+   * the one it was told to use would not start. The message says which, and what to set. */
+  | "slicer"
   /** A body over `MAX_BODY`. */
   | "too-large"
   /** The host tried and could not - a permission, a full disk. The message says which. */
@@ -147,6 +166,9 @@ const STATUS: Readonly<Record<Reason, number>> = {
   // Locked: WebDAV's word for exactly this - the thing is held, and by somebody else.
   leased: 423,
   method: 405,
+  remote: 403,
+  // Bad gateway: the host itself is fine, and the program it hands the file to is not.
+  slicer: 502,
   "too-large": 413,
   failed: 500,
 };
@@ -172,6 +194,9 @@ export type Operation =
   | (Changing & { readonly op: "rename-project"; readonly to: string })
   /** `DELETE /__bench/projects/<project>` - the whole directory, moved into the trash. */
   | (Changing & { readonly op: "trash-project" })
+  /** `POST /__bench/prints/<project>/<file>` - the body written to `<project>/prints/<file>` and
+   * opened in the host's slicer. */
+  | { readonly op: "print"; readonly project: string; readonly file: string }
   /** `GET /__bench/leases/<project>` to be told, `POST …?act=take|take-over|renew|release` to act on
    * the project's write lease (`lease.ts`). `holder` is `null` only for a look from a client
    * that holds nothing. */
@@ -232,6 +257,12 @@ export const writable = (name: string): boolean => {
   return dot > 0 && WRITABLE.includes(name.slice(dot).toLowerCase());
 };
 
+/** Whether a slicer may be handed a file called `name`. */
+export const printable = (name: string): boolean => {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 && PRINTABLE.includes(name.slice(dot).toLowerCase());
+};
+
 /** Whether `candidate` is strictly inside `root`, both already resolved through every
  * symlink. Inside means under `root` followed by a separator - a bare prefix would take
  * `/projects-evil` for part of `/projects`. `root` itself is not inside itself. */
@@ -272,6 +303,27 @@ export function hostRefused(host: string | undefined, allowed: AllowedHosts): Re
     "host",
     `this server does not answer to "${name}" - add it to allowedHosts in vite.config.ts if it should`,
   );
+}
+
+/** Whether `address` - a socket's remote address as Node gives it - is this machine: the IPv4
+ * loopback block, IPv6's `::1`, or the loopback block written as an IPv4 client reaching a
+ * dual-stack socket (`::ffff:127.0.0.1`). */
+export function loopback(address: string | undefined): boolean {
+  if (address === undefined) return false;
+  const bare = address.toLowerCase().replace(/^::ffff:/, "");
+  return bare === "::1" || (IPV4.test(bare) && bare.startsWith("127."));
+}
+
+/** Why a request to launch a program on the host is refused, or `null` - answered only to the
+ * machine the program would open on. Both have to say so: the socket's own remote address,
+ * which a client cannot choose, and the `Host` the request was sent to, so a page this machine
+ * reached by its LAN address - somebody else's tablet's view of it - is not taken for local
+ * either. A slicer window opening on a desk nobody is sitting at is not what anybody asked. */
+export function remoteRefused(address: string | undefined, host: string | undefined): Refusal | null {
+  const name = host === undefined ? "" : hostname(host);
+  const local = name === "localhost" || name.endsWith(".localhost") || loopback(name);
+  if (loopback(address) && local) return null;
+  return refusal("remote", "only the machine the slicer runs on may open a file in it");
 }
 
 /** Why the request's origin is refused, or `null`.
@@ -333,7 +385,8 @@ export function decided(asked: Asked, allowed: AllowedHosts): Operation | Refusa
   const path = cut === -1 ? asked.url : asked.url.slice(0, cut);
   const query = cut === -1 ? "" : asked.url.slice(cut + 1).split("#")[0] ?? "";
   const leasing = path === LEASES || path.startsWith(`${LEASES}/`);
-  if (!leasing && path !== PREFIX && !path.startsWith(`${PREFIX}/`)) return null;
+  const opening = path === OPEN || path.startsWith(`${OPEN}/`);
+  if (!leasing && !opening && path !== PREFIX && !path.startsWith(`${PREFIX}/`)) return null;
 
   const refused = hostRefused(asked.host, allowed) ?? originRefused(asked);
   if (refused !== null) return refused;
@@ -347,6 +400,7 @@ export function decided(asked: Asked, allowed: AllowedHosts): Operation | Refusa
     if (problem !== null) return refusal("precondition", problem);
   }
   if (leasing) return leaseDecided(asked, path, query, holder);
+  if (opening) return openDecided(asked, path);
 
   const rest = path.slice(PREFIX.length + 1);
   const raw = rest === "" ? [] : rest.split("/");
@@ -407,6 +461,28 @@ export function decided(asked: Asked, allowed: AllowedHosts): Operation | Refusa
     "a write says which version it was made from (If-Match) or that the file is new (If-None-Match: *)",
     at,
   );
+}
+
+/** A request under `OPEN`: one project and one file, posted. Each is checked the way every
+ * other name is - one plain name, never a path - and the file has to be a kind a slicer opens. */
+function openDecided(asked: Asked, path: string): Operation | Refusal {
+  const rest = path.slice(OPEN.length + 1);
+  const raw = rest === "" ? [] : rest.split("/");
+  if (raw.length !== 2) {
+    return refusal("name", "a file is opened in the slicer as a project and a file, and nothing else");
+  }
+  const names: string[] = [];
+  for (const one of raw) {
+    const found = segment(one);
+    if (isRefusal(found)) return found;
+    names.push(found);
+  }
+  const [project = "", file = ""] = names;
+  const at = `${project}/${file}`;
+  const method = asked.method.toUpperCase();
+  if (method !== "POST") return refusal("method", `${method} a file for the slicer`, at);
+  if (!printable(file)) return refusal("type", `only ${PRINTABLE.join(", ")} files open in a slicer`, at);
+  return { op: "print", project, file };
 }
 
 /** A request under `LEASES`: one project, looked at with `GET`, or acted on with `POST` and

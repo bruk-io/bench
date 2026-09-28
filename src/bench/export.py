@@ -636,7 +636,9 @@ def stl(mesh: Mesh) -> bytes:
     return bytes(out)
 
 
-def three_mf(objects: Sequence[tuple[str, Mesh]]) -> bytes:
+def three_mf(
+    objects: Sequence[tuple[str, Mesh]], at: Sequence[Vector | None] | None = None
+) -> bytes:
     """``objects`` - a name and a mesh each - as a 3MF package.
 
     A zip of exactly three entries: the content types, the root relationship, and the model
@@ -646,10 +648,22 @@ def three_mf(objects: Sequence[tuple[str, Mesh]]) -> bytes:
     ``slice_info.config``: those are one slicer's settings for one printer, and writing them
     means telling a maker how to print a thing we were only asked to describe.
 
+    ``at`` is where each object stands on the bed, one per object - the move its build item
+    carries as a ``transform``, the 3MF core's own way of placing an object without touching
+    its mesh - so every object is still exactly the mesh its STL is written from, and the
+    package opens arranged. ``None``, for the whole list or for one object, is an item with no
+    transform: that object stands where its own vertices put it.
+
     Vertex indices are per object, as the format wants, so the meshes do not have to be
     merged or renumbered against each other.
+
+    Raises:
+        ValueError: if ``at`` does not name one place per object.
     """
-    model = _model_xml(objects)
+    if at is not None and len(at) != len(objects):
+        msg = f"{len(at)} places for {len(objects)} objects: a 3MF places each object once"
+        raise ValueError(msg)
+    model = _model_xml(objects, at or (None,) * len(objects))
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for name, text in (
@@ -684,13 +698,13 @@ _RELATIONSHIPS = (
 _MODEL_NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 
 
-def _model_xml(objects: Sequence[tuple[str, Mesh]]) -> str:
+def _model_xml(objects: Sequence[tuple[str, Mesh]], at: Sequence[Vector | None]) -> str:
     """The ``3dmodel.model`` part: the resources, then the build that places them.
 
     Object ids start at one because zero is not a legal 3MF resource id.
     """
     resources = tuple(_object_xml(i + 1, name, mesh) for i, (name, mesh) in enumerate(objects))
-    items = tuple(f'<item objectid="{i + 1}"/>' for i in range(len(objects)))
+    items = tuple(_item_xml(i + 1, one) for i, one in enumerate(at))
     return "".join(
         (
             '<?xml version="1.0" encoding="UTF-8"?>\n',
@@ -704,6 +718,16 @@ def _model_xml(objects: Sequence[tuple[str, Mesh]]) -> str:
             "</model>\n",
         )
     )
+
+
+def _item_xml(number: int, at: Vector | None) -> str:
+    """One build item: object ``number``, moved by ``at`` when it is moved at all. A 3MF
+    transform is a 3 x 4 matrix written row by row - the rotation, then the translation - and
+    this one only ever translates, since the object is already laid down the way it prints."""
+    if at is None:
+        return f'<item objectid="{number}"/>'
+    move = f"1 0 0 0 1 0 0 0 1 {_num(at.x)} {_num(at.y)} {_num(at.z)}"
+    return f'<item objectid="{number}" transform="{move}"/>'
 
 
 def _object_xml(number: int, name: str, mesh: Mesh) -> str:

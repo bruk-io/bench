@@ -26,10 +26,34 @@
  * and `vim` honours none. A rename is one step (a hard link, which fails on a taken name)
  * except on a disk with no hard links - FAT, exFAT, many SMB shares - where it is a check and
  * then a move, with the same kind of window.
+ *
+ * **Open in slicer (task-86)** is the one thing here that runs a program. `/__bench/prints/…`
+ * writes the file a run made into the project's `prints/` and opens it in the slicer
+ * `slicer.ts` chooses, with `execFile` and the argument list it hands back - never a shell - and
+ * only for a request from this machine to this machine (`remoteRefused`), since a slicer window
+ * opening on a desk nobody is at is not what anybody asked for. It takes no lease: `prints/` is
+ * what a run makes, not a source, and a tab reading a project may print it as well as one
+ * writing it. The program is the machine owner's choice alone - `BENCH_SLICER` or the
+ * platform's default, never anything in the project, which is content somebody else may have
+ * written (`slicer.ts`).
  */
+import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { type FileHandle, link, lstat, mkdir, open, readFile, readdir, realpath, rename, stat, unlink } from "node:fs/promises";
+import {
+  type FileHandle,
+  link,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { TLSSocket } from "node:tls";
@@ -43,12 +67,15 @@ import {
   CLIENT,
   HOLDER,
   MAX_BODY,
+  PRINTS,
   TRASH,
   decided,
   refusal,
+  remoteRefused,
   trashFolder,
   within,
 } from "../src/route";
+import { type Failure, type Launch, launch, unlaunched } from "../src/slicer";
 
 /** The one environment variable that says where the projects are. `tools/projects.py` reads
  * the same one, with the same default and the same refusal of a relative path. */
@@ -318,14 +345,115 @@ async function renamedProject(rootReal: string, path: string, to: string): Promi
   return json(200, { project: to });
 }
 
+/** What the host opens a slicer with: its environment (`BENCH_SLICER`) and which system it is
+ * (`process.platform`), handed in rather than read here so the route is a function of them. */
+export interface Slicing {
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly platform: string;
+}
+
+/** How long a slicer has to say no before it is taken to have opened. `open -a` and
+ * `xdg-open` hand the file on and exit in well under this; a slicer run directly stays open for
+ * as long as the maker slices, and is left running once this has passed. */
+const LAUNCH_MS = 3000;
+
+/** Run `argv` - a program and its arguments, never a shell string - and say whether it opened:
+ * it exited 0, or it was still running after `LAUNCH_MS`, or how it failed. What a program left
+ * running writes is read and dropped from then on, rather than gathered for an answer nobody is
+ * waiting for any more. */
+function launched(argv: Launch["argv"]): Promise<Failure | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const child = execFile(argv[0], argv.slice(1), { windowsHide: true }, (error, _out, err) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      if (error === null) {
+        resolve(null);
+        return;
+      }
+      // A program that could not be started carries Node's code, one that exited its status.
+      resolve(
+        typeof error.code === "string"
+          ? { code: error.code }
+          : { exit: typeof error.code === "number" ? error.code : null, stderr: String(err) },
+      );
+    });
+    const timer = setTimeout(() => {
+      settled = true;
+      for (const stream of [child.stdout, child.stderr]) {
+        stream?.removeAllListeners("data");
+        stream?.resume();
+      }
+      resolve(null);
+    }, LAUNCH_MS);
+  });
+}
+
+/** The project's `prints/`, made the first time a file goes into it - with an ignore file that
+ * keeps its contents out of a repository the project may be one of, since a run makes them
+ * again - and refused if it is a symlink or anything but a directory. */
+async function printsDir(dir: string, project: string): Promise<string | Refusal> {
+  const path = join(dir, PRINTS);
+  const at = `${project}/${PRINTS}`;
+  let info = await lstat(path).catch(() => null);
+  if (info === null) {
+    try {
+      await mkdir(path);
+      await writeFile(join(path, ".gitignore"), "*\n");
+    } catch (error) {
+      if (code(error) !== "EEXIST") throw error;
+    }
+    info = await lstat(path);
+  }
+  if (info.isSymbolicLink()) {
+    return refusal("link", `${at} is a symbolic link, and the route does not write through one`, at);
+  }
+  if (!info.isDirectory()) return refusal("missing", `${at} is not a directory`, at);
+  return path;
+}
+
+/** Write the body into `project`'s `prints/` as `file`, and open it in the slicer the host
+ * names (`slicer.ts`) - never one the project names. The file stays where it was written whether or not the
+ * slicer opens, and the answer says which. */
+async function printed(
+  rootReal: string,
+  operation: Extract<Operation, { readonly op: "print" }>,
+  req: IncomingMessage,
+  slicing: Slicing,
+): Promise<Answer> {
+  const { project, file } = operation;
+  const dir = await projectDir(rootReal, project);
+  if (isRefusal(dir)) return refused(dir);
+  const prints = await printsDir(dir, project);
+  if (isRefusal(prints)) return refused(prints);
+  const at = `${project}/${PRINTS}/${file}`;
+  const path = join(prints, file);
+  const there = await lstat(path).catch(() => null);
+  if (there?.isSymbolicLink() === true) {
+    return refused(refusal("link", `${at} is a symbolic link, and the route does not write through one`, at));
+  }
+  if (there !== null && !there.isFile()) return refused(refusal("missing", `${at} is not a file`, at));
+  const bytes = await body(req);
+  if (bytes === null) return refused(refusal("too-large", `${at} is too large to write`, at));
+  await replaced(path, bytes);
+  const chosen = launch(slicing.env, slicing.platform, path);
+  const failed = await launched(chosen.argv);
+  if (failed !== null) return refused(refusal("slicer", unlaunched(chosen, failed), at));
+  return json(200, { file: `${PRINTS}/${file}`, slicer: chosen.slicer, said: chosen.said });
+}
+
 /** Do `operation` against the root, and say how it went. */
 async function performed(
   root: string,
   operation: Exclude<Operation, { readonly op: "lease" }>,
   req: IncomingMessage,
+  slicing: Slicing,
 ): Promise<Answer> {
   const rootReal = await realRoot(root);
   if (isRefusal(rootReal)) return refused(rootReal);
+
+  if (operation.op === "print") return printed(rootReal, operation, req, slicing);
 
   if (operation.op === "projects") {
     const projects: string[] = [];
@@ -487,7 +615,13 @@ function addressOf(req: IncomingMessage): string {
  * and for a project renamed, the name it would take as well: moving a directory onto a name
  * somebody else has open for writing would hand them a project they never opened. */
 function leaseRefused(leases: Leases, operation: Operation, expiryMs: number): Refusal | null {
-  if (operation.op === "projects" || operation.op === "files" || operation.op === "read" || operation.op === "lease") {
+  if (
+    operation.op === "projects" ||
+    operation.op === "files" ||
+    operation.op === "read" ||
+    operation.op === "lease" ||
+    operation.op === "print"
+  ) {
     return null;
   }
   const names = operation.op === "rename-project" ? [operation.project, operation.to] : [operation.project];
@@ -506,8 +640,8 @@ function leaseRefused(leases: Leases, operation: Operation, expiryMs: number): R
 
 /** The middleware: `/__bench/projects/…` answered against `root`, and `/__bench/leases/…` out
  * of this server's own memory; everything else passed on. `allowed` is the server's own
- * `allowedHosts` - dev's or preview's, whichever this is - and `expiryMs` how long a lease
- * lasts unheard (`leaseExpiry`).
+ * `allowedHosts` - dev's or preview's, whichever this is - `expiryMs` how long a lease lasts
+ * unheard (`leaseExpiry`), and `slicing` what "Open in slicer" opens a file with.
  *
  * **The leases are held here and nowhere else** (decision-9: "in the server, not in a file
  * under the project"). A restart voids every one, which is right - no client holds anything
@@ -517,6 +651,7 @@ export function projectsRoute(
   root: string,
   allowed: AllowedHosts,
   expiryMs: number = EXPIRY_MS,
+  slicing: Slicing = { env: process.env, platform: process.platform },
 ): (req: IncomingMessage, res: ServerResponse, next: () => void) => void {
   let leases: Leases = new Map();
   return (req, res, next) => {
@@ -553,9 +688,12 @@ export function projectsRoute(
       const after = leased(leases, operation.project, operation.act, asker, Date.now(), expiryMs);
       leases = after.leases;
       answered = Promise.resolve(json(200, after.standing));
+    } else if (operation.op === "print") {
+      const remote = remoteRefused(req.socket.remoteAddress, header("host"));
+      answered = remote === null ? performed(root, operation, req, slicing) : Promise.resolve(refused(remote));
     } else {
       const held = leaseRefused(leases, operation, expiryMs);
-      answered = held === null ? performed(root, operation, req) : Promise.resolve(refused(held));
+      answered = held === null ? performed(root, operation, req, slicing) : Promise.resolve(refused(held));
     }
     answered
       .catch((error: unknown) => refused(refusal("failed", String(error))))

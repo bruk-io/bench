@@ -13,7 +13,8 @@
  * two are different, and `store.ts` is explicit that a caller must be able to tell them apart.
  */
 import type { Act, Standing } from "./lease";
-import { CLIENT, HOLDER, LEASES, PREFIX, type Refusal, refusal } from "./route";
+import { CLIENT, HOLDER, LEASES, OPEN, PREFIX, type Refusal, refusal } from "./route";
+import type { Said } from "./slicer";
 
 /** Which bytes a file held when it was read or written: what a later write or delete names
  * as its base, and the modification time a person is shown. */
@@ -70,6 +71,17 @@ export interface Host {
    * `keepalive` for the one asked as a page goes away - a release on `pagehide` - which the
    * browser then finishes sending after the page has gone. */
   lease(project: string, act: Act, keepalive?: boolean, signal?: AbortSignal): Promise<Answer<Standing>>;
+  /** Write `bytes` - a 3MF or an STL a run made - into `project`'s `prints/` as `file` and open
+   * it in the host's slicer (task-86): where it went, and which slicer took it. */
+  print(project: string, file: string, bytes: Uint8Array): Promise<Answer<Opened>>;
+}
+
+/** A file the host opened in its slicer: where it was written, relative to the project -
+ * `prints/cabinet.3mf` - which slicer, and who chose that one (`slicer.ts`). */
+export interface Opened {
+  readonly file: string;
+  readonly slicer: string;
+  readonly said: Said;
 }
 
 /** Where a delete put what it deleted, relative to the projects root - `.trash/20260923-101503-
@@ -164,6 +176,16 @@ export function host(origin = "", fetchImpl: typeof fetch = fetch, identity: Ide
           : `${LEASES}/${encodeURIComponent(project)}?act=${act}`,
         { method: act === "look" ? "GET" : "POST", keepalive, ...(signal === undefined ? {} : { signal }) },
         (r) => r.json() as Promise<Standing>,
+      ),
+    print: (project, file, bytes) =>
+      asked(
+        `${OPEN}/${encodeURIComponent(project)}/${encodeURIComponent(file)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: new Blob([bytes as Uint8Array<ArrayBuffer>]),
+        },
+        (r) => r.json() as Promise<Opened>,
       ),
   };
 }
