@@ -13,12 +13,22 @@ describe("readOnlyWords", () => {
     expect(said.text).toContain("last heard from a moment ago");
     expect(said.text).toContain("nothing you change is kept");
     expect(said.chip).toBe("read-only");
+    expect(said.badge).toBe("read-only · held elsewhere");
+  });
+
+  it("asks before taking it over, naming whose it is and what that one loses", () => {
+    expect(readOnlyWords("cabinet", desk, false).confirm).toBe(
+      "Take cabinet from Chrome on a Mac at 192.168.1.10? From then on it can keep nothing: an edit it " +
+        "has not saved yet is refused, and it is told you took it over. Do this when that one is " +
+        "somewhere you cannot reach.",
+    );
   });
 
   it("says it was taken over, when it was this tab's", () => {
     expect(readOnlyWords("cabinet", desk, true).title).toBe(
       "Chrome on a Mac at 192.168.1.10 took over writing cabinet. It is read-only here now.",
     );
+    expect(readOnlyWords("cabinet", desk, true).badge).toBe("read-only · taken over");
   });
 
   it("puts a span of time roughly", () => {
