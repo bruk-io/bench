@@ -4,9 +4,11 @@ title: Open a run's 3MF in the slicer from the app
 status: To Do
 assignee: []
 created_date: '2026-09-28 01:07'
+updated_date: '2026-09-28 01:15'
 labels:
   - export
   - web
+milestone: m-13
 dependencies: []
 priority: medium
 ---
