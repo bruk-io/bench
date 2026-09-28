@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-28 01:15'
+updated_date: '2026-09-28 03:01'
 labels:
   - web
   - ui
@@ -28,4 +29,6 @@ decision-12, step 2. Assembled: parts where the script puts them, no bed grid. O
 - [ ] #3 Overhang places are painted On bed
 - [ ] #4 Section clips the reference and context bodies too
 - [ ] #5 Tests: python scene placement unit tests; e2e switching modes; screenshots on the tower project and an example
+
+- [ ] #6 The scene carries, per printed part, its print orientation and whether it fits the bed, and per face its area (all computed in Python); the inspector shows them in a part's 'How it is made' and on a face
 <!-- AC:END -->
