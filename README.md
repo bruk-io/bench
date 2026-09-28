@@ -89,7 +89,7 @@ and says in its own text what it could not do and why.
 | `gridfinity_cabinet.py` | a drawer cabinet, laser-cut | a library `Build` and a cut list |
 | `gridfinity_bin.py` | a 2 x 1 x 3 bin, label lip and scoop | `library/gridfinity3d`, and a stacking fit measured rather than asserted |
 | `eased_bracket.py` | a small mounting plate | `fillet` and `chamfer` on chosen corners of a profile, and `library/print.rim` easing the top round while `check_overhangs` confirms it is the printable direction |
-| `pipe_bracket.py` | a 40 mm pipe bracket, two M4 holes | a bore that comes out a teardrop because the part says which way up it prints, and a lofted gusset where a fillet cannot go |
+| `pipe_bracket.py` | a 40 mm pipe bracket, two M4 holes | a bore that comes out a teardrop because the part says which way up it prints, a lofted gusset where a fillet cannot go, and the pipe it holds drawn through the bore with `context` - shown, never exported |
 | `enclosure_lid.py` | a box and its lid | `clearance(Fit.SNUG, PLA)` as the lip's own dimension, four M3 insert bosses, and a lid that prints upside down (`Orient(up=-Z)`) |
 | `depth_stop_collar.py` | a collar for a 6.35 mm shank | a radial set screw: `plane_of(collar, "side-0", around=..., along=...)` |
 | `hinge.py` | a two-part hinge, printed pin | `Fit.SLIDE` between pin and bore, interleaved knuckles, and rims eased by building the prism that way |
@@ -335,6 +335,12 @@ and says in its own text what it could not do and why.
   its parameters and calls `build` with the overrides read into them. `show` - the one name a
   script talks through - is built per run and injected into that namespace,
   so it is not a name of this package and `from bench import *` cannot clobber it. So
+  is `context(body, label=...)`, which shows a `Solid` beside it that is not a part - what a
+  part mates with, a reference piece in its seated pose, the ghost of a body round it: built
+  after the parts, their sheets and their files, drawn translucent where it was drawn (so it
+  belongs beside a posed assembly), its named faces picked under `label` as `pipe/side-0`, and
+  never a part, a ref, a sheet, a file, a count or a check it was not handed by hand. A label
+  said twice, or a part's label, stops the run. So
   are `check_fits`, `check_clearance`, `check_clearance_within`,
   `check_clearance_through`, `check_contact`, `check_fit`,
   `check_wall`, `check_overhangs`, `mated` and
@@ -365,10 +371,12 @@ and says in its own text what it could not do and why.
   each body built with the kernel and laid out on the stage, every file a run offers, each
   finding's refs put under the part whose shape the check was handed - matched by identity,
   never by a face's last name, so two panels with a `bottom` keep their findings apart - and
-  each record as the view the wire carries. It runs no script and knows nothing of one.
+  each record as the view the wire carries. A body shown for context is built last, after
+  every file, and reaches the scene only as a `ContextView` and as room on the stage
+  (`stage.widened`). It runs no script and knows nothing of one.
 - `transport.py` - a scene as it crosses to the browser: `scene_json`, `scene_wire` (a mesh's
-  long lists as buffers beside the JSON), and `binary(filename)`, the one place that says
-  which files are bytes.
+  long lists as buffers beside the JSON - every part's, then the reference's, then each
+  context body's), and `binary(filename)`, the one place that says which files are bytes.
 - `scene.py` - the shape of that answer, and nothing that builds one: `OkScene`,
   `ErrorScene` and the views under them, each a closed `TypedDict` so a key that is not in
   the contract is a type error rather than something the browser finds out about. It is a
