@@ -20,6 +20,9 @@ export class BenchViolationList extends LitElement {
 
   @property({ attribute: false }) violations: readonly ViolationView[] = [];
 
+  /** The place the view has lit, handed on to every row to mark. */
+  @property() lit: string | null = null;
+
   override render() {
     return this.violations.map(
       (found) => html`
@@ -29,6 +32,7 @@ export class BenchViolationList extends LitElement {
           message=${found.message}
           .refs=${found.refs}
           .line=${found.line}
+          .lit=${this.lit}
         ></bench-violation>
       `,
     );

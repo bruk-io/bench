@@ -39,11 +39,6 @@ export interface RefIsolateDetail {
   readonly ref: string;
 }
 
-/** Which dropped body a person picked off the References group. */
-export interface ReferencePickDetail {
-  readonly file: string;
-}
-
 /** One name in the tree: its whole path, the last step of it, and what hangs under it. */
 interface Node {
   readonly path: string;
@@ -239,12 +234,6 @@ export class BenchRefsTree extends LitElement {
         opacity: 1;
       }
 
-      .active {
-        margin-left: 6px;
-        color: var(--accent);
-        font-size: 10px;
-      }
-
       .empty {
         margin: 0;
         padding: 4px 10px;
@@ -252,51 +241,16 @@ export class BenchRefsTree extends LitElement {
         font-size: 12px;
         color: var(--fg-dim);
       }
-
-      /* The References group is a sibling of the run's tree, not a branch in it, and reads
-         as one: a heading in the sans face, so a file somebody else made does not look like
-         a name this run chose. */
-      .group {
-        padding-bottom: 4px;
-        border-bottom: 1px solid var(--line);
-        margin-bottom: 4px;
-      }
-
-      .group-head {
-        margin: 0;
-        padding: 4px 10px 2px;
-        font-family: var(--sans);
-        font-size: 10px;
-        font-weight: 600;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: var(--fg-faint);
-      }
     `,
   ];
 
-  /** Every ref the newest run named. */
+  /** Every ref the newest run named - or, in a part's inspector, every ref of that part. The
+   * bodies somebody else made are not here: a dropped body was named by no run, and it is listed
+   * with the project instead (`bench-reference-list`). */
   @property({ attribute: false }) refs: readonly string[] = [];
-
-  /** The bodies somebody else made that this project is holding, by file name.
-   *
-   * Beside `refs` and never inside them: a dropped body was named by no run, and `refs` says
-   * in its own line above that it holds what the newest run named. A reference is one row with
-   * nothing under it - decision-8's imported mesh "names nothing under it the way a hull does",
-   * and decision-7 refused pointing at a survey's own indexing, so there is nothing to nest. */
-  @property({ attribute: false }) references: readonly string[] = [];
-
-  /** The one of `references` that is active - the body on the view, and the one `survey`,
-   * *detect faces* and the pick panel are about (decision-9, task-49). Choosing a row is what
-   * makes it so; the page decides, and marks it here. */
-  @property({ attribute: false }) activeReference: string | null = null;
 
   /** What is selected, wherever it was clicked. */
   @property() selected: string | null = null;
-
-  /** Which reference is selected, if a reference is what is selected. The two never hold at
-   * once: the page owns that, the same way it owns `selected`. */
-  @property({ attribute: "selected-reference" }) selectedReference: string | null = null;
 
   /** The refs a check reported, marked on their own row and on the rows above them. */
   @property({ attribute: false }) flagged: readonly string[] = [];
@@ -336,53 +290,14 @@ export class BenchRefsTree extends LitElement {
   /** And scroll it into view, once the row it needs is actually drawn. */
   override updated(changed: PropertyValues<this>): void {
     if (!changed.has("selected") || this.selected === null) return;
-    // By `data-ref`, not by `aria-current` alone: a reference row carries that too, and a
-    // ref revealing itself must not scroll to a dropped body that happens to be selected.
     const row = this.shadowRoot?.querySelector(`[data-ref][aria-current="true"]`);
     row?.scrollIntoView({ block: "nearest" });
   }
 
   override render() {
     const roots = treeOf(this.refs);
-    // "This run named nothing yet" is about the run, so it is only the whole answer while
-    // there is nothing else here to show. A body dropped before the first run is something.
-    if (roots.length === 0 && this.references.length === 0) {
-      return html`<p class="empty">This run named nothing yet.</p>`;
-    }
-    return html`
-      ${this.referenceGroup()}
-      ${roots.length === 0
-        ? html`<p class="empty">This run named nothing yet.</p>`
-        : html`<div role="tree">${this.rows(roots).map((row) => this.row(row))}</div>`}
-    `;
-  }
-
-  /** The dropped bodies, under a heading that says they are not a run's doing. */
-  private referenceGroup() {
-    if (this.references.length === 0) return nothing;
-    return html`
-      <div class="group" role="group" aria-labelledby="references-head">
-        <p id="references-head" class="group-head">References</p>
-        ${this.references.map(
-          (file) => html`
-            <div
-              class="row reference"
-              role="button"
-              tabindex="0"
-              aria-current=${file === this.selectedReference ? "true" : "false"}
-              data-reference=${file}
-              data-active=${file === this.activeReference ? "true" : "false"}
-              @click=${() => this.pickReference(file)}
-              @keydown=${(event: KeyboardEvent) => this.keyedReference(event, file)}
-            >
-              <span class="twist" data-leaf="true" aria-hidden="true"></span>
-              <span class="name">${file}</span>
-              ${file === this.activeReference ? html`<span class="active">active</span>` : nothing}
-            </div>
-          `,
-        )}
-      </div>
-    `;
+    if (roots.length === 0) return html`<p class="empty">This run named nothing yet.</p>`;
+    return html`<div role="tree">${this.rows(roots).map((row) => this.row(row))}</div>`;
   }
 
   /** The tree flattened to the rows that are actually on screen, parents before children. */
@@ -509,23 +424,6 @@ export class BenchRefsTree extends LitElement {
     );
   }
 
-  private keyedReference(event: KeyboardEvent, file: string): void {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    this.pickReference(file);
-  }
-
-  /** As `pick` is: this never selects itself, so the page stays the one owner of what is
-   * selected and the two directions cannot fight. */
-  private pickReference(file: string): void {
-    this.dispatchEvent(
-      new CustomEvent<ReferencePickDetail>("reference-pick", {
-        bubbles: true,
-        composed: true,
-        detail: { file },
-      }),
-    );
-  }
 }
 
 declare global {
@@ -535,7 +433,6 @@ declare global {
 
   interface HTMLElementEventMap {
     "ref-pick": CustomEvent<RefPickDetail>;
-    "reference-pick": CustomEvent<ReferencePickDetail>;
     "ref-visibility": CustomEvent<RefVisibilityDetail>;
     "ref-isolate": CustomEvent<RefIsolateDetail>;
   }

@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import "./refs-tree";
 import {
   type BenchRefsTree,
-  type ReferencePickDetail,
   type RefIsolateDetail,
   type RefPickDetail,
   type RefVisibilityDetail,
@@ -18,12 +17,7 @@ const CABINET = [
   "drawer-back-3",
 ];
 
-type Fields = Partial<
-  Pick<
-    BenchRefsTree,
-    "refs" | "selected" | "flagged" | "references" | "selectedReference" | "activeReference" | "hiddenRefs"
-  >
->;
+type Fields = Partial<Pick<BenchRefsTree, "refs" | "selected" | "flagged" | "hiddenRefs">>;
 
 async function mounted(fields: Fields = {}): Promise<BenchRefsTree> {
   const tree = document.createElement("bench-refs-tree");
@@ -262,113 +256,6 @@ describe("bench-refs-tree, what a check reported", () => {
     expect(drawn(tree, "drawer-front-1/label").querySelector(".flag")).toBeNull();
   });
 });
-
-/** The rows in the References group, by the file each stands for. */
-const references = (tree: BenchRefsTree): string[] =>
-  Array.from(tree.shadowRoot?.querySelectorAll<HTMLElement>(".row.reference") ?? []).map(
-    (row) => row.dataset["reference"] ?? "",
-  );
-
-const referenceRow = (tree: BenchRefsTree, file: string): HTMLElement => {
-  const row = Array.from(
-    tree.shadowRoot?.querySelectorAll<HTMLElement>(".row.reference") ?? [],
-  ).find((one) => one.dataset["reference"] === file);
-  if (row === undefined) {
-    throw new Error(`no reference row for ${file}; on screen: ${references(tree).join(", ")}`);
-  }
-  return row;
-};
-
-const BRACKET = "bracket.stl";
-
-describe("bench-refs-tree, the bodies somebody else made", () => {
-  it("lists every body the project holds, and marks the one that is active", async () => {
-    const tree = await mounted({ references: [BRACKET, "foot.stl"], activeReference: "foot.stl" });
-    expect(references(tree)).toEqual([BRACKET, "foot.stl"]);
-    expect(referenceRow(tree, "foot.stl").dataset["active"]).toBe("true");
-    expect(referenceRow(tree, "foot.stl").querySelector(".active")?.textContent).toBe("active");
-    expect(referenceRow(tree, BRACKET).dataset["active"]).toBe("false");
-    expect(referenceRow(tree, BRACKET).querySelector(".active")).toBeNull();
-  });
-
-  it("lists a dropped body in a group of its own", async () => {
-    const tree = await mounted({ refs: CABINET, references: [BRACKET] });
-    expect(references(tree)).toEqual([BRACKET]);
-  });
-
-  it("keeps them out of the run's own tree, which is what refs means", async () => {
-    const tree = await mounted({ refs: CABINET, references: [BRACKET] });
-    // `refs` says it holds what the newest run named, and a dropped body was named by no run.
-    expect(shown(tree)).not.toContain(BRACKET);
-    expect(tree.refs).toEqual(CABINET);
-  });
-
-  it("gives a dropped body one row and nothing under it", async () => {
-    // decision-8: an imported mesh names nothing under it. decision-7: no survey indexing.
-    const tree = await mounted({ references: [BRACKET] });
-    const row = referenceRow(tree, BRACKET);
-    expect(row.getAttribute("aria-expanded")).toBeNull();
-    expect(row.querySelector('.twist[data-leaf="true"]')).not.toBeNull();
-  });
-
-  it("shows the group with a body dropped before anything has run", async () => {
-    const tree = await mounted({ refs: [], references: [BRACKET] });
-    expect(references(tree)).toEqual([BRACKET]);
-  });
-
-  it("still says the run named nothing, because it did not", async () => {
-    const tree = await mounted({ refs: [], references: [BRACKET] });
-    expect(tree.shadowRoot?.querySelector(".empty")?.textContent).toContain("named nothing");
-  });
-
-  it("says nothing at all when there is neither a run nor a body", async () => {
-    const tree = await mounted();
-    expect(references(tree)).toEqual([]);
-    expect(tree.shadowRoot?.querySelector(".empty")).not.toBeNull();
-  });
-
-  it("sends the file up on a click and never selects itself", async () => {
-    const tree = await mounted({ references: [BRACKET] });
-    const seen: string[] = [];
-    tree.addEventListener("reference-pick", (event: CustomEvent<ReferencePickDetail>) => {
-      seen.push(event.detail.file);
-    });
-    referenceRow(tree, BRACKET).click();
-    await tree.updateComplete;
-    expect(seen).toEqual([BRACKET]);
-    // The page owns the selection, exactly as it does for a ref.
-    expect(tree.selectedReference).toBeNull();
-  });
-
-  it("marks the one the page says is selected", async () => {
-    const tree = await mounted({ references: [BRACKET], selectedReference: BRACKET });
-    expect(referenceRow(tree, BRACKET).getAttribute("aria-current")).toBe("true");
-  });
-
-  it("does not mark a ref row when a body is what is selected", async () => {
-    const tree = await mounted({
-      refs: CABINET,
-      references: [BRACKET],
-      selectedReference: BRACKET,
-      selected: null,
-    });
-    expect(rowFor(tree, "cabinet-side-left")?.getAttribute("aria-current")).toBe("false");
-  });
-
-  it("answers the keyboard the way a ref row does", async () => {
-    const tree = await mounted({ references: [BRACKET] });
-    const seen: string[] = [];
-    tree.addEventListener("reference-pick", (event: CustomEvent<ReferencePickDetail>) => {
-      seen.push(event.detail.file);
-    });
-    referenceRow(tree, BRACKET).dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
-    );
-    await tree.updateComplete;
-    expect(seen).toEqual([BRACKET]);
-  });
-});
-
 describe("bench-refs-tree, hiding and showing (task-67)", () => {
   it("draws every row plain when nothing is hidden", async () => {
     const tree = await mounted({ refs: CABINET });

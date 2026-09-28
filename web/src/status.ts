@@ -9,22 +9,22 @@ import type { SummaryView } from "./scene";
 
 const plural = (count: number, one: string): string => (count === 1 ? one : `${one}s`);
 
-/** What a run made, in words - "14 parts on 7 sheets", or "1 part" when nothing is cut - and
- * what its checks found, so a run that succeeded and is still wrong says so up top rather
- * than only in a panel that may be scrolled out of sight. */
-export function tally(summary: SummaryView): string {
+/** What a run made, in words - "14 parts on 7 sheets", or "1 part" when nothing is cut - for
+ * the status line. What its checks found is said beside it, as the count that goes to them
+ * (`found`, decision-12), so a run that succeeded and is still wrong says so up top rather
+ * than only in a list that may be scrolled out of sight. */
+export function built(summary: SummaryView): string {
   const parts = `${summary.parts} ${plural(summary.parts, "part")}`;
-  const made =
-    summary.sheets === 0
-      ? parts
-      : `${parts} on ${summary.sheets} ${plural(summary.sheets, "sheet")}`;
-  const found = [
+  return summary.sheets === 0 ? parts : `${parts} on ${summary.sheets} ${plural(summary.sheets, "sheet")}`;
+}
+
+/** What a run's checks found, counted - "1 error · 2 warnings" - or `""` for nothing. What
+ * nothing could measure is not counted: it is not a finding, and not a pass either. */
+export function found(summary: SummaryView): string {
+  return [
     ...(summary.errors === 0 ? [] : [`${summary.errors} ${plural(summary.errors, "error")}`]),
-    ...(summary.warnings === 0
-      ? []
-      : [`${summary.warnings} ${plural(summary.warnings, "warning")}`]),
-  ];
-  return [made, ...found].join(" · ");
+    ...(summary.warnings === 0 ? [] : [`${summary.warnings} ${plural(summary.warnings, "warning")}`]),
+  ].join(" · ");
 }
 
 /** What a run made, counted for the chip beside the file name: no findings, because the
