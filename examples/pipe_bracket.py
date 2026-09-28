@@ -9,8 +9,17 @@ There is no fillet where the ear meets the base, and on this kernel there will n
 a fillet needs a name for an edge that did not exist until the union made it, and a CSG
 tree keeps no such name. The honest substitute is a gusset, and the honest gusset here is a
 `loft` - the ear's footprint flared out where it lands on the base. It is one verb, it is
-exact, and it prints, which a hand-made triangular fin also would be but only after four
-more lines of arithmetic.
+exact, and it prints without support at any flare or rise a knob can ask for, because the
+loft only ever narrows going up to the ear's own footprint - never widens - so every layer
+sits on the one below it.
+
+Narrowing is also why the loft can rise no higher than `wall` without touching the pipe. The
+bore's own relief - the cut that keeps the ear clear of the pipe - stops at the ear's own two
+faces; past them the loft has already narrowed to nothing more than the ear's own footprint,
+at whatever height `rise` asks for, and nothing has cut it back from there. The pipe's own
+underside stands `wall` plus `clearance` above the base - `wall` of it is what the loft may
+climb, and `clearance` is the fit table's own gap on top of that - so building at
+`min(rise, wall)` leaves the gusset exactly that clearance short of the pipe, never closer.
 
 The pipe is shown too, through the bore where it will run, with `context`: drawn translucent
 beside the bracket so the fit reads at a glance, its faces answering a click as `pipe/...`,
@@ -21,7 +30,7 @@ the assembly is `posed` and the bracket stays where the pipe's numbers put it to
 from dataclasses import dataclass
 
 from bench import *
-from bench.library.print import PLA, H2D, clearance
+from bench.library.print import H2D, PLA, clearance
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -33,7 +42,7 @@ class Bracket:
     ear_t: float = knob(8.0, min=3.0, max=20.0, step=0.5, label="Ear thickness")
     base_t: float = knob(5.0, min=3.0, max=12.0, step=0.5, label="Base thickness")
     flare: float = knob(8.0, min=0.0, max=20.0, step=0.5, label="Gusset flare")
-    rise: float = knob(10.0, min=1.0, max=30.0, step=0.5, label="Gusset rise")
+    rise: float = knob(8.0, min=1.0, max=30.0, step=0.5, label="Gusset rise")
     screw_inset: float = knob(12.0, min=6.0, max=40.0, step=0.5, label="Screw inset")
 
 
@@ -60,11 +69,15 @@ def build(p: Bracket) -> Assembly:
     ear = extrude(fill(rounded_rect(ear_w, ear_h, p.wall), on=upright), p.ear_t, label="ear")
 
     # The gusset: the ear's footprint flared out where it meets the base. A hull of two
-    # profiles, so it is exact, and it leans well under 45 degrees.
+    # profiles, so it is exact, and it only ever narrows going up, so it needs no support.
+    # Its own top can rise no higher than the wall under the bore - past that, nothing has
+    # cut it back from the pipe - so what is actually built is capped there, never the knob's
+    # own number past it.
+    rise = min(p.rise, p.wall)
     flared = rect(p.ear_t + 2 * p.flare, base_d, Point(ear_x - p.flare, 0.0))
     gusset = loft(
         fill(flared, on=raised(XY, p.base_t)),
-        fill(rect(p.ear_t, base_d, Point(ear_x, 0.0)), on=raised(XY, p.base_t + p.rise)),
+        fill(rect(p.ear_t, base_d, Point(ear_x, 0.0)), on=raised(XY, p.base_t + rise)),
         label="gusset",
     )
 
@@ -104,11 +117,16 @@ def build(p: Bracket) -> Assembly:
     )
     context(pipe, label="pipe")
 
+    # The gusset's own cap above is what keeps this clear; asked here too, so a future change
+    # to either number cannot quietly bring the gusset back into the pipe.
+    fitted = check_fit(bracket, pipe, Fit.CLEARANCE, PLA)
+    require(fitted.finding)
     require(check_fits(bracket, H2D))
     check_overhangs(bracket, pla.orient, PLA)
 
     print(f"bore {bore_d:.2f} mm for a {p.pipe_d:.1f} mm pipe")
     print(f"bracket {base_w:.1f} x {base_d:.1f} x {ear_h:.1f} mm")
+    print(f"gusset round the pipe: {fitted}")
 
     return assembly("pipe-bracket", (Placed(part("bracket", bracket, pla), XY),), posed=True)
 
