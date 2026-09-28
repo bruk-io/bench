@@ -73,14 +73,27 @@ interface Holder {
   readonly heardAgoMs: number;
 }
 
-/** What a tab that is only reading `project` says, and why: the notice's title and its text,
- * and the status bar's short word. `lost` when this tab was the writer and somebody took it
- * over - the one time the person has to be told something changed under them (task-47). */
-export function readOnlyWords(
-  project: string,
-  holder: Holder,
-  lost: boolean,
-): { readonly title: string; readonly text: string; readonly chip: string; readonly chipTitle: string } {
+/** Everything a tab that is only reading a project says about it (`readOnlyWords`). */
+export interface ReadOnlyWords {
+  /** The header chip's own words - short, since the rest is one click away (task-91) - and
+   * the part of them after `chip`'s word, which a narrow header leaves off. */
+  readonly badge: string;
+  readonly badgeWhy: string;
+  /** The chip's popover: whose it is and where, then for how long and what a reader can do. */
+  readonly title: string;
+  readonly text: string;
+  /** What Take over asks before it takes the project from somebody. */
+  readonly confirm: string;
+  /** The status bar's short word, and what it says on hover. */
+  readonly chip: string;
+  readonly chipTitle: string;
+}
+
+/** What a tab that is only reading `project` says, and why: the header chip, its popover's
+ * title and text and the question Take over asks, and the status bar's short word. `lost` when
+ * this tab was the writer and somebody took it over - the one time the person has to be told
+ * something changed under them (task-47). */
+export function readOnlyWords(project: string, holder: Holder, lost: boolean): ReadOnlyWords {
   const who = `${holder.label} at ${holder.address}`;
   const title = lost
     ? `${who} took over writing ${project}. It is read-only here now.`
@@ -92,5 +105,17 @@ export function readOnlyWords(
     `${since}, and was last heard from ${roughly(holder.heardAgoMs)} ago. Here you can open, run and ` +
     "export it, and turn its knobs to see what they do - but nothing you change is kept: not the " +
     "script, not a knob, not a placement. It becomes yours by itself once that one lets go.";
-  return { title, text, chip: "read-only", chipTitle: `${project} is being written by ${who}` };
+  const confirm =
+    `Take ${project} from ${who}? From then on it can keep nothing: an edit it has not saved yet ` +
+    "is refused, and it is told you took it over. Do this when that one is somewhere you cannot reach.";
+  const badgeWhy = lost ? "taken over" : "held elsewhere";
+  return {
+    badge: `read-only · ${badgeWhy}`,
+    badgeWhy,
+    title,
+    text,
+    confirm,
+    chip: "read-only",
+    chipTitle: `${project} is being written by ${who}`,
+  };
 }

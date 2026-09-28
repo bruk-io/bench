@@ -17,7 +17,8 @@
  * else; the view cannot. Selecting a ref - from the tree, from the editor's cursor, from a
  * click on a face - highlights geometry, and a highlight on a surface that is not on screen is
  * not a feature. So cut sheets open as tabs in the *editor* group, beside the script and its
- * values file, and the view keeps its own half of the centre whatever else is open. The
+ * values file, and the view keeps its own part of the centre whatever else is open - given up
+ * only when the person asks for the Code layout (`layout.ts`). The
  * survey of a dropped body opens there too, for a different reason: it is a document of a
  * few hundred lines that a maker reads through and comes back to while writing the script
  * that replaces the body, and it outlives every run made while it is open - which is what
@@ -31,15 +32,19 @@
  * was sent, so the file never says `units_x = 9` about a cabinet that was built four wide.
  */
 import "./styles.css";
+import "./components/molecules/layout-switch";
 import "./components/organisms/examples-menu";
 import "./components/organisms/explorer";
 import "./components/organisms/inspector";
+import "./components/organisms/lease-chip";
 import "./components/organisms/panel";
 
 import { connect } from "./bridge";
+import type { BenchLayoutSwitch } from "./components/molecules/layout-switch";
 import type { BenchExamplesMenu } from "./components/organisms/examples-menu";
 import type { BenchExplorer } from "./components/organisms/explorer";
 import type { BenchInspector } from "./components/organisms/inspector";
+import type { BenchLeaseChip } from "./components/organisms/lease-chip";
 import type { BenchPanel } from "./components/organisms/panel";
 import { treeOf } from "./components/organisms/refs-tree";
 import { buttons } from "./components/styles";
@@ -90,6 +95,7 @@ import { PROJECT, type Subject, fitLine, subjectOf, worstPart } from "./subjects
 // go through `store` (see `store.ts` on what does not travel).
 import { type Host, host as hostClient } from "./host";
 import { type OutboxState, outbox } from "./outbox";
+import { FIRST_LAYOUT, type Layout, layoutOf, nextLayout } from "./layout";
 import { type Leasing, identity, leasing } from "./leasing";
 import { KEYS, forget, hashOf, remember, remembered } from "./storage";
 import type { ProjectStore } from "./store";
@@ -151,16 +157,10 @@ const ui = {
   adoptList: need<HTMLUListElement>("adopt-list"),
   adoptYes: need<HTMLButtonElement>("adopt-yes"),
   adoptNo: need<HTMLButtonElement>("adopt-no"),
-  lease: need<HTMLDivElement>("lease"),
-  leaseTitle: need<HTMLParagraphElement>("lease-title"),
-  leaseWhy: need<HTMLParagraphElement>("lease-why"),
-  leaseAsk: need<HTMLParagraphElement>("lease-ask"),
-  leaseTake: need<HTMLButtonElement>("lease-take"),
-  leaseConfirm: need<HTMLDivElement>("lease-confirm"),
-  leaseConfirmText: need<HTMLParagraphElement>("lease-confirm-text"),
-  leaseTakeYes: need<HTMLButtonElement>("lease-take-yes"),
-  leaseTakeNo: need<HTMLButtonElement>("lease-take-no"),
+  lease: need<BenchLeaseChip>("lease"),
   standing: need<HTMLSpanElement>("standing"),
+  layout: need<BenchLayoutSwitch>("layout"),
+  groups: need<HTMLDivElement>("groups"),
   editorTabs: need<HTMLDivElement>("editor-tabs"),
   panelScript: need<HTMLDivElement>("panel-script"),
   panelValues: need<HTMLDivElement>("panel-values"),
@@ -472,7 +472,7 @@ function show(next: Workspace): void {
 // ---- the write lease: who may write the open project -----------------------------------
 
 /** Say where this tab stands on the open project, everywhere it changes what a person can do:
- * the notice over the editor with whose it is, the status bar, the editor taking typing or not,
+ * the header's chip with whose it is, the status bar, the editor taking typing or not,
  * the knobs' own container, and every control that would write. */
 function showStanding(): void {
   const standing = lease?.standing() ?? null;
@@ -485,21 +485,15 @@ function showStanding(): void {
   showSelected();
   body.refresh();
   if (reading === null) {
-    ui.lease.hidden = true;
-    ui.leaseConfirm.hidden = true;
+    ui.lease.words = null;
+    ui.lease.lost = false;
     ui.standing.hidden = true;
     if (reach !== null && reachPutAway) showReach(reach.state());
     return;
   }
   const words = readOnlyWords(reading.project, reading.holder, reading.lost);
-  ui.lease.hidden = false;
-  ui.leaseTitle.textContent = words.title;
-  ui.leaseWhy.textContent = words.text;
-  ui.leaseAsk.hidden = !ui.leaseConfirm.hidden;
-  ui.leaseConfirmText.textContent =
-    `Take ${reading.project} from ${reading.holder.label} at ${reading.holder.address}? From then on it ` +
-    "can keep nothing: an edit it has not saved yet is refused, and it is told you took it over. " +
-    "Do this when that one is somewhere you cannot reach.";
+  ui.lease.words = words;
+  ui.lease.lost = reading.lost;
   ui.standing.hidden = false;
   if (reach !== null) showReach(reach.state());
   ui.standing.textContent = words.chip;
@@ -546,22 +540,10 @@ function standingChanged(): void {
   if (now?.kind === "writer" && was?.kind === "reader" && was.project === now.project) {
     void regained(now.project);
   }
-  if (now?.kind !== "reader") ui.leaseConfirm.hidden = true;
   showStanding();
 }
 
-ui.leaseTake.addEventListener("click", () => {
-  ui.leaseConfirm.hidden = false;
-  showStanding();
-});
-
-ui.leaseTakeNo.addEventListener("click", () => {
-  ui.leaseConfirm.hidden = true;
-  showStanding();
-});
-
-ui.leaseTakeYes.addEventListener("click", () => {
-  ui.leaseConfirm.hidden = true;
+ui.lease.addEventListener("lease-take-over", () => {
   log("warn", "bench.lease", "this tab took over a project somebody else was writing", {
     "bench.project": workspace.current,
   });
@@ -1992,16 +1974,45 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     window.clearTimeout(timer);
     runNow();
+    return;
+  }
+  // Mod+\ alone: CodeMirror has Mod+Alt+\ (indent) and Mod+Shift+\ (the matching bracket).
+  if (mod && !event.shiftKey && !event.altKey && event.key === "\\") {
+    event.preventDefault();
+    chooseLayout(nextLayout(layout));
   }
 });
+
+// ---- the layout: how the centre is shared -------------------------------------
+
+/** How the centre is shared now - Code, Split or View (`layout.ts`). */
+let layout: Layout = FIRST_LAYOUT;
+
+function showLayout(next: Layout): void {
+  layout = next;
+  ui.groups.dataset["layout"] = next;
+  ui.layout.layout = next;
+}
+
+/** A layout the person chose, by the control or the shortcut: shown, and remembered for this
+ * browser - which may refuse, and then the choice lasts until the page does. */
+function chooseLayout(next: Layout): void {
+  showLayout(next);
+  remember(KEYS.layout, next);
+}
+
+ui.layout.shortcut = "Ctrl/Cmd+\\";
+ui.layout.addEventListener("layout-pick", (event) => chooseLayout(event.detail.layout));
 
 // ---- first paint --------------------------------------------------------------
 
 /** What is on screen before the store has answered: the shell, with the panel as it was left -
- * folded, unless it was last opened. Everything here is about this browser rather than about a
- * project, so none of it waits on anything. */
+ * folded, unless it was last opened - and the centre in the layout this browser last chose.
+ * Everything here is about this browser rather than about a project, so none of it waits on
+ * anything. */
 showDocument(SCRIPT);
 ui.panel.collapsed = remembered(KEYS.panel) !== "open";
+showLayout(layoutOf(remembered(KEYS.layout)));
 setState("boot", "loading Python…");
 
 /** Find the host, ask it for the projects, put the one this browser had open on screen, and

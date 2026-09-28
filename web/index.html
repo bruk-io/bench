@@ -16,8 +16,14 @@
 
       <span id="open-name" class="open-name" title="The project that is open"></span>
       <span id="made" class="chip"></span>
+      <!-- The open project is being written somewhere else (task-47): a chip, with whose it is,
+           what is not kept and Take over in its popover (task-91). -->
+      <bench-lease-chip id="lease" hidden></bench-lease-chip>
 
       <div class="spacer"></div>
+
+      <!-- How the centre is shared: the script, the two, or the view (decision-12). -->
+      <bench-layout-switch id="layout"></bench-layout-switch>
 
       <bench-examples-menu id="examples-menu"></bench-examples-menu>
       <button id="stop" type="button" disabled title="Stop the running script">Stop</button>
@@ -86,23 +92,6 @@
                 <button id="adopt-no" type="button">Leave them in this browser</button>
               </p>
             </div>
-            <!-- The open project is being written somewhere else (task-47): said here, with
-                 whose it is, and the one way to make it yours without waiting - in the page,
-                 never a browser dialog, and asked twice, because it takes it from somebody. -->
-            <div id="lease" class="notice" role="status" aria-labelledby="lease-title" hidden>
-              <p id="lease-title" class="notice-title"></p>
-              <p id="lease-why" class="notice-text"></p>
-              <p id="lease-ask" class="notice-actions">
-                <button id="lease-take" type="button">Take over writing…</button>
-              </p>
-              <div id="lease-confirm" hidden>
-                <p id="lease-confirm-text" class="notice-text"></p>
-                <p class="notice-actions">
-                  <button id="lease-take-yes" type="button" class="primary">Take it over</button>
-                  <button id="lease-take-no" type="button">Leave it with them</button>
-                </p>
-              </div>
-            </div>
             <div id="editor-tabs" class="tabs" role="tablist" aria-label="Open documents"></div>
             <div id="panel-script" class="tab-panel" role="tabpanel">
               <div id="editor" class="editor"></div>
@@ -120,8 +109,8 @@
             </div>
           </section>
 
-          <!-- The view: a pane, never a tab. Ref selection highlights a face here, so this
-               surface can never be the one that is not on screen. -->
+          <!-- The view: a pane, never a tab. Ref selection highlights a face here, so nothing
+               the app opens ever covers it - only the person, choosing the Code layout. -->
           <section class="group group-view">
             <!-- The view keeps only ways of looking at it (decision-12): colour the faces, cut
                  a section, zoom and fit. Everything that acts on something - insert a ref,

@@ -181,6 +181,20 @@ def _reader(page: Page, timeout: float = 15_000) -> None:
     assert page.locator("#editor").get_attribute("data-readonly") == "true"
 
 
+def _told(page: Page) -> None:
+    """Open the header's lease chip, where everything about whose the project is is said
+    (task-91) - unless it is already open."""
+    if page.locator("#lease-badge").get_attribute("aria-expanded") != "true":
+        page.click("#lease-badge")
+    page.wait_for_selector("#lease-pop", state="visible", timeout=5_000)
+
+
+def _untold(page: Page) -> None:
+    """Shut the lease chip's popover, so it covers nothing a check goes on to click."""
+    page.keyboard.press("Escape")
+    page.wait_for_selector("#lease-pop", state="hidden", timeout=5_000)
+
+
 def _written(page: Page) -> list[str]:
     """Every request ``page`` sends that would change a project - from here on."""
     sent: list[str] = []
@@ -237,11 +251,23 @@ def test_the_first_to_open_writes_and_the_second_reads_is_told_why_and_keeps_not
 
         tablet = _opened(browser, url)
         _reader(tablet)
+        # A chip in the header, shut: the editor keeps its whole height (task-91).
+        assert tablet.locator("#lease-badge").inner_text() == "read-only · held elsewhere"
+        assert tablet.locator("#lease-pop").is_hidden()
+        _shot(tablet, "lease-chip.png")
+        _told(tablet)
         title = tablet.locator("#lease-title").inner_text()
         assert title.startswith("plates is open for writing in ")
         assert str(held["label"]) in title
         assert str(held["address"]) in title
-        assert "nothing you change is kept" in tablet.locator("#lease-why").inner_text()
+        why = tablet.locator("#lease-why").inner_text()
+        assert "It has held it for " in why
+        assert "and was last heard from " in why
+        assert "nothing you change is kept" in why
+        assert "It becomes yours by itself once that one lets go." in why
+        assert tablet.locator("#lease-take").is_visible()
+        _shot(tablet, "lease-chip-open.png")
+        _untold(tablet)
         assert tablet.locator("#standing").inner_text() == "read-only"
         # And nothing claims its work was saved to the host: it has none.
         assert tablet.locator("#reach").is_hidden()
@@ -307,19 +333,27 @@ def test_a_reader_can_take_the_project_over_after_being_told_whose_it_is(
         _writer(desk)
         tablet = _opened(browser, url)
         _reader(tablet)
+        _told(tablet)
         tablet.click("#lease-take")
         confirm = tablet.locator("#lease-confirm-text")
         assert confirm.is_visible()
         said = confirm.inner_text()
         assert said.startswith("Take plates from ")
         assert "an edit it has not saved yet is refused" in said
+        # Asked across renewals - one every two seconds here - without the question shutting.
+        tablet.wait_for_timeout(2500)
+        assert confirm.is_visible()
         _shot(tablet, "lease-take-over.png")
         tablet.click("#lease-take-yes")
         _writer(tablet)
 
         _reader(desk)
+        # The one change nobody asked to be told about is told unasked: the popover is open.
+        desk.wait_for_selector("#lease-pop", state="visible", timeout=5_000)
+        assert desk.locator("#lease-badge").inner_text() == "read-only · taken over"
         assert "took over writing plates" in desk.locator("#lease-title").inner_text()
         _shot(desk, "lease-taken-over.png")
+        _untold(desk)
 
         # The new writer writes, and the old one can no longer.
         tablet.click("#crumb-project")
@@ -353,6 +387,7 @@ def test_a_lease_nobody_renews_lapses_and_the_reader_becomes_the_writer_by_itsel
         page = context.new_page()
         page.goto(url)
         _reader(page, timeout=4000)
+        _told(page)
         assert "a script" in page.locator("#lease-title").inner_text()
         # Nothing is pressed from here on.
         _writer(page, timeout=15_000)

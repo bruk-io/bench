@@ -370,6 +370,31 @@ kbd {
   border-right: 1px solid var(--line);
 }
 
+/* Code and View (task-91): one group across the whole centre, the other put away. The notices
+   in the editor group - no host, the question about this browser's own projects - are never
+   put away with it: while one is up, View is Split again, so nothing waits unseen. */
+#groups[data-layout="code"],
+#groups[data-layout="view"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#groups[data-layout="code"] .group-view,
+#groups[data-layout="view"] .group-editor {
+  display: none;
+}
+
+#groups[data-layout="code"] .group-editor {
+  border-right: none;
+}
+
+#groups[data-layout="view"]:has(.group-editor > .notice:not([hidden])) {
+  grid-template-columns: minmax(260px, 42fr) minmax(0, 58fr);
+}
+
+#groups[data-layout="view"]:has(.group-editor > .notice:not([hidden])) .group-editor {
+  display: flex;
+}
+
 /* ---- the editor group's tabs ----------------------------------------------- */
 
 .tabs {
@@ -977,7 +1002,23 @@ kbd {
     border-bottom: 1px solid var(--line);
   }
 
+  #groups[data-layout="code"],
+  #groups[data-layout="view"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  #groups[data-layout="view"]:has(.group-editor > .notice:not([hidden])) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 4fr) minmax(0, 6fr);
+  }
+
   .open-name {
+    display: none;
+  }
+
+  /* The status bar says the same, and the header needs the room for the layout switch. */
+  #made {
     display: none;
   }
 

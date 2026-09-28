@@ -34,6 +34,9 @@ export const KEYS = {
   hang: "bench.lastHang",
   /** Whether the bottom panel was last opened - it starts folded (decision-12). */
   panel: "bench.panel",
+  /** How the centre is shared - `code`, `split` or `view` (`layout.ts`) - as this browser last
+   * left it. A way of working at this screen, not a fact about any project. */
+  layout: "bench.layout",
   /** The console's log level. */
   log: "bench.log",
   /** The id this tab holds a project's write lease under (`leasing.ts`) - in `sessionStorage`,
