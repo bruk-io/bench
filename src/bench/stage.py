@@ -4,11 +4,18 @@ A part's body is built in the part's own coordinates, so left where they were ma
 of an assembly would pile up on the origin. The stage lays them out the way a maker lays parts
 on a bench: in rows along X in the order the script showed them, :data:`GAP` apart, front edges
 on the row's line and standing on ``z = 0``, a row wrapping before it runs too long. It then
-sizes the grid drawn under them.
+hands back the box they fill.
 
 That is :func:`layout`, and it is the right thing to do to a scene of unrelated bodies and
 the wrong thing to do to a mechanism: an assembly whose parts the script has already posed
-relative to each other is placed by :func:`as_given` instead, which moves nothing.
+relative to each other is placed by :func:`as_given` instead, which moves nothing. Neither
+draws a floor: an assembly has no bed.
+
+A printer's bed is the other place a body stands. :func:`on_bed` puts each printed part,
+already laid down the way it prints, side by side on the plate of a :class:`~bench.model.Volume`
+with its corner at the origin - and on the next plate along when that one is full - and
+:func:`floor` and :func:`edges` are each plate's grid and build volume, drawn there and nowhere
+else.
 
 Plain arithmetic on meshes, done here rather than in the viewer, so that what a scene carries
 is ready to draw: every triangle's corners already placed and already its own, and every
@@ -20,7 +27,7 @@ from collections.abc import Sequence
 from typing import NamedTuple
 
 from .kernel import Mesh
-from .model import Ref
+from .model import Ref, Volume
 from .topology import SEP
 
 GAP = 10.0
@@ -29,14 +36,11 @@ GAP = 10.0
 _ROW_WRAP = 600.0
 """Millimetres: a row wraps once the next body would take it past this."""
 
-_GRID_STEP = 10.0
-"""The grid's cells, in millimetres."""
+_FLOOR_STEP = 10.0
+"""The bed grid's cells, in millimetres."""
 
-_GRID_MARGIN = 1.25
-"""How much wider than the work the grid runs."""
-
-_GRID_LEAST = 10.0
-"""The narrowest the work is taken to be, so a pin still stands on a floor."""
+_PLATE_GAP = 40.0
+"""Millimetres between one plate and the next, when the parts take more than one."""
 
 Offset = tuple[float, float, float]
 
@@ -54,15 +58,6 @@ class Box(NamedTuple):
 
 EMPTY = Box(-50.0, -50.0, 0.0, 50.0, 50.0, 50.0)
 """The stage of a scene with no body on it: a small room to look into rather than nothing."""
-
-
-class Grid(NamedTuple):
-    """The floor under the work: its width, how many cells across, and where its middle is."""
-
-    size: float
-    divisions: int
-    centre_x: float
-    centre_y: float
 
 
 def extent(mesh: Mesh) -> Box | None:
@@ -185,14 +180,115 @@ def widened(box: Box | None, meshes: Sequence[Mesh]) -> Box:
     )
 
 
-def grid(box: Box) -> Grid:
-    """The floor under ``box``: a quarter wider than the work, in whole cells, centred under
-    it."""
-    span = max(box.x1 - box.x0, box.y1 - box.y0, _GRID_LEAST)
-    size = math.ceil(span * _GRID_MARGIN / _GRID_STEP) * _GRID_STEP
-    return Grid(
-        size, max(2, round(size / _GRID_STEP)), (box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2
+class Plated(NamedTuple):
+    """Printed parts laid on a printer's plates: where each one goes, the ``x`` of each plate's
+    corner, and the box every plate and everything on them fill."""
+
+    offsets: tuple[Offset | None, ...]
+    plates: tuple[float, ...]
+    box: Box
+
+
+def on_bed(bodies: Sequence[Box | None], volume: Volume) -> Plated:
+    """Where each body goes on the plates of a printer building in ``volume`` - the offset that
+    moves it there, or ``None`` for a part with nothing to lay - the plates it took, and the box
+    they fill.
+
+    ``bodies`` are the boxes the parts fill already laid down the way they print - lowest
+    point on ``z = 0`` - so only X and Y are decided here. The first plate's corner is the
+    origin and it runs to ``volume.w`` along X and ``volume.d`` along Y. Parts go left to right
+    :data:`GAP` in from its edges and apart, a row wrapping before the next part would cross
+    the plate's far side, the next row :data:`GAP` behind the deepest of the one before - and
+    a row that would run off the back of a plate that already holds something starts the next
+    plate instead, :data:`_PLATE_GAP` to the right, the way a slicer's second plate would be
+    printed after the first. A part wider or deeper than a plate is laid on one of its own all
+    the same and runs off it - the box, and the next plate along, make room for it - because
+    what does not fit is what the view is there to show, and :func:`bench.checks.fits` is what
+    says so.
+    """
+    offsets: list[Offset | None] = []
+    plates: list[float] = [0.0]
+    placed: list[Box] = []
+    across = front = GAP
+    deepest = reach = 0.0
+    held = False
+    for own in bodies:
+        if own is None:
+            offsets.append(None)
+            continue
+        width, depth = own.x1 - own.x0, own.y1 - own.y0
+        if across > GAP and across + width > volume.w - GAP:
+            front += deepest + GAP
+            across = GAP
+            deepest = 0.0
+        if held and front + depth > volume.d - GAP:
+            plates.append(max(plates[-1] + volume.w, reach) + _PLATE_GAP)
+            across = front = GAP
+            deepest = 0.0
+            held = False
+        offset = (plates[-1] + across - own.x0, front - own.y0, -own.z0)
+        offsets.append(offset)
+        laid = Box(
+            own.x0 + offset[0],
+            own.y0 + offset[1],
+            own.z0 + offset[2],
+            own.x1 + offset[0],
+            own.y1 + offset[1],
+            own.z1 + offset[2],
+        )
+        placed.append(laid)
+        reach = max(reach, laid.x1)
+        across += width + GAP
+        deepest = max(deepest, depth)
+        held = True
+    placed.extend(Box(x, 0.0, 0.0, x + volume.w, volume.d, volume.h) for x in plates)
+    return Plated(
+        tuple(offsets),
+        tuple(plates),
+        Box(
+            min(one.x0 for one in placed),
+            min(one.y0 for one in placed),
+            min(one.z0 for one in placed),
+            max(one.x1 for one in placed),
+            max(one.y1 for one in placed),
+            max(one.z1 for one in placed),
+        ),
     )
+
+
+def floor(volume: Volume, plates: Sequence[float] = (0.0,)) -> list[float]:
+    """The grid on each plate of a printer building in ``volume``, its corner at each ``x`` of
+    ``plates``, as line segments on ``z = 0``: six numbers each, both ends. A line every
+    :data:`_FLOOR_STEP` across and along from a plate's corner, and one on each far edge,
+    where the plate stops whether or not a whole cell does."""
+    out: list[float] = []
+    for x in plates:
+        for at in _steps(volume.w):
+            out.extend((x + at, 0.0, 0.0, x + at, volume.d, 0.0))
+        for at in _steps(volume.d):
+            out.extend((x, at, 0.0, x + volume.w, at, 0.0))
+    return out
+
+
+def edges(volume: Volume, plates: Sequence[float] = (0.0,)) -> list[float]:
+    """The twelve edges of the build volume over each plate of ``plates``, as line segments:
+    six numbers each, both ends."""
+    w, d, h = volume
+    out: list[float] = []
+    for x in plates:
+        corners = ((x, 0.0), (x + w, 0.0), (x + w, d), (x, d))
+        for (x0, y0), (x1, y1) in zip(corners, corners[1:] + corners[:1], strict=True):
+            out.extend((x0, y0, 0.0, x1, y1, 0.0))
+            out.extend((x0, y0, h, x1, y1, h))
+        for cx, cy in corners:
+            out.extend((cx, cy, 0.0, cx, cy, h))
+    return out
+
+
+def _steps(length: float) -> list[float]:
+    """``0``, every :data:`_FLOOR_STEP` short of ``length``, and ``length`` itself."""
+    count = math.ceil(length / _FLOOR_STEP - 1e-9)
+    return [min(k * _FLOOR_STEP, length) for k in range(count)] + [length]
 
 
 def positions(mesh: Mesh, offset: Offset) -> list[float]:

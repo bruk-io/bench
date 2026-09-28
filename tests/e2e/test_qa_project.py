@@ -83,7 +83,7 @@ def test_a_look_round_of_a_project_shoots_each_script_and_leaves_it_untouched(
     shots = {one.name for one in out.glob("*.png")}
     for number, script in enumerate((fixture_project.ENTRY, fixture_project.OTHER), start=1):
         stem = f"qa-{number:02d}-{script.removesuffix('.py')}"
-        for suffix in ("", "-problems", "-parameters", "-export"):
+        for suffix in ("", "-problems", "-parameters", "-export", "-bed", "-section"):
             assert f"{stem}{suffix}.png" in shots, sorted(shots)
     log = (out / "qa-log.txt").read_text()
     overhangs = [line for line in log.splitlines() if " violations " in line]

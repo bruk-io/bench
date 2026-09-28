@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { FrameView, ParamView, PartView, SheetView, ViolationView } from "../../scene";
+import type { BedView, FrameView, ParamView, PartView, SheetView, ViolationView } from "../../scene";
 import type { Subject } from "../../subjects";
 import type { BenchViolation } from "../molecules/violation";
 import "./inspector";
@@ -20,11 +20,35 @@ const part = (ref: string, fields: Partial<PartView> = {}): PartView => ({
   marks: null,
   lettering: [],
   frames: {},
+  areas: {},
+  printing: null,
   ...fields,
 });
 
-const TOTE = part("tote", { frames: { "tote/floor": FRAME } });
-const LID = part("lid");
+const TOTE = part("tote", {
+  frames: { "tote/floor": FRAME },
+  areas: { "tote/floor": 1234.56 },
+  printing: { up: [0, 0, 1], bed_face: null, fits: true, over: null, placement: null },
+});
+const LID = part("lid", {
+  printing: {
+    up: [0, -1, 0],
+    bed_face: "lid/rim",
+    fits: false,
+    over: "the part is bigger than the build volume: x 400.0 mm against 350.0 mm",
+    placement: null,
+  },
+});
+
+const H2D: BedView = {
+  printer: "H2D",
+  said: "host",
+  volume: [350, 320, 325],
+  bounds: [0, 0, 0, 350, 320, 325],
+  plates: 1,
+  floor: [],
+  edges: [],
+};
 const PANEL = part("panel", { process: "laser", qty: 2, stock: { thickness: 3, material: "ply", kerf: 0.2 } });
 
 const REFS = ["tote", "tote/floor", "tote/wall-0", "tote/lug-1", "lid", "lid/rim", "panel", "panel/edge"];
@@ -70,6 +94,7 @@ type Fields = Partial<
     | "warnings"
     | "sheets"
     | "files"
+    | "bed"
     | "error"
     | "params"
     | "overrides"
@@ -93,6 +118,7 @@ const RUN: Fields = {
   warnings: [],
   sheets: [SHEET],
   files: FILES,
+  bed: H2D,
   params: PARAMS,
 };
 
@@ -279,6 +305,45 @@ describe("bench-inspector, a part", () => {
     expect(asked).toHaveLength(1);
   });
 
+  it("says how a printed part prints - which way up, and that it fits the bed - in 'How it is made'", async () => {
+    const inspector = await mounted(TOTE_SUBJECT);
+    expect(inside(inspector, "#print-up")?.textContent.trim()).toBe("+Z up");
+    const fits = inside(inspector, "#print-fits");
+    expect(fits?.dataset["fits"]).toBe("true");
+    expect(fits?.textContent.trim()).toBe("fits the H2D (350 × 320 × 325 mm)");
+    expect(fits?.title).toContain("default printer");
+  });
+
+  it("says the face a part stands on, and why it does not fit", async () => {
+    const inspector = await mounted({ subject: { kind: "part", ref: "lid" } });
+    expect(inside(inspector, "#print-up")?.textContent.trim()).toBe("−Y up, on rim");
+    const fits = inside(inspector, "#print-fits");
+    expect(fits?.dataset["fits"]).toBe("false");
+    expect(fits?.textContent).toContain("does not fit the H2D");
+    expect(fits?.querySelector(".over")?.textContent).toContain("x 400.0 mm against 350.0 mm");
+  });
+
+  it("says which volume a script asked about is the bed", async () => {
+    const inspector = await mounted({
+      ...TOTE_SUBJECT,
+      bed: { ...H2D, printer: null, said: "script", volume: [256, 256, 256] },
+    });
+    expect(inside(inspector, "#print-fits")?.textContent.trim()).toBe("fits a 256 × 256 × 256 mm volume");
+    expect(inside(inspector, "#print-fits")?.title).toContain("check_fits");
+  });
+
+  it("says a printed part has no bed to fit when nothing named a printer", async () => {
+    const unasked = part("tote", { printing: { up: [0, 0, 1], bed_face: null, fits: null, over: null, placement: null } });
+    const inspector = await mounted({ ...TOTE_SUBJECT, parts: [unasked], bed: null });
+    expect(inside(inspector, "#print-fits")?.textContent.trim()).toBe("no printer named to fit it on");
+  });
+
+  it("says nothing about printing for a part that is cut", async () => {
+    const inspector = await mounted({ subject: { kind: "part", ref: "panel" } });
+    expect(inside(inspector, "#print-up")).toBeNull();
+    expect(inside(inspector, "#print-fits")).toBeNull();
+  });
+
   it("says a part the newest run no longer makes is not there", async () => {
     const inspector = await mounted({ subject: { kind: "part", ref: "gone" } });
     expect(inside(inspector, ".body")?.textContent).toContain("made no part called gone");
@@ -303,6 +368,16 @@ describe("bench-inspector, a face", () => {
   it("leaves out a normal the scene does not carry", async () => {
     const inspector = await mounted({ subject: { kind: "face", ref: "tote/wall-0" }, lit: "tote/wall-0" });
     expect(inside(inspector, "#face dl")?.textContent).not.toContain("normal");
+  });
+
+  it("shows the face's area as Python summed it", async () => {
+    const inspector = await mounted(FLOOR);
+    expect(inside(inspector, "#face-area")?.textContent).toBe("1234.6 mm²");
+  });
+
+  it("leaves out an area the scene does not carry", async () => {
+    const inspector = await mounted({ subject: { kind: "face", ref: "tote/wall-0" }, lit: "tote/wall-0" });
+    expect(inside(inspector, "#face-area")).toBeNull();
   });
 
   it("breadcrumbs through its part, and goes to the part from there", async () => {

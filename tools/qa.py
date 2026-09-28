@@ -9,7 +9,9 @@ request that failed, and what a person reads - what was built, what the script p
 either stream, what was violated and what went wrong. Each stop is shot in every state the
 inspector has (decision-12): the project with its knobs, the part the status bar's count
 goes to, a face of that part, the project's export, and - when the project holds one - its
-reference mesh.
+reference mesh. Then in the view's other two ways of looking (task-89): *On bed*, and
+*Section* - through the middle of the work along X, or wherever ``--section AXIS:MM`` says,
+``--section x:-165`` for a plane at x = -165 mm.
 
 That last part is the whole reason this is not a test. A check knows in advance what it
 wants to be true; a look round does not, which is why nothing here fails - it collects, and
@@ -113,6 +115,36 @@ PROJECT = "--project"
 OUTPUT = "--out"
 """The flag that names where the screenshots and the log land, in place of :data:`OUT`."""
 
+SECTION = "--section"
+"""The flag that says where *Section* cuts, as ``AXIS:MM`` - ``z:12.5``."""
+
+_AXES = ("x", "y", "z")
+
+
+class _Cut(NamedTuple):
+    """Where a look round's *Section* shot cuts: an axis, and millimetres along it."""
+
+    axis: str
+    position: float
+
+
+def _cut(said: str) -> _Cut:
+    """``AXIS:MM`` read as a :class:`_Cut`.
+
+    Raises:
+        ValueError: naming what is wrong with it - no colon, an axis not x, y or z, or a
+            position that is not a number.
+    """
+    axis, colon, position = said.partition(":")
+    if not colon or axis.lower() not in _AXES:
+        msg = f"{SECTION} is AXIS:MM with AXIS one of x, y, z - not {said!r}"
+        raise ValueError(msg)
+    try:
+        return _Cut(axis.lower(), float(position))
+    except ValueError:
+        msg = f"{SECTION} {said!r}: {position!r} is not a number of millimetres"
+        raise ValueError(msg) from None
+
 
 class _Log(NamedTuple):
     """Where a look round writes, and everything it has written down so far."""
@@ -192,13 +224,52 @@ def _stops(named: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(one if one.endswith(".py") else f"{one}.py" for one in named) or STOPS
 
 
-def _visited(page: Page, stop: str, log: _Log, number: int) -> None:
+def _visited(page: Page, stop: str, log: _Log, number: int, cut: _Cut | None) -> None:
     """Load one example, wait for it, shoot it and read it."""
     page.click("#examples-button")
     page.locator("#examples").get_by_role("button", name=stop, exact=True).click()
     _settled(page)
     page.wait_for_timeout(SETTLE_MS)
     _toured_inspector(page, stop, log, number)
+    _toured_modes(page, stop, log, number, cut)
+
+
+def _mode(page: Page, mode: str) -> None:
+    """Pick one of the view's ways of looking, and wait for the view to say it is in it."""
+    page.locator(f"bench-view-modes [data-mode='{mode}']").click()
+    page.wait_for_function(
+        "(want) => document.querySelector('#canvas3d')?.dataset.mode === want", arg=mode
+    )
+
+
+def _toured_modes(page: Page, stop: str, log: _Log, number: int, cut: _Cut | None) -> None:
+    """Shoot the stop *On bed* and in *Section* - cut where ``cut`` says, or through the middle
+    along X - and put the view back to *Assembled*, the way it opens."""
+    _mode(page, "bed")
+    page.wait_for_timeout(SETTLE_MS)
+    view = page.locator("#canvas3d")
+    laid = {
+        key: view.get_attribute(f"data-{key}") or ""
+        for key in ("bed", "plates", "laid", "unfit", "overhang")
+    }
+    _said(log, "on bed", ", ".join(f"{key} {value}" for key, value in laid.items()))
+    _shot(page, stop, log, number, "-bed")
+    _mode(page, "section")
+    if cut is not None:
+        page.select_option("#section-axis", cut.axis)
+        # A range input clamps what it is given to its own span - the stage's, along the axis.
+        page.eval_on_selector(
+            "#section-position",
+            "(el, value) => {"
+            " el.value = value;"
+            " el.dispatchEvent(new Event('input', { bubbles: true }));"
+            "}",
+            str(cut.position),
+        )
+    page.wait_for_timeout(SETTLE_MS)
+    _said(log, "section", page.locator("#canvas3d").get_attribute("data-section") or "")
+    _shot(page, stop, log, number, "-section")
+    _mode(page, "assembled")
 
 
 def _shot(
@@ -256,7 +327,7 @@ def _toured_inspector(page: Page, stop: str, log: _Log, number: int) -> None:
         _project(page)
 
 
-def _walk(url: str, stops: tuple[str, ...], log: _Log) -> None:
+def _walk(url: str, stops: tuple[str, ...], log: _Log, cut: _Cut | None) -> None:
     """Open the app once and visit every stop in it, the way a person would."""
     from playwright.sync_api import sync_playwright
 
@@ -275,7 +346,7 @@ def _walk(url: str, stops: tuple[str, ...], log: _Log) -> None:
         _said(log, "screenshot", shot.name)
         page.keyboard.press("Escape")
         for number, stop in enumerate(stops, start=1):
-            _visited(page, stop, log, number)
+            _visited(page, stop, log, number, cut)
         context.close()
         browser.close()
 
@@ -305,15 +376,18 @@ def _opened(page: Page, url: str, project: str, script: str) -> None:
     page.wait_for_function(RAN, timeout=BOOT_MS)
 
 
-def _looked(page: Page, url: str, project: str, stop: str, log: _Log, number: int) -> None:
+def _looked(
+    page: Page, url: str, project: str, stop: str, log: _Log, number: int, cut: _Cut | None
+) -> None:
     """Open one script of a project, wait for it, and shoot and read it as :func:`_visited`
     does an example."""
     _opened(page, url, project, stop)
     page.wait_for_timeout(SETTLE_MS)
     _toured_inspector(page, stop, log, number)
+    _toured_modes(page, stop, log, number, cut)
 
 
-def _toured(url: str, project: str, stops: tuple[str, ...], log: _Log) -> None:
+def _toured(url: str, project: str, stops: tuple[str, ...], log: _Log, cut: _Cut | None) -> None:
     """Open the app once and visit every named script of ``project`` in it."""
     from playwright.sync_api import sync_playwright
 
@@ -323,7 +397,7 @@ def _toured(url: str, project: str, stops: tuple[str, ...], log: _Log) -> None:
         page = context.new_page()
         _watch(page, log)
         for number, stop in enumerate(stops, start=1):
-            _looked(page, url, project, stop, log, number)
+            _looked(page, url, project, stop, log, number, cut)
         context.close()
         browser.close()
 
@@ -378,20 +452,27 @@ def main(argv: tuple[str, ...] | None = None, environ: Mapping[str, str] | None 
     of it (:func:`_copied`); ``environ`` is where its projects root is read from, as
     :mod:`tools.build` reads it - :data:`os.environ` when it is not given. ``--out DIR`` puts
     the screenshots and the log in ``DIR`` rather than :data:`OUT`, which a check that drives
-    this uses so it never clears a person's own look round.
+    this uses so it never clears a person's own look round. ``--section AXIS:MM`` is where
+    every stop's *Section* shot cuts.
 
     Returns:
         ``0`` - a look round has no verdict to give - unless a flag is left without its value,
-        or ``--project`` names a project or script that is not there, which is said and
-        answered ``1`` before anything is built.
+        ``--section`` is not ``AXIS:MM``, or ``--project`` names a project or script that is
+        not there, which is said and answered ``1`` before anything is built.
     """
     args = tuple(sys.argv[1:] if argv is None else argv)
-    for flag in (PROJECT, OUTPUT):
+    for flag in (PROJECT, OUTPUT, SECTION):
         if _taken(args, flag) is None:
             print(f"{flag} names nothing", file=sys.stderr)
             return 1
     project, args = _taken(args, PROJECT) or (None, args)
     written, args = _taken(args, OUTPUT) or (None, args)
+    section, args = _taken(args, SECTION) or (None, args)
+    try:
+        cut = None if section is None else _cut(section)
+    except ValueError as exc:
+        print(f"failed: {exc}", file=sys.stderr)
+        return 1
     out = OUT if written is None else Path(written)
     if project is not None:
         try:
@@ -413,9 +494,9 @@ def main(argv: tuple[str, ...] | None = None, environ: Mapping[str, str] | None 
         with preview.served(env={VARIABLE: root}) as url:
             _said(log, "server", f"vite preview at {url}")
             if project is None:
-                _walk(url, stops, log)
+                _walk(url, stops, log, cut)
             else:
-                _toured(url, project, stops, log)
+                _toured(url, project, stops, log, cut)
     shots = sum(1 for line in log.spoken if " screenshot " in line)
     print(f"\n{shots} screenshots and {out / LOG} - have a look", flush=True)
     return 0

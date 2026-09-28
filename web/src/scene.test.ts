@@ -20,11 +20,13 @@ function wire(part: Record<string, unknown> = {}): Record<string, unknown> {
         marks: { segments: 2, ref_index: 3, refs: ["plate/score"] },
         lettering: [{ text: "1", ref: "plate/label", corners: Array.from({ length: 12 }, () => 0) }],
         frames: {},
+        areas: { "plate/hole": 12.5 },
+        printing: null,
         ...part,
       },
     ],
-    stage: { bounds: [0, 0, 0, 10, 10, 3], grid: { size: 20, divisions: 2, centre: [5, 5] } },
-    summary: { parts: 1, sheets: 0, errors: 0, warnings: 0, error_line: null, solid: 1, unbuilt: 0 },
+    stage: { bounds: [0, 0, 0, 10, 10, 3] },
+    summary: { parts: 1, sheets: 0, errors: 0, warnings: 0, error_line: null, solid: 1, unbuilt: 0, printed: 0 },
     refs: ["plate", "plate/hole", "plate/score", "plate/label"],
     sheets: [],
     files: {},
@@ -34,6 +36,7 @@ function wire(part: Record<string, unknown> = {}): Record<string, unknown> {
     stderr: "",
     reference: null,
     context: [],
+    bed: null,
   };
 }
 
@@ -140,5 +143,62 @@ describe("received, bodies shown for context", () => {
     const shown = wire();
     shown["context"] = [{ ref: "pin", mesh: { positions: 4, ref_index: 5, refs: [] } }];
     expect(problemOf(shown, withPin())).toBe("context[0] (pin).mesh names a ref it does not carry");
+  });
+});
+
+describe("received, how a printed part prints and the bed it is laid on", () => {
+  const PRINTING = {
+    up: [0, 0, -1],
+    bed_face: "plate/top",
+    fits: false,
+    over: "the part is bigger than the build volume: x 400.0 mm against 350.0 mm",
+    placement: [1, 0, 0, 10, 0, 1, 0, 20, 0, 0, 1, 0],
+  };
+  const BED = {
+    printer: "H2D",
+    said: "host",
+    volume: [350, 320, 325],
+    bounds: [0, 0, 0, 350, 320, 325],
+    plates: 1,
+    floor: [0, 0, 0, 0, 320, 0],
+    edges: [0, 0, 0, 350, 0, 0],
+  };
+
+  it("reads a part's printing and face areas, and the bed, as Python sent them", () => {
+    const shown = wire({ printing: PRINTING });
+    shown["bed"] = BED;
+    const found = received(shown, buffers());
+    if (!("scene" in found) || !found.scene.ok) throw new Error("that scene was meant to be read");
+    expect(found.scene.parts[0]?.printing).toEqual(PRINTING);
+    expect(found.scene.parts[0]?.areas).toEqual({ "plate/hole": 12.5 });
+    expect(found.scene.bed).toEqual(BED);
+  });
+
+  it("reads a printed part with no body and no bed to lay it on", () => {
+    expect(problemOf(wire({ printing: { ...PRINTING, fits: null, over: null, placement: null } }))).toBeNull();
+  });
+
+  it("refuses a placement that is not three rows of four", () => {
+    expect(problemOf(wire({ printing: { ...PRINTING, placement: [1, 0, 0, 0, 1, 0, 0, 0, 1] } }))).toBe(
+      "parts[0] (plate).printing.placement is not twelve numbers or null",
+    );
+  });
+
+  it("refuses an area that is not a number", () => {
+    expect(problemOf(wire({ areas: { "plate/hole": "big" } }))).toBe(
+      'parts[0] (plate).areas["plate/hole"] is not a number',
+    );
+  });
+
+  it("refuses a bed whose floor is not whole lines", () => {
+    const shown = wire();
+    shown["bed"] = { ...BED, floor: [0, 0, 0, 0, 320] };
+    expect(problemOf(shown)).toBe("bed.floor is not six numbers per line");
+  });
+
+  it("refuses a scene with no bed key at all", () => {
+    const old = wire();
+    delete old["bed"];
+    expect(problemOf(old)).toBe("bed is absent");
   });
 });

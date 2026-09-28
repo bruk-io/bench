@@ -52,6 +52,7 @@ from . import script, transport
 from .adapters.browser import JsKernel, Modeller
 from .kernel import Mesh
 from .library import gridfinity
+from .library.print import PRINTER
 from .placement import named_origins, placed, placement
 from .report import report
 from .shadow import shadowed
@@ -227,7 +228,8 @@ def start(telemetry: Telemetry, refused: type[Exception]) -> Runner:
     ``refused`` is the exception a failed call to the modeller raises. Every run gets
     ``gridfinity`` pre-bound by name, so a script saved before the library had to be imported
     still runs, and ``reference`` bound to the body the host was handed - placed by ``table``
-    when the project has one - or to ``None``.
+    when the project has one - or to ``None``. A script that names no printer through its
+    ``check_fits`` has its printed parts laid on :data:`bench.library.print.PRINTER`'s bed.
 
     A host that hands over something which is not a binary STL, or a ``table`` that is not a
     readable `[reference]`, gets the reader's own ``ValueError`` back out of the runner, and
@@ -257,6 +259,7 @@ def start(telemetry: Telemetry, refused: type[Exception]) -> Runner:
         scene = script.run(
             source,
             json.loads(overrides),
+            printer=PRINTER,
             extras={"gridfinity": gridfinity},
             reference=_reference(stl, table),
             kernel=None if modeller is None else JsKernel(modeller, refused, tracer),

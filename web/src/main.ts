@@ -33,6 +33,7 @@
  */
 import "./styles.css";
 import "./components/molecules/layout-switch";
+import "./components/molecules/view-modes";
 import "./components/organisms/examples-menu";
 import "./components/organisms/explorer";
 import "./components/organisms/inspector";
@@ -41,6 +42,7 @@ import "./components/organisms/panel";
 
 import { connect } from "./bridge";
 import type { BenchLayoutSwitch } from "./components/molecules/layout-switch";
+import type { BenchViewModes } from "./components/molecules/view-modes";
 import type { BenchExamplesMenu } from "./components/organisms/examples-menu";
 import type { BenchExplorer } from "./components/organisms/explorer";
 import type { BenchInspector } from "./components/organisms/inspector";
@@ -86,9 +88,9 @@ import { EXAMPLES, STARTER } from "./generated/pysources";
 import { type Overrides, asBuilt, declaredOnly, parsed, withOverride } from "./overrides";
 import { referenceBody } from "./reference-body";
 import type { OkScene, Scene, SheetView } from "./scene";
-import type { SectionAxis } from "./viewer3d";
+import type { SectionAxis, ViewMode } from "./viewer3d";
 import { STALE_HINT, STALE_MESSAGE, bundleStale } from "./staleness";
-import { built, failing, found, made, noBodiesReason, readOnlyWords } from "./status";
+import { built, failing, found, made, noBodiesReason, onBedReason, readOnlyWords } from "./status";
 import { PROJECT, type Subject, fitLine, subjectOf, worstPart } from "./subjects";
 // `remember`/`forget` are still here for what belongs to this browser rather than to a
 // project - the hang fingerprint, the rail's container, the panel. The projects themselves
@@ -174,8 +176,9 @@ const ui = {
   fit: need<HTMLButtonElement>("fit"),
   zoomIn: need<HTMLButtonElement>("zoom-in"),
   zoomOut: need<HTMLButtonElement>("zoom-out"),
+  viewModes: need<BenchViewModes>("view-modes"),
   colourFacesToggle: need<HTMLButtonElement>("colour-faces-toggle"),
-  sectionToggle: need<HTMLButtonElement>("section-toggle"),
+  sectionBar: need<HTMLDivElement>("section-bar"),
   sectionAxis: need<HTMLSelectElement>("section-axis"),
   sectionPosition: need<HTMLInputElement>("section-position"),
   panel: need<BenchPanel>("run-panel"),
@@ -1129,6 +1132,7 @@ function received(next: Scene): void {
   const inspector = ui.inspector;
   inspector.params = next.params;
   inspector.parts = next.parts;
+  inspector.bed = next.bed;
   inspector.refs = next.refs;
   inspector.violations = next.violations;
   inspector.warnings = next.warnings;
@@ -1167,8 +1171,11 @@ ui.findings.addEventListener("click", () => {
 /** Draw the scene: every part with a body, standing where the stage put it, and why the view
  * is empty when none has one. */
 function showGeometry(ok: OkScene): void {
-  space.show(ok.parts, ok.stage, ok.sheets, ok.reference, ok.context);
-  space.say(noBodiesReason(ok.summary));
+  // The overhang findings' places are what *On bed* paints: picked out of the run's findings
+  // by the check that made them, never worked out here.
+  const overhangs = ok.violations.filter((one) => one.check === "overhangs").flatMap((one) => one.refs);
+  space.show(ok.parts, ok.stage, ok.sheets, ok.reference, ok.context, ok.bed, overhangs);
+  sayWhyEmpty(ok);
   // Not `space.section(...)` again - the view keeps a section exactly as set across a
   // redraw, which is the whole point (task-62). Only the range the slider offers is worth
   // keeping current, and only for the axis actually chosen, so a later toggle-on or axis
@@ -1188,9 +1195,17 @@ function sectionRange(axis: SectionAxis): readonly [number, number] {
   return [low, high];
 }
 
-let sectioning = false;
+/** The way of looking at the view (decision-12) - kept here, like the section, so a re-run or
+ * a knob change leaves it exactly as it was. */
+let viewMode: ViewMode = "assembled";
 let sectionAxis: SectionAxis = "x";
 let sectionPosition = 0;
+
+/** Why the view has nothing in it, for the way it is being looked at - `""` when it has. */
+function sayWhyEmpty(ok: OkScene | null): void {
+  if (ok === null) return;
+  space.say(viewMode === "bed" ? onBedReason(ok.summary, ok.bed) : noBodiesReason(ok.summary));
+}
 
 /** Put the slider's own range and handle at the middle of `axis`'s current span - called
  * only when the axis is chosen anew (turning the section on, or picking a different axis),
@@ -1205,11 +1220,25 @@ function centreSectionOn(axis: SectionAxis): void {
   ui.sectionPosition.value = String(sectionPosition);
 }
 
+/** Where the section cuts. The plane is always kept; the view clips at it only in *Section*,
+ * and the controls that move it are there and live only then. */
 function applySection(): void {
-  ui.sectionToggle.setAttribute("aria-pressed", String(sectioning));
-  ui.sectionAxis.disabled = !sectioning;
-  ui.sectionPosition.disabled = !sectioning;
-  space.section(sectioning ? { axis: sectionAxis, position: sectionPosition } : null);
+  const cutting = viewMode === "section";
+  ui.sectionBar.hidden = !cutting;
+  ui.sectionAxis.disabled = !cutting;
+  ui.sectionPosition.disabled = !cutting;
+  space.section({ axis: sectionAxis, position: sectionPosition });
+}
+
+function applyMode(next: ViewMode): void {
+  // Coming into *Section* puts the plane through the middle of the work as it stands now,
+  // the way turning the section on always did.
+  if (next === "section" && viewMode !== "section") centreSectionOn(sectionAxis);
+  viewMode = next;
+  ui.viewModes.mode = next;
+  applySection();
+  space.mode(next);
+  sayWhyEmpty(scene);
 }
 
 /** What the script said, from either kind of scene: a run that fell over still printed its
@@ -1595,10 +1624,8 @@ ui.colourFacesToggle.addEventListener("click", () => {
   ui.colourFacesToggle.setAttribute("aria-pressed", String(on));
   space.colourFaces(on);
 });
-ui.sectionToggle.addEventListener("click", () => {
-  sectioning = !sectioning;
-  if (sectioning) centreSectionOn(sectionAxis);
-  applySection();
+ui.viewModes.addEventListener("view-mode", (event) => {
+  applyMode(event.detail);
 });
 ui.sectionAxis.addEventListener("change", () => {
   sectionAxis = ui.sectionAxis.value as SectionAxis;
