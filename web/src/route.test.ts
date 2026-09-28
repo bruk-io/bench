@@ -6,7 +6,10 @@ import {
   type Refusal,
   decided,
   hostRefused,
+  loopback,
   nameProblem,
+  printable,
+  remoteRefused,
   trashFolder,
   within,
   writable,
@@ -267,5 +270,76 @@ describe("decided: leases", () => {
     const other = { holder: HOLDER_ID, origin: "http://evil.example", fetchSite: "cross-site" };
     expect(reason(decided(asked("POST", url, other), []))).toBe("origin");
     expect(reason(decided(asked("POST", url, { holder: HOLDER_ID, host: "evil.example" }), []))).toBe("host");
+  });
+});
+
+describe("decided: opening a file in the slicer", () => {
+  it("takes one project and one file a slicer opens, posted", () => {
+    expect(decided(asked("POST", "/__bench/prints/cabinet/cabinet.3mf"), [])).toEqual({
+      op: "print",
+      project: "cabinet",
+      file: "cabinet.3mf",
+    });
+    expect(decided(asked("POST", "/__bench/prints/my%20cabinet/Knob.STL"), [])).toEqual({
+      op: "print",
+      project: "my cabinet",
+      file: "Knob.STL",
+    });
+    expect(decided(asked("GET", "/__bench/printsX"), [])).toBeNull();
+  });
+
+  it.each([
+    ["dot-dot", "/__bench/prints/../cabinet.3mf"],
+    ["dot-dot as the project", "/__bench/prints/../etc/cabinet.3mf"],
+    ["encoded dot-dot", "/__bench/prints/%2e%2e/cabinet.3mf"],
+    ["an encoded separator", "/__bench/prints/cabinet/..%2F..%2Fescape.3mf"],
+    ["an encoded absolute path", "/__bench/prints/cabinet/%2Fetc%2Fcabinet.3mf"],
+    ["a doubled slash", "/__bench/prints//cabinet.3mf"],
+    ["a path deeper than a file", "/__bench/prints/cabinet/prints/cabinet.3mf"],
+    ["no file", "/__bench/prints/cabinet"],
+    ["a hidden file", "/__bench/prints/cabinet/.cabinet.3mf"],
+  ])("refuses %s as a name", (_why, url) => {
+    expect(reason(decided(asked("POST", url), []))).toBe("name");
+  });
+
+  it("opens only what a slicer reads, and only when posted", () => {
+    expect(reason(decided(asked("POST", "/__bench/prints/cabinet/cabinet.py"), []))).toBe("type");
+    expect(reason(decided(asked("POST", "/__bench/prints/cabinet/run.sh"), []))).toBe("type");
+    expect(reason(decided(asked("PUT", "/__bench/prints/cabinet/cabinet.3mf"), []))).toBe("method");
+    expect(reason(decided(asked("GET", "/__bench/prints/cabinet/cabinet.3mf"), []))).toBe("method");
+    expect(printable("cabinet.3mf") && printable("knob.stl") && printable("KNOB.STL")).toBe(true);
+    expect(printable(".3mf") || printable("cabinet.toml")).toBe(false);
+  });
+
+  it("keeps the slicer behind the same host and origin rules as the files", () => {
+    const url = "/__bench/prints/cabinet/cabinet.3mf";
+    expect(reason(decided(asked("POST", url, { origin: "http://evil.example" }), []))).toBe("origin");
+    expect(reason(decided(asked("POST", url, { host: "evil.example" }), []))).toBe("host");
+  });
+});
+
+describe("remoteRefused: a slicer opens only on the machine asking", () => {
+  it("answers this machine asking itself by name or by loopback address", () => {
+    expect(remoteRefused("127.0.0.1", "localhost:5173")).toBeNull();
+    expect(remoteRefused("::1", "[::1]:5173")).toBeNull();
+    expect(remoteRefused("::ffff:127.0.0.1", "127.0.0.1:4173")).toBeNull();
+    expect(remoteRefused("127.0.0.1", "bench.localhost:5173")).toBeNull();
+  });
+
+  it("refuses another machine, whatever Host it says it asked for", () => {
+    expect(remoteRefused("192.168.1.20", "localhost:5173")?.refused).toBe("remote");
+    expect(remoteRefused("::ffff:192.168.1.20", "127.0.0.1:5173")?.refused).toBe("remote");
+    expect(remoteRefused(undefined, "localhost:5173")?.refused).toBe("remote");
+  });
+
+  it("refuses this machine reached by its LAN address, the way a tablet reaches it", () => {
+    expect(remoteRefused("127.0.0.1", "192.168.1.20:5173")?.refused).toBe("remote");
+    expect(remoteRefused("127.0.0.1", undefined)?.refused).toBe("remote");
+  });
+
+  it("tells a loopback address from one that only starts like one", () => {
+    expect(loopback("127.8.9.10")).toBe(true);
+    expect(loopback("127.0.0.1.evil.example")).toBe(false);
+    expect(loopback("1270.0.0.1")).toBe(false);
   });
 });

@@ -116,7 +116,8 @@ function staleness(): Plugin {
 }
 
 /** The host's projects, read and written over `/__bench/projects/…` - decision-9's route - and
- * who may write each, over `/__bench/leases/…`.
+ * who may write each, over `/__bench/leases/…` - and a file a run made opened in the host's
+ * slicer, over `/__bench/prints/…`, with this process's environment and platform deciding which.
  *
  * Beside `staleness()` and registered the same way, in both hooks, so dev and preview (and
  * `tools/preview.py`, which spawns preview) answer it alike. The root is resolved when the
@@ -129,12 +130,18 @@ function projects(): Plugin {
     name: "bench:projects",
     configureServer(server) {
       server.middlewares.use(
-        projectsRoute(rootFor(process.env), server.config.server.allowedHosts, leaseExpiry(process.env)),
+        projectsRoute(rootFor(process.env), server.config.server.allowedHosts, leaseExpiry(process.env), {
+          env: process.env,
+          platform: process.platform,
+        }),
       );
     },
     configurePreviewServer(server) {
       server.middlewares.use(
-        projectsRoute(rootFor(process.env), server.config.preview.allowedHosts, leaseExpiry(process.env)),
+        projectsRoute(rootFor(process.env), server.config.preview.allowedHosts, leaseExpiry(process.env), {
+          env: process.env,
+          platform: process.platform,
+        }),
       );
     },
   };
