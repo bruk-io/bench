@@ -38,8 +38,11 @@ HASH_FILE = WEB / "dist" / ".bench-hash"
 """Where the hash of the sources the current build was made from is written, next to the
 build itself so a ``rm -rf web/dist`` forgets it along with everything else."""
 
-WATCHED = ("web/src", "src/bench")
-"""What the build is made from; a changed hash of this means rebuild."""
+WATCHED = ("web/src", "web/scripts", "src/bench", "examples", "templates")
+"""What the build is made from; a changed hash of this means rebuild. The examples and the
+starter template are in it because ``web/scripts/bundle-py.mjs`` bundles them into the app: an
+example fixed while this watched only ``web/src`` and ``src/bench`` left the e2e suite and
+``tools.qa`` serving the old one from a build that looked current (task-93)."""
 
 BUILD_SECONDS = 900
 """How long ``npm run build`` may take - it type-checks and bundles Pyodide's copy."""
