@@ -1164,6 +1164,8 @@ function received(next: Scene): void {
   inspector.warnings = next.warnings;
   inspector.sheets = next.sheets;
   inspector.files = next.files;
+  // What the slicer said was about the files of the run before, or of another project's.
+  inspector.opening = {};
   // A part or face the newest run still names stays the subject; one it does not is the
   // project (task-92). A link the page was opened on is followed once there is a run to find it
   // in, and wins over whatever was selected before it arrived.
@@ -1779,7 +1781,11 @@ async function openInSlicer(name: string, data: string): Promise<void> {
   const route = client;
   const project = workspace.current;
   if (route === null || project === "") return;
+  // The run whose file this is: an answer that arrives after another run, or another project,
+  // is about files no longer on screen, and is not said under a row that is not its own.
+  const run = ui.inspector.files;
   const said = (one: Opening): void => {
+    if (ui.inspector.files !== run) return;
     ui.inspector.opening = { ...ui.inspector.opening, [name]: one };
   };
   said({ state: "opening" });
