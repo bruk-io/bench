@@ -28,14 +28,20 @@
  * triangles are painted as selected, `data-distance` for how far the camera stands from what
  * it looks at, `data-datum` for how long the origin's own X/Y/Z arms are drawn,
  * `data-section` for the axis and position a section is clipping at (empty when off),
- * `data-colour-faces` for whether every named face is painted its own colour (empty when off)
- * and `data-hidden` for how many triangles the refs container's eye toggles are hiding right
- * now.
+ * `data-colour-faces` for whether every named face is painted its own colour (empty when off),
+ * `data-hidden` for how many triangles the refs container's eye toggles are hiding right now,
+ * and `data-context` and `data-context-triangles` for the bodies shown for context.
+ *
+ * **Context.** A body a script shows with `context(...)` is drawn translucent in a colour no
+ * part wears, where Python put it. Its named faces answer a click and a hover like a part's -
+ * `pipe/side-0` - but a part anywhere under the pointer wins, so a ghost round the work never
+ * swallows a click meant for what is inside it, and a triangle of no name answers nothing.
  */
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import type {
+  ContextView,
   FrameView,
   GridView,
   LetteringView,
@@ -75,6 +81,12 @@ const CURSOR = new THREE.Color(0xe38b00);
  * open material, not a face the part actually has. */
 const CUT = new THREE.Color(0xb23a2e);
 
+/** What a body shown for context is painted, and how much of it: a warm sand no part, no
+ * selection and no reference wears, thin enough that the part inside or behind it reads
+ * through. It is still shaded, so its shape reads as a body rather than a tint. */
+const CONTEXT = new THREE.Color(0xd9b26f);
+const CONTEXT_OPACITY = 0.36;
+
 /** The origin, as a constant rather than a fresh vector at every call - every arrow of the
  * datum starts here and nowhere else. */
 const ORIGIN = new THREE.Vector3(0, 0, 0);
@@ -98,13 +110,15 @@ const FRAME_NORMAL = 0x9b59d0;
 
 export interface Viewer3D {
   /** Draw these parts - the ones with a body; anything else is not ours to show - standing
-   * where the stage says. `sheets` is only read to say which sheet a part is cut from, and
-   * `reference` is a body somebody else made, stood behind the work and never selectable. */
+   * where the stage says. `sheets` is only read to say which sheet a part is cut from,
+   * `reference` is a body somebody else made, stood behind the work and never selectable, and
+   * `context` the bodies the script showed for context, drawn translucent where they stand. */
   show(
     parts: readonly PartView[],
     stage: StageView,
     sheets: readonly SheetView[],
     reference?: MeshView | null,
+    context?: readonly ContextView[],
   ): void;
   /** Frame everything, and forget that anybody moved the camera. */
   fit(): void;
@@ -205,6 +219,16 @@ interface Body {
   readonly part: PartView;
 }
 
+/** A body shown for context on screen: a part's `Body` without the section's cap - a ghost is
+ * clipped like the parts, and its inside is not open material worth painting. */
+interface Ghost {
+  readonly mesh: THREE.Mesh;
+  readonly refs: readonly string[];
+  readonly index: Uint32Array;
+  readonly colors: THREE.BufferAttribute;
+  readonly context: ContextView;
+}
+
 /** One part's engraved wires on screen, numbered the way a body's triangles are. */
 interface Scored {
   readonly lines: THREE.LineSegments;
@@ -223,10 +247,12 @@ interface Lettered {
   readonly part: PartView;
 }
 
-/** What is under the pointer: the ref it answers to, and the part it belongs to. */
+/** What is under the pointer: the ref it answers to, and the part it belongs to - or, for a
+ * face of a body shown for context, `null` and that body. */
 interface Found {
   readonly ref: string;
-  readonly part: PartView;
+  readonly part: PartView | null;
+  readonly context: ContextView | null;
 }
 
 /** The entry `at` of a numbered list of refs, or `null` for an entry of no name. */
@@ -554,6 +580,9 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
   });
 
   let bodies: Body[] = [];
+  /** The bodies shown for context - apart from `bodies`, so what counts, colours and hides
+   * parts never counts, colours or hides one. */
+  let ghosts: Ghost[] = [];
   let scored: Scored[] = [];
   let lettered: Lettered[] = [];
   let sheetsOf: ReadonlyMap<string, readonly string[]> = new Map();
@@ -742,6 +771,17 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       one.colors.needsUpdate = true;
     }
     for (const one of lettered) one.material.color.copy(shade(one.ref ?? one.part.ref, INK));
+    for (const ghost of ghosts) {
+      for (let triangle = 0; triangle < ghost.index.length; triangle += 1) {
+        // A triangle of no name answers to nothing, so nothing lights it.
+        const ref = refIn(ghost.refs, ghost.index, triangle);
+        const colour = ref === null ? CONTEXT : shade(ref, CONTEXT);
+        for (let corner = 0; corner < 3; corner += 1) {
+          ghost.colors.setXYZ(3 * triangle + corner, colour.r, colour.g, colour.b);
+        }
+      }
+      ghost.colors.needsUpdate = true;
+    }
     container.dataset["selected"] = chosen ?? "";
     container.dataset["second"] = chosenSecond ?? "";
     container.dataset["pointed"] = pointed ?? "";
@@ -771,6 +811,11 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       one.material.dispose();
       one.texture.dispose();
     }
+    for (const ghost of ghosts) {
+      ghost.mesh.geometry.dispose();
+      const material = ghost.mesh.material;
+      if (material instanceof THREE.Material) material.dispose();
+    }
     if (standing !== null) {
       standing.geometry.dispose();
       const material = standing.material;
@@ -781,6 +826,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     backdrop.clear();
     parts.clear();
     bodies = [];
+    ghosts = [];
     scored = [];
     lettered = [];
   }
@@ -984,6 +1030,30 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     return { mesh, cap, refs, index, colors, part };
   }
 
+  /** A body shown for context: vertex-coloured like a part's so its faces can light, and
+   * translucent, writing no depth so the parts inside and behind it draw through. */
+  function ghostOf(context: ContextView, mesh: MeshView): Ghost {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
+    const colors = new THREE.BufferAttribute(new Float32Array(mesh.positions.length), 3);
+    geometry.setAttribute("color", colors);
+    geometry.computeVertexNormals();
+    const surface = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.8,
+      metalness: 0.0,
+      flatShading: true,
+      transparent: true,
+      opacity: CONTEXT_OPACITY,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      clippingPlanes: [clipPlane],
+    });
+    const drawn = new THREE.Mesh(geometry, surface);
+    parts.add(drawn);
+    return { mesh: drawn, refs: mesh.refs, index: mesh.ref_index, colors, context };
+  }
+
   function scoredOf(part: PartView, marks: MarksView): Scored {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(marks.segments, 3));
@@ -1021,6 +1091,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     stage: StageView,
     sheets: readonly SheetView[],
     reference: MeshView | null = null,
+    context: readonly ContextView[] = [],
   ): void {
     clear();
     if (reference !== null && reference.positions.length > 0) stand(reference.positions);
@@ -1039,6 +1110,10 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       bodies.push(bodyOf(part, mesh.positions, mesh.refs, mesh.ref_index));
       if (part.marks !== null) scored.push(scoredOf(part, part.marks));
       for (const one of part.lettering) lettered.push(letteredOf(part, one));
+    }
+    for (const one of context) {
+      if (one.mesh === null || one.mesh.ref_index.length === 0) continue;
+      ghosts.push(ghostOf(one, one.mesh));
     }
 
     // One palette index across the whole scene, in the order its faces are met - a part's own
@@ -1078,6 +1153,10 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     container.dataset["bodies"] = String(bodies.length);
     container.dataset["triangles"] = String(bodies.reduce((sum, one) => sum + one.index.length, 0));
     container.dataset["bounds"] = stage.bounds.join(",");
+    container.dataset["context"] = String(ghosts.length);
+    container.dataset["contextTriangles"] = String(
+      ghosts.reduce((sum, one) => sum + one.index.length, 0),
+    );
     lay(stage.grid);
 
     // A selected or pointed-at ref the new scene no longer has is dropped, and the host is
@@ -1105,14 +1184,15 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     // move is the mesh itself - only the camera.
     const arrived = !sameReference(reference, referenceDrawn);
     referenceDrawn = reference;
-    if (arrived || (!touched && (bodies.length > 0 || standing !== null))) fit();
+    if (arrived || (!touched && (bodies.length > 0 || ghosts.length > 0 || standing !== null))) fit();
     else draw();
   }
 
   const known = (ref: string): boolean =>
     bodies.some((one) => one.part.ref === ref || one.refs.includes(ref)) ||
     scored.some((one) => one.refs.includes(ref)) ||
-    lettered.some((one) => one.ref === ref);
+    lettered.some((one) => one.ref === ref) ||
+    ghosts.some((one) => one.refs.includes(ref));
 
   /** The floor the stage asked for. */
   function lay(floor: GridView): void {
@@ -1183,20 +1263,29 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
    * the geometry is indexed or not, the same way `index.getX(hit.index)` is a line segment's
    * first vertex regardless of which entries of the index were kept. */
   function foundBy(hit: THREE.Intersection): Found | null {
+    const triangle = hit.face !== null && hit.face !== undefined ? Math.floor(hit.face.a / 3) : -1;
     const body = bodies.find((one) => one.mesh === hit.object || one.cap === hit.object);
     if (body !== undefined) {
-      const triangle = hit.face !== null && hit.face !== undefined ? Math.floor(hit.face.a / 3) : -1;
-      return { ref: refIn(body.refs, body.index, triangle) ?? body.part.ref, part: body.part };
+      const ref = refIn(body.refs, body.index, triangle) ?? body.part.ref;
+      return { ref, part: body.part, context: null };
     }
     const lines = scored.find((one) => one.lines === hit.object);
     if (lines !== undefined) {
       const at = hit.index ?? -2;
       const vertex = lines.lines.geometry.index?.getX(at) ?? at;
       const segment = Math.floor(vertex / 2);
-      return { ref: refIn(lines.refs, lines.index, segment) ?? lines.part.ref, part: lines.part };
+      const ref = refIn(lines.refs, lines.index, segment) ?? lines.part.ref;
+      return { ref, part: lines.part, context: null };
     }
     const words = lettered.find((one) => one.quad === hit.object);
-    if (words !== undefined) return { ref: words.ref ?? words.part.ref, part: words.part };
+    if (words !== undefined) return { ref: words.ref ?? words.part.ref, part: words.part, context: null };
+    // A context body answers only by a face's own name - never its label for a triangle of
+    // none, since an imported body is nothing but those and must not be a thing to click.
+    const ghost = ghosts.find((one) => one.mesh === hit.object);
+    if (ghost !== undefined) {
+      const ref = refIn(ghost.refs, ghost.index, triangle);
+      return ref === null ? null : { ref, part: null, context: ghost.context };
+    }
     return null;
   }
 
@@ -1209,6 +1298,9 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       -((event.clientY - rect.top) / rect.height) * 2 + 1,
     );
     caster.setFromCamera(where, camera);
+    // A context body is drawn round and over the work, so a part anywhere along the ray wins
+    // and a ghost's face is only the answer when no part is under the pointer at all.
+    let behind: Found | null = null;
     for (const hit of caster.intersectObjects(parts.children, false)) {
       // The raycaster knows nothing of clipping planes - it would happily hand back a
       // triangle the section has clipped away, since that clip only ever happened in the
@@ -1224,9 +1316,13 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       // and a hit refused here is a hit skipped, which is what lets a click through to
       // whatever undrawn geometry sits behind it.
       if (isHidden(found.ref)) continue;
+      if (found.part === null) {
+        behind ??= found;
+        continue;
+      }
       return found;
     }
-    return null;
+    return behind;
   }
 
   let pressed: { x: number; y: number } | null = null;
@@ -1249,7 +1345,9 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       hooks.onDetectPick(detectedAt(event));
       return;
     }
-    if (event.shiftKey && found !== null && chosen !== null) {
+    // A context body is never half of a fit - it is not a part - so a shift-click onto one,
+    // or from one, is an ordinary pick.
+    if (event.shiftKey && found !== null && found.part !== null && chosen !== null) {
       // task-61's second pick: only counts when it lands on a part other than the first
       // pick's - a shift-click on the same part, or with nothing picked yet, changes
       // nothing, so a maker cannot lose the first pick by shift-clicking somewhere that
@@ -1286,7 +1384,8 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     tip.hidden = found === null;
     if (found !== null) {
       tipRef.textContent = found.ref;
-      tipPart.textContent = caption(found.part, sheetsOf);
+      tipPart.textContent =
+        found.part === null ? "context · not a part, not exported" : caption(found.part, sheetsOf);
       const rect = container.getBoundingClientRect();
       tip.style.left = `${Math.round(event.clientX - rect.left + 12)}px`;
       tip.style.top = `${Math.round(event.clientY - rect.top + 14)}px`;

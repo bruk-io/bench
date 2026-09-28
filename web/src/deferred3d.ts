@@ -5,7 +5,7 @@
  * anyway. So the view is a stand-in until the first scene arrives - it remembers what it was
  * told and hands it over once the real one has loaded.
  */
-import type { MeshView, PartView, SheetView, StageView } from "./scene";
+import type { ContextView, MeshView, PartView, SheetView, StageView } from "./scene";
 import type { SectionState, Viewer3D, Viewer3DHooks } from "./viewer3d";
 
 export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
@@ -15,6 +15,7 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
   let stage: StageView | null = null;
   let sheets: readonly SheetView[] = [];
   let reference: MeshView | null = null;
+  let context: readonly ContextView[] = [];
   let note = "";
   let chosen: string | null = null;
   let chosenSecond: string | null = null;
@@ -38,7 +39,7 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
       (module) => {
         waiting.remove();
         const made = module.mount(container, hooks);
-        if (stage !== null) made.show(parts, stage, sheets, reference);
+        if (stage !== null) made.show(parts, stage, sheets, reference, context);
         made.say(note);
         // `select` clears the real view's own second pick, so it goes first and `selectSecond`
         // after - the same order a fresh shift-click pair would arrive in.
@@ -59,13 +60,14 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
   }
 
   return {
-    show(given, at, cut, backdrop = null) {
+    show(given, at, cut, backdrop = null, around = []) {
       parts = given;
       stage = at;
       sheets = cut;
       reference = backdrop;
+      context = around;
       wake();
-      real?.show(given, at, cut, backdrop);
+      real?.show(given, at, cut, backdrop, around);
     },
     say(text) {
       note = text;

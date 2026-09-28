@@ -113,6 +113,16 @@ export interface PartView {
   readonly frames: Readonly<Record<string, FrameView>>;
 }
 
+/** A body the script showed for context - `context(pipe, label="pipe")` - drawn where it was
+ * drawn and made of nothing: not a part, on no sheet, in no file. `ref` is its label, and
+ * every named face of `mesh` is under it the way a part's are, so a click on one names it; a
+ * triangle of no named face - every triangle of an imported mesh - names nothing. `mesh` is
+ * `null` for a run with no kernel to build it. */
+export interface ContextView {
+  readonly ref: string;
+  readonly mesh: MeshView | null;
+}
+
 /** What a run amounts to, counted in Python so the app only words it: what was made and
  * nested, what the checks found and the line of the first error, and how many parts have a
  * body to draw and how many do not. */
@@ -160,6 +170,9 @@ export interface OkScene {
    * stand the work against the thing it is copying. It names no faces - every triangle of it
    * indexes nothing - so it is drawn and never selected. `null` when nothing was offered. */
   readonly reference: MeshView | null;
+  /** Every body the script showed for context, in the order it said them - drawn translucent
+   * beside the parts and, like `reference`, never a part and never exported. */
+  readonly context: readonly ContextView[];
 }
 
 export interface ErrorScene {
@@ -332,6 +345,13 @@ function sheetProblem(value: unknown, at: number): string | null {
   return null;
 }
 
+/** The first thing wrong with one context body, or `null`. */
+function contextProblem(value: unknown, at: number): string | null {
+  if (!isObject(value)) return `context[${at}] is not an object`;
+  if (!isText(value["ref"])) return `context[${at}].ref is not a string`;
+  return listsProblem(value["mesh"], `context[${at}] (${value["ref"]}).mesh`, "positions");
+}
+
 /** The first thing wrong with a scene that claims `ok: true`, or `null`. */
 function okProblem(value: unknown): string | null {
   if (!isObject(value)) return "not an object";
@@ -372,6 +392,11 @@ function okProblem(value: unknown): string | null {
   if (!("reference" in value)) return "reference is absent";
   if (value["reference"] !== null) {
     const problem = listsProblem(value["reference"], "reference", "positions");
+    if (problem !== null) return problem;
+  }
+  if (!isList(value["context"])) return "context is not an array";
+  for (const [at, one] of value["context"].entries()) {
+    const problem = contextProblem(one, at);
     if (problem !== null) return problem;
   }
   return null;
@@ -460,5 +485,17 @@ export function received(
     if (typeof lists === "string") return { problem: lists };
     reference = { positions: lists.floats, ref_index: lists.index, refs: lists.refs };
   }
-  return { scene: { ...wire, parts, reference } as unknown as OkScene };
+  const context: ContextView[] = [];
+  for (const [at, one] of (wire["context"] as Record<string, unknown>[]).entries()) {
+    const ref = String(one["ref"]);
+    let mesh: MeshView | null = null;
+    if (one["mesh"] !== null) {
+      const where = `context[${at}] (${ref}).mesh`;
+      const lists = listsWith(one["mesh"] as Record<string, unknown>, where, given, "positions", 9);
+      if (typeof lists === "string") return { problem: lists };
+      mesh = { positions: lists.floats, ref_index: lists.index, refs: lists.refs };
+    }
+    context.push({ ref, mesh });
+  }
+  return { scene: { ...wire, parts, reference, context } as unknown as OkScene };
 }
