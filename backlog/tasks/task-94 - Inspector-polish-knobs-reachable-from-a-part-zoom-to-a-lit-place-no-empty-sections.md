@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-28 03:01'
+updated_date: '2026-09-28 03:47'
 labels:
   - web
   - ui
@@ -27,4 +28,7 @@ What the task-88 agent and review found still off after the inspector landed (PR
 - [ ] #3 Sections with nothing in them are not shown
 - [ ] #4 The one-button rail is removed or earns its place; sheet names are readable; long project views keep Export reachable
 - [ ] #5 e2e and screenshots
+
+- [ ] #6 The lease has one home: the status bar's read-only chip (#standing) goes, the header chip stays
+- [ ] #7 View layout folds the file tree too, so the view takes everything but the inspector
 <!-- AC:END -->
