@@ -89,7 +89,8 @@ from .params import configured, declared, values_of
 from .scene import ParamView, Scalar, Scene
 from .telemetry import CHECK, FIELDS, SILENT, Tracer, fields, timed
 from .topology import Label, Shape, Solid
-from .views import Finding
+from .topology import label as _label
+from .views import Context, Finding
 
 Showable = Assembly | Part | tuple[Part, ...] | Build
 """What a script may show: an assembly, one part, a tuple of parts, or a library's build."""
@@ -130,6 +131,7 @@ class _Recorder:
     values: dict[str, Scalar] = field(default_factory=dict)
     findings: list[Finding] = field(default_factory=list)
     mates: list[tuple[Solid, Solid]] = field(default_factory=list)
+    context: list[Context] = field(default_factory=list)
     shown: _Show | None = None
 
 
@@ -152,6 +154,29 @@ def _shown(recorder: _Recorder, thing: object) -> None:
         raise ValueError(msg)
     made = _built(recorder, thing) if _is_build(thing) else thing
     recorder.shown = _collected(_showable(made))
+
+
+def _in_context(recorder: _Recorder, body: object, label: str | Label) -> None:
+    """``body`` written into ``recorder`` as a body shown for context, under ``label``.
+
+    A script is ordinary Python and hands over whatever it has, so this is where that becomes
+    a :class:`~bench.topology.Solid` or an error; and a label said twice would put two bodies'
+    faces under one ref, so the second is refused rather than drawn over the first.
+
+    Raises:
+        ValueError: if ``body`` is not a solid, or another context body has ``label``.
+    """
+    if not isinstance(body, Solid):
+        msg = (
+            f"context() shows a body, and was given {type(body).__name__!r}: hand it a solid -"
+            " a part's own is its .shape"
+        )
+        raise ValueError(msg)
+    named = _label(label)
+    if any(one.label == named for one in recorder.context):
+        msg = f"context() was already given a body labelled {str(named)!r}; name each one apart"
+        raise ValueError(msg)
+    recorder.context.append(Context(named, body))
 
 
 def _is_build(thing: object) -> TypeIs[Callable[..., object]]:
@@ -450,7 +475,9 @@ def run(
     is a value rather than a module and so not one of ``extras``; it is ``None`` when the
     host has nothing to offer, which is what a script tests for. It reaches the scene as a
     body to draw behind the work - see :class:`~bench.scene.OkScene` - and nothing else in a
-    run reads it: it is not a part, it is never shown, nested or exported.
+    run reads it: it is not a part, it is never shown, nested or exported. A body the script
+    shows with ``context(body, label=...)`` reaches the scene the same way, drawn and never
+    made - see :class:`~bench.scene.ContextView`.
 
     ``tracer`` is handed a span for the run and each stretch of it; the default keeps
     nothing. One log record says how each run ended.
@@ -538,6 +565,7 @@ def _ran(
             bed=bed,
             kernel=kernel,
             reference=reference,
+            context=recorder.context,
             stdout=captured.getvalue(),
             stderr=complained.getvalue(),
             tracer=tracer,
@@ -564,10 +592,11 @@ def _namespace(
     tracer: Tracer,
 ) -> dict[str, object]:
     """A fresh module-like namespace with the real builtins and the names a script starts
-    with: ``show``, which it talks to the runtime through, the checks and the ``require`` that
-    makes one fatal, ``mated``, which puts one part's face on another's and checks the pair,
-    ``ref``, the package so ``from bench import *`` works, and whatever modules the host
-    pre-bound in ``extras``.
+    with: ``show``, which it talks to the runtime through, ``context``, which shows a body
+    beside it that is not a part, the checks and the ``require`` that makes one fatal,
+    ``mated``, which puts one part's face on another's and checks the pair, ``ref``, the
+    package so ``from bench import *`` works, and whatever modules the host pre-bound in
+    ``extras``.
 
     Every one of them is a closure over ``recorder`` - and, for the checks, over this run's
     ``kernel`` - so they are this run's own and nothing has to be installed anywhere to
@@ -589,6 +618,19 @@ def _namespace(
         A script shows one thing, once.
         """
         _shown(recorder, thing)
+
+    def context(body: Solid, *, label: str | Label) -> None:
+        """Show ``body`` beside what ``show`` shows, for context: what a part mates with, a
+        reference piece in its seated pose, the ghost of a body round the part.
+
+        It is drawn translucent, where it was drawn - nothing lays it out, so it belongs
+        beside a posed assembly - and its named faces answer a click under ``label``, as
+        ``pipe/side-0``. It is not a part: it is on no sheet, in no STL and no 3MF, in no
+        count and no check a script did not ask of it by hand. Call it from ``build`` when it
+        depends on the settings, or anywhere else in the script when it does not; a label
+        said twice, or the label of a part, stops the run.
+        """
+        _in_context(recorder, body, label)
 
     def check_fits(
         shape: Shape | Part, volume: Volume, orient: Orient | None = None
@@ -874,6 +916,7 @@ def _namespace(
         "__builtins__": builtins,
         "bench": _package(),
         "show": show,
+        "context": context,
         "ref": ref,
         "check_fits": check_fits,
         "check_clearance": check_clearance,

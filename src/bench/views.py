@@ -5,7 +5,8 @@ parameters it declared, the violations its checks found and what it printed. Thi
 that into a :data:`bench.scene.Scene`. It nests the parts onto sheets, builds each part's body -
 a laser part's plate here, a printed part's body with the kernel - lays the bodies out on the
 stage, writes every file a run offers, and converts each record into the closed view the wire
-carries.
+carries. A body the script showed for context is built last, beside all of that and inside
+none of it: drawn, and never a part, a sheet, a file or a count.
 
 It runs no script and knows nothing of one: it is handed data and gives back data, so the
 runtime and the answer it produces can each change without the other.
@@ -24,6 +25,7 @@ from .nest import Bed, PartSpec, Sheet, nest, sheet_name
 from .ops import BBox, bbox
 from .plates import Lettering, Marks, Plate, plate
 from .scene import (
+    ContextView,
     ErrorScene,
     ErrorView,
     FrameView,
@@ -42,7 +44,17 @@ from .scene import (
     ViolationView,
 )
 from .solids import plane_of
-from .stage import Box, Offset, as_given, grid, layout, positions, ref_table, shifted
+from .stage import (
+    Box,
+    Offset,
+    as_given,
+    grid,
+    layout,
+    positions,
+    ref_table,
+    shifted,
+    widened,
+)
 from .telemetry import Tracer, timed
 from .topology import SEP, Face, Label, Shape, Solid
 from .transport import STL, THREE_MF
@@ -64,6 +76,14 @@ class Finding(NamedTuple):
     subjects: tuple[Shape, ...]
 
 
+class Context(NamedTuple):
+    """A body a script showed for context - ``context(pipe, label="pipe")`` - and the label
+    its faces are named under in the scene."""
+
+    label: Label
+    body: Solid
+
+
 def scene(
     *,
     assembly: Assembly,
@@ -75,6 +95,7 @@ def scene(
     bed: Bed,
     kernel: Kernel | None,
     reference: Mesh | None = None,
+    context: Sequence[Context] = (),
     stdout: str,
     stderr: str,
     tracer: Tracer,
@@ -90,8 +111,17 @@ def scene(
     ``bed`` is the stock the parts are nested onto. ``kernel`` builds the printed bodies, which
     have no ``mesh`` when there is none; a laser part's plate needs no kernel. Each stretch of
     the work is a span on ``tracer``.
+
+    ``context`` is every body the script showed for context. Each is built after everything
+    above - the parts, their sheets, their files - has been, and reaches the scene only as a
+    :class:`~bench.scene.ContextView` and as room on the stage, so a run that shows context
+    offers exactly the files, parts, refs and counts it would without it. It stands where it
+    was drawn: nothing lays it out, which is why it belongs beside a posed assembly. A context
+    body labelled as a part is refused where :func:`_unclashed` finds it - a ref under the one
+    label would name both, and a click on one would light the other.
     """
     parts = tuple(placed.part for placed in assembly.parts)
+    _unclashed(context, parts)
     refused = _export_findings(parts)
     violations = tuple(_qualified(one, parts) for one in (*findings, *refused))
     counts = tuple(quantities.get(Ref(part.label), 1) for part in parts)
@@ -118,6 +148,10 @@ def scene(
     )
     with timed(tracer, "bench.scene.files"):
         files = _files(nested, parts, printed, extra, str(assembly.label))
+    around = tuple(_timed_build_context(one, kernel, tracer) for one in context)
+    if context:
+        drawn = any(offset is not None for offset in offsets)
+        box = widened(box if drawn else None, [mesh for mesh in around if mesh is not None])
     return OkScene(
         ok=True,
         params=list(params),
@@ -143,7 +177,24 @@ def scene(
         # empty table and an index of zeros - a body that answers to no name, which is what
         # keeps a click on it from naming anything.
         reference=None if reference is None else _mesh_view(reference, "", (0.0, 0.0, 0.0)),
+        context=[_context_view(one, mesh) for one, mesh in zip(context, around, strict=True)],
     )
+
+
+def _unclashed(context: Sequence[Context], parts: Sequence[Part]) -> None:
+    """Nothing, once no context body is labelled as a part is.
+
+    Raises:
+        ValueError: naming the label a context body and a part share.
+    """
+    labels = {part.label for part in parts}
+    for one in context:
+        if one.label in labels:
+            msg = (
+                f"context {str(one.label)!r} has the label of a part: a context body is named"
+                " apart from the parts, or a ref under it would name both"
+            )
+            raise ValueError(msg)
 
 
 def failed(
@@ -176,6 +227,16 @@ def _timed_build(part: Part, kernel: Kernel | None, tracer: Tracer) -> _Built:
         if body is not None:
             attributes["bench.mesh.triangles"] = len(body.refs)
         return one
+
+
+def _timed_build_context(one: Context, kernel: Kernel | None, tracer: Tracer) -> Mesh | None:
+    """A context body built with ``kernel`` - ``None`` without one - as a ``bench.scene.mesh``
+    span of its own, named ``bench.context.ref`` so a slow one is not taken for a part."""
+    with timed(tracer, "bench.scene.mesh", **{"bench.context.ref": str(one.label)}) as attributes:
+        mesh = None if kernel is None else kernel.mesh(one.body)
+        if mesh is not None:
+            attributes["bench.mesh.triangles"] = len(mesh.refs)
+        return mesh
 
 
 def _built(part: Part, kernel: Kernel | None) -> _Built:
@@ -404,6 +465,14 @@ def _mesh_view(mesh: Mesh, prefix: str, offset: Offset) -> MeshView:
     ``boss/top``, and a scene says ``plate/boss/top``."""
     table, index_of = ref_table(mesh.refs, prefix)
     return MeshView(positions=positions(mesh, offset), ref_index=index_of, refs=table)
+
+
+def _context_view(one: Context, mesh: Mesh | None) -> ContextView:
+    """A context body as the browser draws it: where it was drawn, every face under its label."""
+    label = str(one.label)
+    return ContextView(
+        ref=label, mesh=None if mesh is None else _mesh_view(mesh, label, (0.0, 0.0, 0.0))
+    )
 
 
 def _marks_view(marks: Marks, prefix: str, offset: Offset) -> MarksView | None:

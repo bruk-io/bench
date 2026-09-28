@@ -801,9 +801,27 @@ Scene (JSON-shaped dict; the shapes are `scene.py`'s, each a `TypedDict(closed=T
                                          # one STL per printed body, and one 3MF
                                          # holding every one of them, named
   "violations": [{"check", "message", "severity", "refs": [ref, ...], "line"}],
-  "warnings": [str], "stdout": str, "stderr": str
+  "warnings": [str], "stdout": str, "stderr": str,
+  "reference": {"positions", "ref_index", "refs"} | null,
+                                         # a body the host was handed, drawn behind the work
+  "context": [{"ref", "mesh": {"positions", "ref_index", "refs"} | null}]
+                                         # bodies shown with context(), drawn, never made
 }
 ```
+
+`context(body, label=...)` is injected beside `show`, for the same reason, and shows a `Solid`
+that is not a part: what a part mates with, a reference piece in its seated pose, the ghost of
+a module's body. It is recorded wherever the script says it - inside `build`, when it depends
+on the settings, or anywhere else - and built after the parts, their sheets and their files,
+so a run with context offers byte for byte the files it offers without (the adapter layer
+proves it with the shipped kernel). Its faces are named under `label` the way a part's are
+under its own, and it is drawn where it was drawn: nothing lays it out, so it belongs beside
+a posed assembly, and the stage is widened to hold it. It is never a part, a ref in `refs`, a
+sheet, a file, a count in `summary`, or anything a check reads unless the script hands it one.
+A body that is not a `Solid`, a label said twice and a part's label all stop the run. A
+keyword on `show` was the other way to write it, and a worse one: `show` is handed the build
+function, not what it builds, so a context body that depends on the settings would have
+forced `build` to return a pair.
 
 `violations` is what the script's own checks found, each with the line that asked for it -
 a warning with somewhere to point. `stdout` and `stderr` are what the script printed on
@@ -982,6 +1000,12 @@ Interactions that define the product:
   into its neighbours, and the facets shade flat.
 - Cursor inside a `ref("...")` string in the editor highlights that geometry
   in the viewer; hover over geometry shows its ref as a tooltip.
+- A body shown for context is drawn translucent in sand, a colour no part, selection or
+  reference wears, and clipped by a section like the parts. Its named faces light and answer
+  a click and a hover (`context · not a part, not exported`), but a part anywhere along the
+  ray wins, so a ghost round the work never swallows a click meant for it, and a triangle of
+  no name - every one of an imported mesh's - answers nothing. It is never counted, coloured
+  or hidden with the parts, and never half of *Insert fit*'s pair.
 - Downloads: per-sheet SVG/DXF; one `.stl` per body and one `.3mf` for all of them; any
   extra files; and an "everything" zip. The two the printer reads are bytes carried as
   base64 - `transport.binary(name)` is the one place that says which - and are decoded on the

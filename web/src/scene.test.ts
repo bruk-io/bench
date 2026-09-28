@@ -33,6 +33,7 @@ function wire(part: Record<string, unknown> = {}): Record<string, unknown> {
     stdout: "",
     stderr: "",
     reference: null,
+    context: [],
   };
 }
 
@@ -102,5 +103,42 @@ describe("received, plates and what is engraved on them", () => {
   it("refuses a frame with the wrong count of numbers", () => {
     const bad = wire({ frames: { "plate/hole": { origin: [1, 2], normal: [0, 0, 1], x: [1, 0, 0] } } });
     expect(problemOf(bad)).toContain("frames");
+  });
+});
+
+describe("received, bodies shown for context", () => {
+  /** The plate's four buffers, then one triangle of a pin's, naming its one face. */
+  const withPin = (): unknown[] => [...buffers(), new Float32Array(9), new Uint32Array([1])];
+
+  it("puts a context body's buffers back on it, under its own ref", () => {
+    const shown = wire();
+    shown["context"] = [
+      { ref: "pin", mesh: { positions: 4, ref_index: 5, refs: ["pin/top"] } },
+      { ref: "ghost", mesh: null },
+    ];
+    const found = received(shown, withPin());
+    if (!("scene" in found) || !found.scene.ok) throw new Error("that scene was meant to be read");
+    const [pin, ghost] = found.scene.context;
+    expect(pin?.ref).toBe("pin");
+    expect(pin?.mesh?.positions).toBeInstanceOf(Float32Array);
+    expect(pin?.mesh?.refs).toEqual(["pin/top"]);
+    expect(ghost).toEqual({ ref: "ghost", mesh: null });
+    expect(found.scene.parts).toHaveLength(1);
+  });
+
+  it("reads a scene that shows no context", () => {
+    expect(problemOf(wire())).toBeNull();
+  });
+
+  it("refuses a scene with no context list at all", () => {
+    const old = wire();
+    delete old["context"];
+    expect(problemOf(old)).toBe("context is not an array");
+  });
+
+  it("refuses a context body whose mesh names a ref it does not carry", () => {
+    const shown = wire();
+    shown["context"] = [{ ref: "pin", mesh: { positions: 4, ref_index: 5, refs: [] } }];
+    expect(problemOf(shown, withPin())).toBe("context[0] (pin).mesh names a ref it does not carry");
   });
 });

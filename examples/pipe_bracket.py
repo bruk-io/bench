@@ -11,6 +11,11 @@ tree keeps no such name. The honest substitute is a gusset, and the honest gusse
 `loft` - the ear's footprint flared out where it lands on the base. It is one verb, it is
 exact, and it prints, which a hand-made triangular fin also would be but only after four
 more lines of arithmetic.
+
+The pipe is shown too, through the bore where it will run, with `context`: drawn translucent
+beside the bracket so the fit reads at a glance, its faces answering a click as `pipe/...`,
+and never a part - it is on no sheet and in no STL or 3MF. It stands where it was drawn, so
+the assembly is `posed` and the bracket stays where the pipe's numbers put it too.
 """
 
 from dataclasses import dataclass
@@ -88,13 +93,24 @@ def build(p: Bracket) -> Assembly:
             label=f"screw-{i + 1}",
         )
 
+    # The pipe it holds, for context: a length of it through the bore, on the bore's own axis.
+    reach = p.pipe_d
+    pipe = extrude(
+        fill(
+            circle(p.pipe_d / 2, Point(ear_w / 2, axis_z)),
+            on=plane(Point(ear_x - reach, 0.0, 0.0), X, Y),
+        ),
+        p.ear_t + 2 * reach,
+    )
+    context(pipe, label="pipe")
+
     require(check_fits(bracket, H2D))
     check_overhangs(bracket, pla.orient, PLA)
 
     print(f"bore {bore_d:.2f} mm for a {p.pipe_d:.1f} mm pipe")
     print(f"bracket {base_w:.1f} x {base_d:.1f} x {ear_h:.1f} mm")
 
-    return assembly("pipe-bracket", (Placed(part("bracket", bracket, pla), XY),))
+    return assembly("pipe-bracket", (Placed(part("bracket", bracket, pla), XY),), posed=True)
 
 
 show(build)

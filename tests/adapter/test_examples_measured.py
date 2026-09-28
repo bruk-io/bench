@@ -249,6 +249,28 @@ def test_the_bracket_has_two_m4_holes_and_a_gusset_that_is_no_fillet(
     assert all(ref != "bracket/gusset/top" for ref in mesh["refs"])
 
 
+def test_the_pipe_is_shown_through_the_bore_for_context_and_not_as_a_part(
+    measured: dict[str, Any],
+) -> None:
+    """task-90: the pipe the bracket holds is drawn where it runs - 40 mm across, on the
+    saddle's own axis, its faces named ``pipe/...`` - and is not a part, so it is in no file."""
+    scene = _scene(measured, "pipe_bracket.py")
+    [pipe] = scene["context"]
+    assert pipe["ref"] == "pipe"
+    assert pipe["mesh"] is not None
+    assert set(pipe["mesh"]["refs"]) == {"pipe/top", "pipe/bottom", "pipe/side-0"}
+    side = _points(pipe["mesh"], "pipe/side-0")
+    assert _measures(_span(side, Vector(0, 1, 0)), 40.0)
+    saddle = _points(_mesh(scene, "bracket"), "bracket/saddle")
+    across = (min(one.y for one in saddle) + max(one.y for one in saddle)) / 2
+    # two faceted circles, cut into different numbers of steps, agree on a middle only to
+    # within the sag of a chord
+    middle = (min(one.y for one in side) + max(one.y for one in side)) / 2
+    assert middle == pytest.approx(across, abs=_shortfall(40.0))
+    assert [view["ref"] for view in scene["parts"]] == ["bracket"]
+    assert sorted(scene["files"]) == ["bracket.stl", "pipe-bracket.3mf"]
+
+
 # ---- (c) the lid -------------------------------------------------------------------------
 
 

@@ -1599,7 +1599,7 @@ function showProblemCount(): void {
 /** Draw the scene: every part with a body, standing where the stage put it, and why the view
  * is empty when none has one. */
 function showGeometry(ok: OkScene): void {
-  space.show(ok.parts, ok.stage, ok.sheets, ok.reference);
+  space.show(ok.parts, ok.stage, ok.sheets, ok.reference, ok.context);
   space.say(noBodiesReason(ok.summary));
   // Not `space.section(...)` again - the view keeps a section exactly as set across a
   // redraw, which is the whole point (task-62). Only the range the slider offers is worth

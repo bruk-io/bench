@@ -163,6 +163,28 @@ def as_given(bodies: Sequence[Mesh | None]) -> tuple[tuple[Offset | None, ...], 
     )
 
 
+def widened(box: Box | None, meshes: Sequence[Mesh]) -> Box:
+    """``box`` grown to hold every one of ``meshes`` where it already stands - a body shown for
+    context, which nothing lays out - or :data:`EMPTY` when neither holds anything.
+
+    ``None`` is a stage no part stands on, rather than :data:`EMPTY`'s small room, so a scene
+    of context alone is framed round the context and not round a box nobody drew.
+    """
+    boxes = [one for one in (extent(mesh) for mesh in meshes) if one is not None]
+    if box is not None:
+        boxes.append(box)
+    if not boxes:
+        return EMPTY
+    return Box(
+        min(one.x0 for one in boxes),
+        min(one.y0 for one in boxes),
+        min(one.z0 for one in boxes),
+        max(one.x1 for one in boxes),
+        max(one.y1 for one in boxes),
+        max(one.z1 for one in boxes),
+    )
+
+
 def grid(box: Box) -> Grid:
     """The floor under ``box``: a quarter wider than the work, in whole cells, centred under
     it."""

@@ -48,12 +48,24 @@ in a script is, and answered the same way: the run fails, naming why, rather tha
 something arbitrary."""
 
 
+CONTEXT = """\
+context(move(cylinder(4, 30), Vector(20, 20, -10)), label="pin")
+context(hull(cuboid(60, 60, 2), move(cuboid(50, 50, 2), Z * 20)), label="ghost")
+"""
+"""Two bodies shown for context round the upside-down mate - a pin through the pair, its
+faces named, and the ghost of a body round it, a hull, which names nothing under it - put
+after its ``show`` so everything above is the very script it is appended to."""
+
+
 def measured(kernel: Kernel, enclosure_source: str) -> dict[str, object]:
-    """The enclosure example, the upside-down mate, and a part with (and without) a real
-    ``bed_face`` to read - all run with ``kernel``."""
+    """The enclosure example, the upside-down mate - on its own, twice, and with context
+    bodies beside it - and a part with (and without) a real ``bed_face`` to read - all run
+    with ``kernel``."""
     return {
         "enclosure": run(enclosure_source, kernel=kernel),
         "mated": run(MATED_UPSIDE_DOWN, kernel=kernel),
+        "mated_again": run(MATED_UPSIDE_DOWN, kernel=kernel),
+        "mated_in_context": run(MATED_UPSIDE_DOWN + CONTEXT, kernel=kernel),
         "bed_face": run(BED_FACE, kernel=kernel),
         "bad_bed_face": run(BAD_BED_FACE, kernel=kernel),
     }

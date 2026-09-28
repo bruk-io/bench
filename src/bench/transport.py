@@ -46,9 +46,10 @@ def scene_wire(scene: Scene) -> tuple[str, list[array[float] | array[int]]]:
     the next two buffers - ``positions`` a float one, ``ref_index`` the unsigned one after it
     - and then its engraving marks the two after that, ``segments`` and ``ref_index``.
 
-    A reference body, when there is one, takes the last two buffers of all, after every
-    part's: it is one body rather than one per part, so it is counted once at the end rather
-    than threaded through the loop.
+    A reference body, when there is one, takes the two buffers after every part's: it is one
+    body rather than one per part, so it is counted once after the loop rather than threaded
+    through it. Every context body with a mesh takes the two after that, in the scene's order,
+    so a scene with no context is wired exactly as it was before there was any.
     """
     if not scene["ok"]:
         return scene_json(scene), []
@@ -82,4 +83,17 @@ def scene_wire(scene: Scene) -> tuple[str, list[array[float] | array[int]]]:
             "ref_index": len(buffers) - 1,
             "refs": reference["refs"],
         }
+    context: list[dict[str, object]] = []
+    for one in scene["context"]:
+        shown: dict[str, object] = {**one}
+        mesh = one["mesh"]
+        if mesh is not None:
+            buffers += (array("f", mesh["positions"]), array("I", mesh["ref_index"]))
+            shown["mesh"] = {
+                "positions": len(buffers) - 2,
+                "ref_index": len(buffers) - 1,
+                "refs": mesh["refs"],
+            }
+        context.append(shown)
+    wired_scene["context"] = context
     return json.dumps(wired_scene), buffers
