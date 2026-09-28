@@ -82,10 +82,12 @@ class SightView(TypedDict, closed=True):
 
     ``bounds`` is the box its triangles fill, where the stage put the body: ``x0, y0, z0, x1,
     y1, z1``. ``eye`` is the unit direction from the place out to where the camera stands: the
-    way the place faces, leaned toward the view's own standing three-quarter view so a flat face
-    is seen at an angle rather than square on, and the standing view itself for a place that
-    faces every way at once - a whole part, a bore. Never straight up or down, which would leave
-    a camera whose up is Z with no way to turn. The view only applies it."""
+    way the place faces, leaned out of the part - from its middle toward the place's, so the top
+    of a slot through a wall is looked at from outside that wall rather than through the rest of
+    the body - and toward the view's own standing three-quarter view, so a flat face is seen at
+    an angle rather than square on; the standing view itself for a whole part. Never straight up
+    or down, which would leave a camera whose up is Z with no way to turn. The view only applies
+    it."""
 
     bounds: list[float]
     eye: list[float]

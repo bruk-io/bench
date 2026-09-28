@@ -72,6 +72,10 @@ SEEN_FROM_UNDER = "tote/socket-1"
 """A place of the tote's overhang warning on its underside: a socket sunk into the floor,
 whose ceiling faces down - out of sight of the view's standing three-quarter view."""
 
+THROUGH_THE_WALL = "tote/grip-left/top"
+"""Another: the top of the hand-hold cut through the tote's left wall, which faces down into
+the slot - and the floor is between it and anywhere straight underneath."""
+
 
 # ---- the page -------------------------------------------------------------------------
 
@@ -438,6 +442,19 @@ def test_a_place_is_framed_an_underside_seen_from_underneath(page: Page, screens
     page.wait_for_function(f"(before) => ({DRAWS})() > before", arg=before, timeout=BOOT_MS)
     _settled(page)
     assert float(pane.get_attribute("data-distance") or 0) == pytest.approx(near, abs=0.5)
+
+    # The top of the hand-hold cut through the left wall faces down too, and is looked at from
+    # outside that wall - not from under the floor, through the whole tote.
+    warning.locator(f'.place[data-ref="{THROUGH_THE_WALL}"]').click()
+    page.wait_for_function(
+        "(ref) => document.querySelector('#canvas3d')?.dataset.framed === ref",
+        arg=THROUGH_THE_WALL,
+        timeout=5_000,
+    )
+    eye = [float(one) for one in (pane.get_attribute("data-eye") or "").split(",")]
+    assert eye[0] < -0.3 and eye[2] < 0, f"the grip is not seen from outside its wall: {eye}"
+    page.wait_for_timeout(300)
+    page.screenshot(path=str(screenshots / "task-94-place-framed-through-the-wall.png"))
 
     page.click("#fit")
     assert pane.get_attribute("data-framed") == ""

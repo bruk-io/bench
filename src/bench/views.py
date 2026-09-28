@@ -605,6 +605,13 @@ _LEAN = 2.0
 underside is looked at from underneath, little enough that a flat face is still seen at an
 angle, with its edges, rather than square on as a flat patch."""
 
+_OUT = 1.5
+"""How much the way out of the part - from the middle of the part to the middle of the place -
+counts in a place's eye. The facing alone looks at the top of a hand-hold cut through the left
+wall from under the floor, through the whole tote; leaning out of the part as well looks at it
+from outside the wall it is cut through, and at a socket in the floor from under its own
+corner."""
+
 _SPREAD = 0.3
 """How much of a place's area has to face one way before it is looked at from that way: below
 it the place faces every way at once - a whole part, a bore - and is looked at from
@@ -615,20 +622,39 @@ _STEEP = 0.1
 up is Z has no way to turn when it looks straight along it."""
 
 
-def _eye(facing: tuple[float, float, float], area: float) -> list[float]:
-    """Where to look at a place from, as a unit direction out of it - see :class:`SightView`."""
-    sx, sy, sz = STANDING
-    reach = math.hypot(sx, sy, sz)
-    sx, sy, sz = sx / reach, sy / reach, sz / reach
-    fx, fy, fz = facing
-    length = math.hypot(fx, fy, fz)
-    if area <= 0.0 or length < _SPREAD * area:
-        return [sx, sy, sz]
-    ex, ey, ez = _LEAN * fx / length + sx, _LEAN * fy / length + sy, _LEAN * fz / length + sz
+def _unit(x: float, y: float, z: float) -> tuple[float, float, float]:
+    reach = math.hypot(x, y, z)
+    return (0.0, 0.0, 0.0) if reach <= 0.0 else (x / reach, y / reach, z / reach)
+
+
+def _middle(one: _Faced) -> tuple[float, float, float]:
+    return (
+        (one.low[0] + one.high[0]) / 2.0,
+        (one.low[1] + one.high[1]) / 2.0,
+        (one.low[2] + one.high[2]) / 2.0,
+    )
+
+
+def _eye(place: _Faced, part: _Faced) -> list[float]:
+    """Where to look at ``place`` of ``part`` from, as a unit direction out of it - the way it
+    faces, the way out of the part and the standing view, weighed in that order; see
+    :class:`SightView`."""
+    sx, sy, sz = _unit(*STANDING)
+    fx, fy, fz = place.facing
+    facing = (0.0, 0.0, 0.0)
+    if place.area > 0.0 and math.hypot(fx, fy, fz) >= _SPREAD * place.area:
+        facing = _unit(fx, fy, fz)
+    (px, py, pz), (cx, cy, cz) = _middle(place), _middle(part)
+    reach = math.dist(part.low, part.high) / 2.0
+    out = (0.0, 0.0, 0.0)
+    if reach > 0.0 and math.dist((px, py, pz), (cx, cy, cz)) > 0.05 * reach:
+        out = _unit(px - cx, py - cy, pz - cz)
+    ex = _LEAN * facing[0] + _OUT * out[0] + sx
+    ey = _LEAN * facing[1] + _OUT * out[1] + sy
+    ez = _LEAN * facing[2] + _OUT * out[2] + sz
     if math.hypot(ex, ey) < _STEEP * math.hypot(ex, ey, ez):
         ex, ey = ex + sx, ey + sy
-    reach = math.hypot(ex, ey, ez)
-    return [ex / reach, ey / reach, ez / reach]
+    return list(_unit(ex, ey, ez))
 
 
 def _sights(faces: Mapping[str, _Faced]) -> dict[str, SightView]:
@@ -644,7 +670,7 @@ def _sights(faces: Mapping[str, _Faced]) -> dict[str, SightView]:
             seen = places.get(key)
             places[key] = one if seen is None else _merged(seen, one)
     return {
-        ref: SightView(bounds=[*one.low, *one.high], eye=_eye(one.facing, one.area))
+        ref: SightView(bounds=[*one.low, *one.high], eye=_eye(one, places[ref.split(SEP, 1)[0]]))
         for ref, one in places.items()
     }
 

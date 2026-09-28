@@ -687,6 +687,9 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
    * one *On bed* frames, the bed and everything on it; `bounds` is whichever is on screen. */
   let stageBox = new THREE.Box3(new THREE.Vector3(-50, -50, 0), new THREE.Vector3(50, 50, 50));
   let bedBox: THREE.Box3 | null = null;
+  /** The box of the place a finding named that the camera last turned to (`framePlace`), which
+   * the datum is sized to while it is framed - `null` once `fit` frames everything again. */
+  let framed: THREE.Box3 | null = null;
   /** The refs the run's overhang findings name - painted *On bed*. */
   let overhanging: ReadonlySet<string> = new Set();
 
@@ -827,7 +830,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     for (const ghost of ghosts) ghost.mesh.visible = !onBed;
     backdrop.visible = !onBed;
     bounds = onBed && bedBox !== null ? bedBox : stageBox;
-    layDatum(bounds);
+    layDatum(framed ?? bounds);
     scene.updateMatrixWorld();
     container.dataset["mode"] = look;
     container.dataset["section"] =
@@ -1467,6 +1470,8 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
    */
   function fit(): void {
     container.dataset["framed"] = "";
+    framed = null;
+    layDatum(bounds);
     aimed(bounds, STANDING);
   }
 
@@ -1537,6 +1542,10 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     const least = Math.max(bounds.getSize(new THREE.Vector3()).length() * PLACE_LEAST, 10);
     const size = box.getSize(new THREE.Vector3()).max(new THREE.Vector3(least, least, least));
     box.setFromCenterAndSize(box.getCenter(new THREE.Vector3()), size);
+    // The datum is sized to what is framed, as for the whole scene: sized to the scene and seen
+    // from a place's distance, its letters would stand over the place itself.
+    framed = box;
+    layDatum(box);
     aimed(box, eye);
     touched = true;
     container.dataset["framed"] = ref;
