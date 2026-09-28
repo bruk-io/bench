@@ -5,8 +5,8 @@
  * anyway. So the view is a stand-in until the first scene arrives - it remembers what it was
  * told and hands it over once the real one has loaded.
  */
-import type { ContextView, MeshView, PartView, SheetView, StageView } from "./scene";
-import type { SectionState, Viewer3D, Viewer3DHooks } from "./viewer3d";
+import type { BedView, ContextView, MeshView, PartView, SheetView, StageView } from "./scene";
+import type { SectionState, ViewMode, Viewer3D, Viewer3DHooks } from "./viewer3d";
 
 export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
   let real: Viewer3D | null = null;
@@ -16,12 +16,15 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
   let sheets: readonly SheetView[] = [];
   let reference: MeshView | null = null;
   let context: readonly ContextView[] = [];
+  let bed: BedView | null = null;
+  let overhangs: readonly string[] = [];
   let note = "";
   let chosen: string | null = null;
   let chosenSecond: string | null = null;
   let pointed: string | null = null;
   let detected: readonly (number | null)[] | null = null;
   let section: SectionState | null = null;
+  let look: ViewMode = "assembled";
   let colouring = false;
   let marked = false;
   let hidden: readonly string[] = [];
@@ -39,7 +42,9 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
       (module) => {
         waiting.remove();
         const made = module.mount(container, hooks);
-        if (stage !== null) made.show(parts, stage, sheets, reference, context);
+        // The way of looking before the scene, so the first picture is framed for it.
+        made.mode(look);
+        if (stage !== null) made.show(parts, stage, sheets, reference, context, bed, overhangs);
         made.say(note);
         // `select` clears the real view's own second pick, so it goes first and `selectSecond`
         // after - the same order a fresh shift-click pair would arrive in.
@@ -60,14 +65,16 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
   }
 
   return {
-    show(given, at, cut, backdrop = null, around = []) {
+    show(given, at, cut, backdrop = null, around = [], printer = null, leaning = []) {
       parts = given;
       stage = at;
       sheets = cut;
       reference = backdrop;
       context = around;
+      bed = printer;
+      overhangs = leaning;
       wake();
-      real?.show(given, at, cut, backdrop, around);
+      real?.show(given, at, cut, backdrop, around, printer, leaning);
     },
     say(text) {
       note = text;
@@ -95,6 +102,10 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
     detect(flatIndex) {
       detected = flatIndex;
       real?.detect(flatIndex);
+    },
+    mode(next) {
+      look = next;
+      real?.mode(next);
     },
     section(state) {
       section = state;

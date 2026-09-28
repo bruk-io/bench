@@ -14,7 +14,7 @@ import pytest
 
 from tests import fixture_project
 from tools.projects import VARIABLE
-from tools.qa import _project_stops, _reset, main
+from tools.qa import _Cut, _cut, _project_stops, _reset, main
 
 pytestmark = pytest.mark.functional
 
@@ -84,4 +84,28 @@ def test_a_project_or_script_that_is_not_there_is_refused_before_anything_is_bui
     assert main(("--project", "..", "--out", str(out)), environ) == 1
     assert main(("--project",), environ) == 1
     assert main(("--out",), environ) == 1
+    assert not out.exists()
+
+
+# ---- --section: where a look round's Section shot cuts (task-89) ---------------------------
+
+
+def test_a_section_is_an_axis_and_millimetres_along_it() -> None:
+    assert _cut("x:-165") == _Cut("x", -165.0)
+    assert _cut("Z:12.5") == _Cut("z", 12.5)
+
+
+@pytest.mark.parametrize("said", ["-165", "w:3", "x:", "x:far"])
+def test_a_section_that_is_not_axis_and_millimetres_is_refused(said: str) -> None:
+    with pytest.raises(ValueError, match="--section"):
+        _cut(said)
+
+
+def test_a_bad_section_is_refused_before_anything_is_built(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "out"
+    assert main(("--section", "sideways", "--out", str(out)), {}) == 1
+    assert "--section is AXIS:MM" in capsys.readouterr().err
+    assert main(("--section",), {}) == 1
     assert not out.exists()

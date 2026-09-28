@@ -32,6 +32,8 @@ const part = (ref: string, fields: Partial<PartView> = {}): PartView => ({
   marks: null,
   lettering: [],
   frames: {},
+  areas: {},
+  printing: null,
   ...fields,
 });
 

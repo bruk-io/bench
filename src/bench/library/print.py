@@ -56,7 +56,7 @@ from ..features import (
     teardrop,
 )
 from ..geometry import TOL, Vector
-from ..model import Material, Orient, Printed, Volume
+from ..model import Material, Orient, Printed, Printer, Volume
 from ..ops import offset
 from ..solids import extrude, hull, move, union
 from ..topology import CHORD, Face, Solid, flat_ring
@@ -67,10 +67,12 @@ __all__ = [
     "H2D",
     "PETG",
     "PLA",
+    "PRINTER",
     "End",
     "Material",
     "Orient",
     "Printed",
+    "Printer",
     "Top",
     "Volume",
     "bridge_steps",
@@ -380,3 +382,13 @@ _SMALL = Volume(256.0, 256.0, 256.0)
 BEDS = frozendict({"h2d": H2D, "p1s": _SMALL, "a1": _SMALL})
 """Build volumes by name, so a script can say which machine it is printing on without
 copying three numbers out of a manual."""
+
+
+PRINTER = Printer("H2D", H2D)
+"""The machine a part is laid on when nothing says otherwise - what the app's *On bed* draws
+for a script whose ``check_fits`` names no volume.
+
+The H2D because it is the one machine bench's print numbers were chosen on - every material
+profile above, and every shipped example's ``check_fits`` - so a part laid on it is laid on
+the bed its fits and overhangs were measured for, and a script that asks about another volume
+is laid on that one instead."""

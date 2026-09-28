@@ -125,3 +125,25 @@ def test_a_printed_part_is_not_a_nest_warning() -> None:
     scene = _ok(run((_EXAMPLES / "hinge.py").read_text()), "hinge.py")
     assert scene["sheets"] == []
     assert scene["warnings"] == []
+
+
+@pytest.mark.parametrize("path", _scripts(), ids=lambda p: p.name)
+def test_an_example_on_the_apps_printer_says_how_each_printed_part_prints(path: Path) -> None:
+    """The app runs every example with its printer (task-89): each printed part comes back
+    saying which way it is up and whether it fits the bed - asked of the tree, so with no
+    modeller too - and a part that is not printed says nothing about printing."""
+    from bench import run
+    from bench.library.print import PRINTER
+
+    scene = _ok(run(path.read_text(), printer=PRINTER), path.name)
+    assert scene["bed"] is not None
+    printed = [view for view in scene["parts"] if view["process"] == "print"]
+    assert scene["summary"]["printed"] == len(printed)
+    for view in scene["parts"]:
+        printing = view["printing"]
+        if view["process"] != "print":
+            assert printing is None, view["label"]
+            continue
+        assert printing is not None, view["label"]
+        assert printing["fits"] is True, (view["label"], printing["over"])
+        assert printing["placement"] is None, "no modeller, so no body to lay"

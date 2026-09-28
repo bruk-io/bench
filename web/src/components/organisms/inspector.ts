@@ -6,10 +6,11 @@
  * - **nothing - the project**: its knobs, its parts each with a badge saying how it stands, the
  *   findings that are about no one part, the reference meshes it holds, and Export all;
  * - **a part**: what the checks found on it as a list of places - each a click away from being
- *   lit in the view - how it prints, its faces as a tree (what the refs container was), and its
- *   own files;
- * - **a face**: its ref and *Insert ref*, its normal when it is a plane, the findings that name
- *   it, and the tree of its part with its row revealed;
+ *   lit in the view - how it is made and, for a printed part, how it prints (which way up, on
+ *   which face, and whether it fits the printer's bed - all worked out in Python), its faces as
+ *   a tree (what the refs container was), and its own files;
+ * - **a face**: its ref and *Insert ref*, its area, its normal when it is a plane, the findings
+ *   that name it, and the tree of its part with its row revealed;
  * - **a reference mesh**: survey, detect faces and the placement pick.
  *
  * A run that failed says so at the top, whatever the subject: that is about the run, not about
@@ -32,8 +33,8 @@ import { LitElement, css, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 
 import type { Overrides } from "../../overrides";
-import type { ParamView, PartView, SheetView, ViolationView } from "../../scene";
-import { HOW_TO_SELECT } from "../../status";
+import type { BedView, ParamView, PartView, SheetView, ViolationView } from "../../scene";
+import { HOW_TO_SELECT, printerWords, upWords } from "../../status";
 import {
   PROJECT,
   type Standing,
@@ -377,6 +378,17 @@ export class BenchInspector extends LitElement {
         font-size: 11px;
       }
 
+      dd[data-fits="false"] {
+        color: var(--danger);
+      }
+
+      .over {
+        display: block;
+        margin-top: 2px;
+        font-size: 11px;
+        color: var(--fg-dim);
+      }
+
       bench-refs-tree {
         margin: 0 -10px;
         max-height: 50vh;
@@ -397,6 +409,9 @@ export class BenchInspector extends LitElement {
   @property({ attribute: false }) warnings: readonly string[] = [];
   @property({ attribute: false }) sheets: readonly SheetView[] = [];
   @property({ attribute: false }) files: Readonly<Record<string, string>> = {};
+
+  /** The printer's bed the printed parts are laid on, or `null` when nothing named one. */
+  @property({ attribute: false }) bed: BedView | null = null;
 
   /** Why the newest run failed, traceback and all - or why nothing could run; empty when it
    * did not fail. */
@@ -661,14 +676,43 @@ export class BenchInspector extends LitElement {
           <dd>${part.qty}</dd>
           <dt>body</dt>
           <dd>${part.mesh === null ? "not built in this run" : "built"}</dd>
+          ${this.printing(part)}
         </dl>
       </section>
+    `;
+  }
+
+  /** How a printed part prints - which way up, on which face, and whether it fits the bed -
+   * as Python worked it out; nothing for a part that is not printed. */
+  private printing(part: PartView) {
+    const printing = part.printing;
+    if (printing === null) return nothing;
+    const bed = this.bed;
+    const face = printing.bed_face === null ? "" : `, on ${tail(printing.bed_face)}`;
+    const chosen =
+      bed === null
+        ? ""
+        : bed.said === "script"
+          ? "the volume the script's check_fits asks about"
+          : "the default printer - a script names another by asking check_fits about its volume";
+    return html`
+      <dt>prints</dt>
+      <dd id="print-up">${upWords(printing.up)} up${face}</dd>
+      <dt>bed</dt>
+      <dd id="print-fits" data-fits=${printing.fits === null ? "" : String(printing.fits)} title=${chosen}>
+        ${printing.fits === null || bed === null
+          ? "no printer named to fit it on"
+          : printing.fits
+            ? `fits ${printerWords(bed)}`
+            : html`does not fit ${printerWords(bed)}${printing.over === null ? nothing : html`<span class="over">${printing.over}</span>`}`}
+      </dd>
     `;
   }
 
   private faceLead(ref: string) {
     const part = partOf(ref, this.parts);
     const frame = part?.frames[ref];
+    const area = part?.areas[ref];
     const found = findingsNaming(ref, this.violations);
     return html`
       <section id="face" aria-labelledby="face-head">
@@ -690,6 +734,10 @@ export class BenchInspector extends LitElement {
                   ${part.label}
                 </button>`}
           </dd>
+          ${area === undefined
+            ? nothing
+            : html`<dt>area</dt>
+                <dd id="face-area">${area.toFixed(1)} mm²</dd>`}
           ${frame === undefined
             ? nothing
             : html`<dt>normal</dt>

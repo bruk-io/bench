@@ -1273,8 +1273,20 @@ def test_clicking_empty_space_goes_back_to_the_project(page: Page) -> None:
     assert page.locator("#params").is_visible(), "the knobs did not come back"
     assert _lit(page) == 0, "something is still lit after a click on nothing"
     assert page.locator("#selection").inner_text().strip() == HOW_TO_SELECT
-    looks = [one.get_attribute("id") for one in page.locator(".viewer-bar button").all()]
-    assert looks == ["colour-faces-toggle", "section-toggle", "zoom-out", "fit", "zoom-in"], looks
+    # The mode control's buttons are in its shadow root, which the locator reaches after the
+    # bar's own - so what is compared is which buttons there are, not the order they are met.
+    looks = [one.get_attribute("id") or "" for one in page.locator(".viewer-bar button").all()]
+    assert sorted(looks) == sorted(
+        [
+            "mode-assembled",
+            "mode-bed",
+            "mode-section",
+            "colour-faces-toggle",
+            "zoom-out",
+            "fit",
+            "zoom-in",
+        ]
+    ), looks
 
 
 @pytest.mark.e2e
