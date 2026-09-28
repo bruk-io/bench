@@ -2,10 +2,11 @@
    Chrome is warm and quiet so the drawing's red and blue are the loudest things on screen:
    the one filled button is ink, not a hue, and colour is kept for state and for geometry.
 
-   The app is a workbench: a title bar, a rail that says what the sidebar is, a sidebar, a
-   centre of the script beside the view, a panel across the bottom and a status bar. Chrome on
-   all four edges is what that costs, so every edge is as thin as it can be read at, and the
-   view is the one region that is never covered by anything. */
+   The app is a workbench (decision-12): a title bar; on the left the project and its files; in
+   the centre the script beside the view, with the script's output folded under them; on the
+   right the inspector, following the selection; and a status bar. Chrome on all four edges is
+   what that costs, so every edge is as thin as it can be read at, and the view is the one
+   region that is never covered by anything. */
 :root {
   color-scheme: light dark;
 
@@ -48,7 +49,9 @@
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
   --rail: 46px;
-  --sidebar: 244px;
+  --sidebar: 232px;
+  --inspector: 288px;
+  --inspector-narrow: 244px;
   --titlebar: 40px;
   --statusbar: 24px;
 }
@@ -190,7 +193,7 @@ kbd {
 #shell {
   min-height: 0;
   display: grid;
-  grid-template-columns: var(--rail) var(--sidebar) minmax(0, 1fr);
+  grid-template-columns: var(--rail) var(--sidebar) minmax(0, 1fr) var(--inspector);
 }
 
 /* ---- the rail -------------------------------------------------------------- */
@@ -246,31 +249,6 @@ kbd {
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.badge {
-  position: absolute;
-  top: 1px;
-  right: 1px;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: var(--line-strong);
-  color: var(--fg);
-  font: 600 9px/1 var(--sans);
-}
-
-.badge[hidden] {
-  display: none;
-}
-
-.badge-bad {
-  background: var(--danger);
-  color: #fff;
 }
 
 /* ---- the sidebar ----------------------------------------------------------- */
@@ -343,9 +321,24 @@ kbd {
   color: var(--fg-faint);
 }
 
-#explorer,
-#refs-tree,
-#sheets-list {
+#explorer {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- the inspector --------------------------------------------------------- */
+
+#inspector-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  overflow: hidden;
+}
+
+#inspector {
   flex: 1;
   min-height: 0;
 }
@@ -565,84 +558,27 @@ kbd {
 
 /* ---- the view -------------------------------------------------------------- */
 
+/* Ways of looking, one row while there is room for one - and wrapping onto a second rather
+   than spilling over the editor beside it when the view is narrow (task-62, task-63). */
 .viewer-bar {
+  flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  height: 30px;
-  padding: 0 6px 0 10px;
+  gap: 2px 10px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 3px 6px 3px 10px;
   background: var(--chrome);
   border-bottom: 1px solid var(--line);
 }
 
-/* The selection and the one thing to do with it, side by side. */
-.picked {
-  flex: 1;
+/* A way of looking: a quiet pill with a pressed state, on while the view is being shown that
+   way, so the bar itself says what the view is doing. */
+.look {
+  height: 20px;
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.selection {
-  min-width: 0;
-  font-size: 12px;
-  color: var(--fg-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.selection.is-set {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--fg);
-  background: color-mix(in srgb, var(--select) 14%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--select) 45%, transparent);
-  border-radius: 5px;
-  padding: 2px 7px;
-}
-
-/* Nothing to insert: say how to get something rather than show a dead button. */
-.picked button:disabled {
-  display: none;
-}
-
-/* A body dropped on the view: what was read, and the one thing to do about it. Quiet, because
-   it is scenery rather than the work - the drawing is still what the eye should go to. */
-.reference {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-  min-width: 0;
-  height: 22px;
-  padding: 0 3px 0 8px;
-  border-radius: 999px;
-  border: 1px solid var(--line-strong);
-  background: var(--panel-2);
-  color: var(--fg-dim);
-}
-
-.reference[hidden] {
-  display: none;
-}
-
-.reference-name {
-  font-family: var(--mono);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 24ch;
-}
-
-/* The one thing a dropped body is for: its survey, a tab away. Reads "measuring…" and is
-   disabled while the worker is still at it. */
-.reference-report {
-  height: 18px;
-  min-width: 0;
-  padding: 0 6px;
+  padding: 0 8px;
   font-size: 10.5px;
   font-weight: 600;
   line-height: 1;
@@ -653,186 +589,15 @@ kbd {
   color: var(--fg-dim);
 }
 
-.reference-report:hover:not(:disabled) {
+.look:hover:not(:disabled) {
   background: var(--line);
   border-color: transparent;
   color: var(--fg);
 }
 
-.reference-report:disabled {
-  font-weight: 500;
-  color: var(--fg-faint);
-}
-
-/* Same shape as `.reference-report`, plus a pressed state: on while faces are coloured in
-   the view, so the chip itself says whether a click there means anything right now. */
-.reference-detect {
-  height: 18px;
-  min-width: 0;
-  padding: 0 6px;
-  font-size: 10.5px;
-  font-weight: 600;
-  line-height: 1;
-  border: none;
-  border-radius: 999px;
-  background: none;
-  box-shadow: none;
-  color: var(--fg-dim);
-}
-
-.reference-detect:hover:not(:disabled) {
-  background: var(--line);
-  border-color: transparent;
-  color: var(--fg);
-}
-
-.reference-detect:disabled {
-  font-weight: 500;
-  color: var(--fg-faint);
-}
-
-.reference-detect[aria-pressed="true"] {
+.look[aria-pressed="true"] {
   background: var(--accent-soft);
   color: var(--accent);
-}
-
-.reference-clear {
-  height: 18px;
-  min-width: 18px;
-  padding: 0;
-  font-size: 10px;
-  line-height: 1;
-  border: none;
-  border-radius: 50%;
-  background: none;
-  box-shadow: none;
-  color: var(--fg-faint);
-}
-
-.reference-clear:hover:not(:disabled) {
-  background: var(--line);
-  border-color: transparent;
-  color: var(--fg);
-}
-
-/* decision-7's pick, over the view's own bottom-left corner: what the last click measured, the
-   three fields a placement is, and the one button that commits them. Over the canvas rather
-   than beside it because it is read while clicking in the canvas - a panel elsewhere would put
-   the numbers and the thing they are about at opposite ends of the screen. */
-.pick {
-  position: absolute;
-  z-index: 6;
-  left: 10px;
-  bottom: 10px;
-  width: 268px;
-  max-width: calc(100% - 20px);
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 4px 6px;
-  align-items: center;
-  padding: 8px 10px;
-  border-radius: var(--radius);
-  border: 1px solid var(--line-strong);
-  background: color-mix(in srgb, var(--panel-2) 92%, transparent);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(3px);
-}
-
-.pick[hidden] {
-  display: none;
-}
-
-.pick-line {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
-}
-
-.pick-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--fg);
-}
-
-/* Which frame the numbers in this panel are in. Said out loud only when it is not the
-   exported one, because that is the case in which a pick cannot be written down. */
-.pick-frame {
-  font-size: 10.5px;
-  color: var(--accent);
-}
-
-.pick-read {
-  grid-column: 1 / -1;
-  margin: 0;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  line-height: 1.45;
-  color: var(--fg-dim);
-  white-space: pre-line;
-}
-
-.pick-field {
-  font-size: 11px;
-  color: var(--fg-dim);
-}
-
-.pick-value {
-  min-width: 0;
-  width: 100%;
-  height: 20px;
-  padding: 0 6px;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--fg);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-}
-
-.pick button {
-  height: 19px;
-  padding: 0 7px;
-  font-size: 10.5px;
-  font-weight: 600;
-  line-height: 1;
-  border-radius: 999px;
-}
-
-.pick .pick-quiet {
-  font-weight: 500;
-  color: var(--fg-dim);
-}
-
-.pick-why {
-  grid-column: 1 / -1;
-  margin: 0;
-  font-size: 10.5px;
-  line-height: 1.4;
-  color: var(--fg-dim);
-}
-
-.pick-why:empty {
-  display: none;
-}
-
-.pick-why.is-error {
-  color: var(--danger);
-}
-
-/* A row of its own under `.viewer-bar` - that bar's own content already runs a small window's
-   width once a body is dropped on it, whose buttons never shrink, so a section and a colour
-   toggle squeezed onto the same line would overlap it rather than wrap. Quiet, the same pill
-   shape as `.reference-detect`, so both read as one more thing the view can be asked to do. */
-.viewbar-tools {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 26px;
-  padding: 0 6px 0 10px;
-  background: var(--chrome);
-  border-bottom: 1px solid var(--line);
 }
 
 .sectionbar {
@@ -985,7 +750,7 @@ kbd {
 /* ---- the bottom panel ------------------------------------------------------ */
 
 #run-panel {
-  height: 190px;
+  height: 170px;
   min-height: 0;
 }
 
@@ -1090,6 +855,31 @@ kbd {
   color: var(--danger);
 }
 
+/* What the checks found, as a count that is also a way there: a click selects the part that is
+   worst off. Coloured as the worst thing it counts. */
+.findings {
+  flex: none;
+  height: 18px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 999px;
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.findings[data-state="error"] {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.findings:hover:not(:disabled) {
+  border-color: transparent;
+  text-decoration: underline;
+}
+
 .timing {
   flex: none;
   font-variant-numeric: tabular-nums;
@@ -1136,7 +926,7 @@ kbd {
    and then the script and the view stop sharing a row, because 260 px each is neither. */
 @media (max-width: 1000px) {
   #shell {
-    grid-template-columns: var(--rail) minmax(0, 1fr);
+    grid-template-columns: var(--rail) minmax(0, 1fr) var(--inspector-narrow);
   }
 
   #sidebar {
@@ -1144,7 +934,7 @@ kbd {
   }
 
   #shell.is-open {
-    grid-template-columns: var(--rail) minmax(0, 1fr);
+    grid-template-columns: var(--rail) minmax(0, 1fr) var(--inspector-narrow);
   }
 
   #shell.is-open #sidebar {
@@ -1157,7 +947,26 @@ kbd {
   }
 }
 
+/* Too narrow for a column beside the work: the inspector goes under it instead, across the
+   width, still following the selection. */
 @media (max-width: 760px) {
+  #shell,
+  #shell.is-open {
+    grid-template-columns: var(--rail) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 36%);
+  }
+
+  #rail {
+    grid-row: 1 / -1;
+  }
+
+  #inspector-pane {
+    grid-column: 2;
+    grid-row: 2;
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+
   #groups {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 4fr) minmax(0, 6fr);

@@ -126,7 +126,7 @@ def test_the_section_stays_exactly_as_set_across_a_parameter_edit(
         assert before.startswith("z:"), before
         before_triangles = page.locator("#canvas3d").get_attribute("data-triangles")
 
-        page.click("#rail-parameters")
+        page.click("#crumb-project")
         page.fill("#param-units_x", "3")
         page.wait_for_function(
             "(before) => document.querySelector('#canvas3d')?.dataset.triangles !== before",
@@ -140,7 +140,7 @@ def test_the_section_stays_exactly_as_set_across_a_parameter_edit(
         assert page.locator("#section-toggle").get_attribute("aria-pressed") == "true"
     finally:
         _toggle_off(page)
-        page.click("#rail-parameters")
+        page.click("#crumb-project")
         page.fill("#param-units_x", "4")
         settle(page)
 

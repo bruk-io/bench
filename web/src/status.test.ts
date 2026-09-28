@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { SummaryView } from "./scene";
-import { failing, noBodiesReason, readOnlyWords, roughly, tally } from "./status";
+import { built, failing, found, noBodiesReason, readOnlyWords, roughly } from "./status";
 
 describe("readOnlyWords", () => {
   const desk = { label: "Chrome on a Mac", address: "192.168.1.10", forMs: 300_000, heardAgoMs: 4000 };
@@ -41,15 +41,20 @@ const summary = (fields: Partial<SummaryView> = {}): SummaryView => ({
   ...fields,
 });
 
-describe("tally", () => {
+describe("built and found", () => {
   it("says a single part without a sheet", () => {
-    expect(tally(summary())).toBe("1 part");
+    expect(built(summary())).toBe("1 part");
   });
 
-  it("says parts on sheets, and what the checks found", () => {
-    expect(tally(summary({ parts: 14, sheets: 7, errors: 1, warnings: 2 }))).toBe(
-      "14 parts on 7 sheets · 1 error · 2 warnings",
-    );
+  it("says parts on sheets, and - apart, for the count beside it - what the checks found", () => {
+    const both = summary({ parts: 14, sheets: 7, errors: 1, warnings: 2 });
+    expect(built(both)).toBe("14 parts on 7 sheets");
+    expect(found(both)).toBe("1 error · 2 warnings");
+  });
+
+  it("counts one of each in the singular, and says nothing for nothing found", () => {
+    expect(found(summary({ warnings: 1 }))).toBe("1 warning");
+    expect(found(summary())).toBe("");
   });
 });
 

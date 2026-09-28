@@ -7,11 +7,13 @@ it names light up, downloads a sheet and the zip and opens both, then types a sy
 and checks the editor marks the line. The dark and narrow layouts get a clean page of their own.
 Screenshots land in ``web/e2e/out/``.
 
-The app is a workbench: a rail whose icons switch what the sidebar is, a centre holding the
-script beside the 3D view, a panel across the bottom and a status bar under everything. So the
-walks below go through that furniture - the rail to reach the parameters, the panel's tabs to
-read what a run said - and the checks that are about the furniture itself are under "the shell"
-and "the refs tree".
+The app is a workbench organised by subject (decision-12): the project's files on the left, the
+script beside the 3D view in the centre with the script's output folded under them, and on the
+right the inspector, which shows whatever is selected - the project (its knobs, parts, findings
+on no one part and export), a part (its findings as places, its faces, its files), a face or a
+reference mesh. So the walks below go through the inspector - back to the project for the
+knobs, to a part for its findings and faces - and the checks that are about the furniture
+itself are under "the shell" and "the inspector's faces tree".
 
 Run it with ``uv run pytest -m e2e``; the default run leaves it out.
 """
@@ -109,14 +111,16 @@ CANCELLED_CLICK = """() => {
     at('pointerdown');
     at('pointercancel');
     at('pointerup');
-    return document.querySelector('#selection').textContent.trim();
+    return document.querySelector('#inspector').shadowRoot.querySelector('#selection')
+        .textContent.trim();
 }"""
 
 # How much red a sheet's thumbnail puts on the screen: the image drawn at the size it is shown
-# into a canvas, and its cut-line pixels counted. A white box counts none.
+# into a canvas, and its cut-line pixels counted. A white box counts none. The thumbnail is in
+# the project's export, two shadow roots down.
 THUMBNAIL_INK = """async () => {
-    const list = document.querySelector('bench-sheets');
-    const picture = list?.shadowRoot?.querySelector('img');
+    const list = document.querySelector('#inspector')?.shadowRoot?.querySelector('bench-exports');
+    const picture = list?.shadowRoot?.querySelector('.sheet img');
     if (!picture) return -1;
     await picture.decode();
     const canvas = document.createElement('canvas');
@@ -175,11 +179,17 @@ def _editor_text(page: Page) -> str:
     return str(page.evaluate(EDITOR_TEXT))
 
 
-def _container(page: Page, name: str) -> None:
-    """Put one container in the sidebar - ``files``, ``refs``, ``parameters``, ``sheets`` -
-    the way the rail does. The sidebar shows one at a time, and Playwright will not act on
-    what cannot be seen."""
-    page.click(f"#rail-{name}")
+def _project(page: Page) -> None:
+    """Put the inspector back on the project - its knobs, its parts, its export - by its
+    breadcrumb, the way a person does. It shows one subject at a time, and Playwright will not
+    act on what is not there."""
+    page.click("#crumb-project")
+
+
+def _part(page: Page, ref: str) -> None:
+    """Make one part the inspector's subject, from the project's list of parts."""
+    _project(page)
+    page.locator(f'#parts .part[data-part="{ref}"]').click()
 
 
 def _script(page: Page) -> None:
@@ -188,12 +198,12 @@ def _script(page: Page) -> None:
 
 
 def _panel(page: Page, tab: str) -> None:
-    """Bring one tab of the bottom panel forward - ``problems``, ``output``, ``stderr``,
-    ``files``.
+    """Bring one tab of the bottom panel forward - ``output`` or ``stderr``.
 
     Only clicks when it has to: a click on the tab already in front is how the panel is put
     away, so asking twice for the tab you are already on would hide what you came to read.
-    A collapsed panel reads as ``aria-selected="false"`` on every tab, so this opens one.
+    A collapsed panel - which is how it starts - reads as ``aria-selected="false"`` on every
+    tab, so this opens one.
     """
     button = page.locator(f"#panel-tab-{tab}")
     if button.get_attribute("aria-selected") != "true":
@@ -239,10 +249,10 @@ def _status(page: Page) -> str:
 
 
 def _reported(page: Page, state: str, shown: str, saying: str | None = None) -> None:
-    """Wait for a run to end in ``state`` with ``shown`` - a part of the panel - on screen,
-    and saying ``saying`` when that is given.
+    """Wait for a run to end in ``state`` with ``shown`` - a part of the inspector or the
+    panel - on screen, and saying ``saying`` when that is given.
 
-    The panel is a component, and what it shows is in its shadow root: out of reach of
+    Both are components, and what they show is in a shadow root: out of reach of
     ``document.querySelector``, in reach of a locator. So this waits on locators, one after
     the other - each condition holds once it is met, so the order costs nothing.
     """
@@ -268,8 +278,8 @@ def test_the_first_run_reports_ok(page: Page) -> None:
 
 @pytest.mark.e2e
 def test_the_first_run_lists_its_sheets(page: Page) -> None:
-    _panel(page, "files")
-    assert page.locator("bench-file-row").count() > 0, "no sheet was offered for download"
+    _project(page)
+    assert page.locator("#export bench-file-row").count() > 0, "no sheet was offered for download"
 
 
 @pytest.mark.e2e
@@ -293,55 +303,59 @@ def test_the_stale_bundle_indicator_is_invisible_when_nothing_is_stale(page: Pag
     assert page.locator("#stale-bundle").is_hidden(), "a bundle nothing said is stale is showing"
 
 
-# ---- the shell: the rail and its containers --------------------------------------------
+# ---- the shell: the project on the left, the inspector on the right ----------------------
 
 
 @pytest.mark.e2e
-def test_the_rail_switches_what_the_sidebar_is(clean_page: Page) -> None:
-    """VS Code's model: an icon changes the sidebar's contents rather than firing a command.
-    One container is showing at a time, and the rail marks which."""
+def test_the_left_is_the_project_and_nothing_else(clean_page: Page) -> None:
+    """decision-12: the sidebar is the project's switcher and its files, and the rail has
+    nothing else to switch it to - the refs, the parameters, the sheets and the problems each
+    have one home now, in the inspector beside their subject."""
     page = clean_page
-    _container(page, "parameters")
-    assert page.locator("#container-parameters").is_visible()
-    assert page.locator("#container-refs").is_hidden()
-    assert page.locator("#rail-parameters").get_attribute("aria-pressed") == "true"
-    assert page.locator("#rail-refs").get_attribute("aria-pressed") == "false"
-
-    _container(page, "files")
     assert page.locator("#container-files").is_visible()
-    assert page.locator("#container-parameters").is_hidden()
     assert page.locator("#rail-files").get_attribute("aria-pressed") == "true"
+    assert page.locator("#rail .ric").count() == 1, "the rail still switches to something else"
+    for gone in ("refs", "parameters", "sheets", "problems"):
+        assert page.locator(f"#rail-{gone}").count() == 0, f"the rail still has {gone}"
 
 
 @pytest.mark.e2e
-def test_which_container_was_open_survives_a_reload(
+def test_which_way_the_panel_was_left_survives_a_reload(
     clean_page: Page, settle: Callable[[Page], None]
 ) -> None:
+    """The Output panel starts folded, and a person who opened it finds it open again."""
     page = clean_page
-    _container(page, "sheets")
-    assert page.locator("#container-sheets").is_visible()
+    assert page.locator("#panel-body").is_hidden(), "the panel did not start folded"
+    _panel(page, "output")
+    assert page.locator("#panel-body").is_visible()
     page.reload()
     page.wait_for_selector(DRAWN, timeout=BOOT_MS)
     settle(page)
-    assert page.locator("#container-sheets").is_visible(), "a reload forgot the container"
+    assert page.locator("#panel-body").is_visible(), "a reload forgot the panel was opened"
 
 
 @pytest.mark.e2e
-def test_the_rail_counts_what_is_waiting_in_a_container(page: Page) -> None:
-    """The badge is what the rail is for: a count worth seeing while its container is shut."""
-    _container(page, "refs")
-    assert page.locator("#refs-count").inner_text().strip() != ""
-    assert page.locator("#rail-param-count").inner_text().strip() == "11"
+def test_the_inspector_counts_the_knobs_and_the_parts(page: Page) -> None:
+    """With nothing selected the inspector is the project: every knob the script declares,
+    counted, and every part it made, each with a badge saying how it stands."""
+    _project(page)
+    assert page.locator("#param-count").inner_text().strip() == "11"
+    parts = page.locator("#parts .part")
+    assert parts.count() > 5, f"the cabinet is more than five parts; {parts.count()} are listed"
+    assert page.locator("#parts .part .badge").count() == parts.count(), "a part has no badge"
 
 
 @pytest.mark.e2e
-def test_the_parameters_live_in_the_sidebar_now(clean_page: Page) -> None:
-    """The panel generated from the script moved out of the centre and into the rail's own
-    container: it is not on screen until the rail is asked for it."""
+def test_the_knobs_live_with_the_project_in_the_inspector(clean_page: Page) -> None:
+    """The panel generated from the script is the project's, so it is what the inspector shows
+    with nothing selected - and it gives way to a part when a part is the subject, and comes
+    back with the project."""
     page = clean_page
-    assert page.locator("#params").is_hidden()
-    assert page.locator("#reset").is_hidden() or page.locator("#reset").is_disabled()
-    _container(page, "parameters")
+    assert page.locator("#params").is_visible()
+    assert page.locator("#reset").is_disabled()
+    _part(page, "runner")
+    assert page.locator("#params").count() == 0, "the knobs outstayed the project"
+    _project(page)
     assert page.locator("#params").is_visible()
     assert page.locator("#param-count").inner_text().strip() == "11"
 
@@ -354,7 +368,7 @@ def test_a_parameter_edit_regrows_the_geometry(page: Page, settle: Callable[[Pag
     """A panel edit re-runs the script with overrides, without touching its text."""
     before = _drawn(page)
     source = _editor_text(page)
-    _container(page, "parameters")
+    _project(page)
     page.fill("#param-units_x", "6")
     page.wait_for_function(CHANGED, arg=before, timeout=BOOT_MS)
     settle(page)
@@ -364,12 +378,11 @@ def test_a_parameter_edit_regrows_the_geometry(page: Page, settle: Callable[[Pag
 
 
 @pytest.mark.e2e
-def test_inserting_a_ref_from_the_parameters_container_brings_the_script_forward(
-    clean_page: Page,
-) -> None:
-    """The ref lands in the script, so the script is what has to be in front to see it."""
+def test_inserting_a_ref_brings_the_script_forward(clean_page: Page) -> None:
+    """The ref lands in the script, so the script is what has to be in front to see it - even
+    with the values file in front when the face was clicked."""
     page = clean_page
-    _container(page, "parameters")
+    page.click("#tab-values")
     ref = _click_a_face(page, "")
     page.keyboard.press("Control+i")
     page.wait_for_function(INSERTED, arg=f'ref("{ref}")', timeout=30_000)
@@ -377,14 +390,13 @@ def test_inserting_a_ref_from_the_parameters_container_brings_the_script_forward
     assert page.locator("#tab-script").get_attribute("aria-selected") == "true"
 
 
-# ---- the refs tree: bench's one round-trip ---------------------------------------------
+# ---- the inspector's faces tree: bench's one round-trip ----------------------------------
 
 
 @pytest.mark.e2e
 def test_clicking_a_face_reveals_that_ref_in_the_tree(page: Page, screenshots: Path) -> None:
-    """Half the round-trip: the drawing is clicked, and the tree opens whatever was shut above
-    the row and marks it."""
-    _container(page, "refs")
+    """Half the round-trip: the drawing is clicked, the inspector shows what was clicked, and
+    its part's tree opens whatever was shut above the row and marks it."""
     ref = _click_a_face(page, "")
     row = page.locator(f'bench-refs-tree [data-ref="{ref}"]')
     row.wait_for(timeout=30_000)
@@ -399,17 +411,35 @@ def test_clicking_the_tree_lights_up_what_it_names(page: Page) -> None:
 
     The ref is taken off the drawing first and then cleared, so the row this clicks is one the
     view can certainly light: a name picked blind off the top of the tree could be a branch
-    with no geometry under it, and proving nothing lit would prove nothing.
+    with no geometry under it, and proving nothing lit would prove nothing. Escape puts the
+    inspector back on the project; the part is chosen from its list to bring its tree back,
+    which lights the whole part, so the row clicked in the tree has to light less than that -
+    itself, and not the part it is on.
     """
-    _container(page, "refs")
     ref = _click_a_face(page, "")
     page.keyboard.press("Escape")
     assert _lit(page) == 0, "Escape did not put the selection down"
 
-    page.locator(f'bench-refs-tree [data-ref="{ref}"]').click()
+    part = ref.split("/")[0]
+    _part(page, part)
+    whole = _lit(page)
+    assert whole > 0, f"{part} was chosen from the project's list and nothing is coloured"
+    if ref == part:
+        # The click answered with the part itself - a plate's unnamed top does - so the row
+        # to click is one of its faces, under its own row.
+        page.locator(f'bench-refs-tree [data-ref="{part}"] .twist').click()
+        ref = str(
+            page.locator(f'bench-refs-tree [data-ref^="{part}/"]').first.get_attribute("data-ref")
+        )
+    tree_row = page.locator(f'bench-refs-tree [data-ref="{ref}"]')
+    if tree_row.count() == 0:
+        page.locator(f'bench-refs-tree [data-ref="{part}"] .twist').click()
+    tree_row.click()
     page.wait_for_timeout(150)
     assert page.locator("#selection").inner_text().strip() == ref
-    assert _lit(page) > 0, f"{ref} was picked in the tree and nothing on screen is coloured"
+    assert 0 < _lit(page) < whole, (
+        f"{ref} was picked in the tree and {_lit(page)} of {whole} are coloured"
+    )
     assert page.locator("#insert").is_enabled(), "Insert ref is not offered for a picked ref"
 
 
@@ -431,25 +461,27 @@ def test_a_ref_the_newest_run_no_longer_names_stops_being_selected(
     at all, and the selection has to be put down rather than left naming something gone.
 
     The view is what notices: it is handed the new scene, finds the chosen ref is in none of
-    it, and tells the page, which clears the bar and the tree.
+    it, and tells the page, which puts the inspector back on the project.
+
+    The knobs are the project's (decision-12), so turning one is itself a way back to the
+    project and would put the part down before any run did. The number is changed where the
+    script passes it on instead - ``drawers=p.drawers`` becomes ``drawers=2`` - with the part
+    still the subject.
     """
-    _container(page, "refs")
-    page.locator(f'bench-refs-tree [data-ref="{RETIRED_BY_FEWER_DRAWERS}"]').click()
+    _part(page, RETIRED_BY_FEWER_DRAWERS)
     page.wait_for_timeout(150)
     assert page.locator("#selection").inner_text().strip() == RETIRED_BY_FEWER_DRAWERS
 
     before = _drawn(page)
-    _container(page, "parameters")
-    page.fill("#param-drawers", "2")
+    _passed_drawers(page, "p.drawers,", "2,")
     page.wait_for_function(CHANGED, arg=before, timeout=BOOT_MS)
     settle(page)
 
     said = page.locator("#selection").inner_text().strip()
     assert said == HOW_TO_SELECT, f"a run that stopped making it left {said!r} selected"
     assert not page.locator("#insert").is_enabled(), "Insert ref is offered for a ref nothing names"
-    _container(page, "refs")
-    assert page.locator(f'bench-refs-tree [data-ref="{RETIRED_BY_FEWER_DRAWERS}"]').count() == 0, (
-        "the tree still holds a row the newest run does not name"
+    assert page.locator(f'#parts .part[data-part="{RETIRED_BY_FEWER_DRAWERS}"]').count() == 0, (
+        "the project still lists a part the newest run does not make"
     )
 
     # Put the cabinet back. `page` is module-scoped - one browser page walks every check in
@@ -457,10 +489,20 @@ def test_a_ref_the_newest_run_no_longer_names_stops_being_selected(
     # next one a scene it did not ask for. Nothing after this happens to care about the
     # drawer count today, and that is luck rather than a promise worth resting on.
     back = _drawn(page)
-    _container(page, "parameters")
-    page.fill("#param-drawers", "6")
+    _passed_drawers(page, "2,", "p.drawers,")
     page.wait_for_function(CHANGED, arg=back, timeout=BOOT_MS)
     settle(page)
+
+
+def _passed_drawers(page: Page, was: str, now: str) -> None:
+    """Change what the cabinet's script passes as ``drawers=`` from ``was`` to ``now``, by
+    hand in the editor, the way a person does."""
+    _script(page)
+    page.locator(".cm-line", has_text=f"drawers={was}").click()
+    page.keyboard.press("End")
+    for _ in was:
+        page.keyboard.press("Backspace")
+    page.keyboard.type(now)
 
 
 # ---- refs: click, insert, highlight ---------------------------------------------------
@@ -549,28 +591,32 @@ def test_the_panel_keeps_the_two_streams_on_tabs_of_their_own(
 
 @pytest.mark.e2e
 def test_the_panel_can_be_put_away_and_brought_back(clean_page: Page) -> None:
-    """The drawing is the thing worth looking at, so the panel gets out of the way on a click
-    of the tab already in front - and the rail keeps saying what is waiting.
+    """The drawing is the thing worth looking at, so the panel starts folded, opens on a tab
+    and gets out of the way again on a click of the tab already in front.
 
     The clicks are made here rather than through :func:`_panel`, which exists to bring a tab
     forward and deliberately will not toggle: the toggle is the thing under test.
     """
     page = clean_page
+    assert page.locator("#panel-body").is_hidden(), "the panel did not start folded"
+    page.click("#panel-tab-output")
     assert page.locator("#panel-body").is_visible()
-    page.click("#panel-tab-problems")
+    page.click("#panel-tab-output")
     assert page.locator("#panel-body").is_hidden(), "the panel did not put itself away"
-    page.click("#panel-tab-problems")
+    page.click("#panel-tab-output")
     assert page.locator("#panel-body").is_visible()
 
 
 @pytest.mark.e2e
-def test_a_clean_run_says_so_rather_than_showing_an_empty_panel(clean_page: Page) -> None:
-    """Problems is the tab in front to begin with, so this reads it where it already is: a
-    click on the tab already in front is how the panel is put away, not how it is opened."""
+def test_a_clean_run_says_so_rather_than_showing_an_empty_list(clean_page: Page) -> None:
+    """A part nothing was found on says so where its findings would be, its badge says ok, and
+    the status bar has no count to go to - rather than an empty list anywhere."""
     page = clean_page
-    assert page.locator("#panel-tab-problems").get_attribute("aria-selected") == "true"
+    assert page.locator("#findings").is_hidden(), "a clean run was counted in the status bar"
+    assert page.locator("#parts .badge", has_text="warning").count() == 0
+    assert page.locator("#parts .badge", has_text="error").count() == 0
+    _part(page, "runner")
     assert page.locator("#no-problems").is_visible()
-    assert page.locator("#rail-problem-count").is_hidden(), "a clean run badged the rail"
 
 
 # ---- downloads ------------------------------------------------------------------------
@@ -580,15 +626,15 @@ def test_a_clean_run_says_so_rather_than_showing_an_empty_panel(clean_page: Page
 def test_a_sheet_thumbnail_shows_its_cut_lines(page: Page) -> None:
     """The nest is only seen here now, and the first thumbnails were blank: a cutter's
     hairline shrunk sixty times over draws no pixel at all."""
-    _container(page, "sheets")
+    _project(page)
     ink = int(page.evaluate(THUMBNAIL_INK))
     assert ink > 20, f"the thumbnail put {ink} red pixels on the screen"
 
 
 @pytest.mark.e2e
 def test_a_sheet_downloads_as_svg(page: Page, screenshots: Path) -> None:
-    _panel(page, "files")
-    sheet_row = page.locator("bench-file-row", has_text="sheet-3mm-01")
+    _project(page)
+    sheet_row = page.locator("#export bench-file-row", has_text="sheet-3mm-01")
     with page.expect_download() as caught:
         sheet_row.locator("button", has_text="SVG").click()
     sheet = caught.value
@@ -602,7 +648,7 @@ def test_a_sheet_downloads_as_svg(page: Page, screenshots: Path) -> None:
 def test_the_zip_holds_every_file_and_opens(page: Page, screenshots: Path) -> None:
     """The zip is written by hand, so it is opened with :mod:`zipfile` to prove the writer
     is honest about what it claims."""
-    _panel(page, "files")
+    _project(page)
     with page.expect_download() as caught:
         page.locator("#zip").click()
     archive = caught.value
@@ -616,15 +662,23 @@ def test_the_zip_holds_every_file_and_opens(page: Page, screenshots: Path) -> No
 
 
 @pytest.mark.e2e
-def test_the_downloads_wait_on_a_tab_of_the_panel(clean_page: Page) -> None:
-    """The files a run made are a tab away, not a third of the screen and not a popover:
-    the Files tab says how many there are before it is opened."""
+def test_the_downloads_live_with_their_subject(clean_page: Page) -> None:
+    """The files a run made have one home (decision-12): the project's export holds every one
+    and Download all, and a part's holds only its own - the sheets it is cut from and its own
+    drawing - with no Download all, since that is the project's."""
     page = clean_page
-    assert page.locator("#outputs").is_hidden(), "the files are shown before they are asked for"
-    assert page.locator("#panel-tab-files .count").inner_text().strip() != ""
-    _panel(page, "files")
-    assert page.locator("bench-file-row", has_text="sheet-3mm-01").is_visible()
+    assert page.locator("#panel-tab-files").count() == 0, "the files are still a panel tab"
+    assert page.locator("#export-head").inner_text().strip().lower() == "export"
+    assert page.locator("#export bench-file-row", has_text="sheet-3mm-01").is_visible()
     assert page.locator("#zip").is_visible()
+    _part(page, "runner")
+    assert page.locator("#export-head").inner_text().strip().lower() == "export this part"
+    # A row's own name is its attribute: its text is the buttons slotted into it.
+    rows = page.locator("#export bench-file-row").all()
+    names = [row.get_attribute("name") for row in rows]
+    assert "part-runner.svg" in names, names
+    assert "baseplate.scad" not in names, "a part lists the project's files"
+    assert page.locator("#zip").count() == 0, "a part offers Download all"
 
 
 # ---- a cut sheet, opened beside the script ---------------------------------------------
@@ -633,10 +687,10 @@ def test_the_downloads_wait_on_a_tab_of_the_panel(clean_page: Page) -> None:
 @pytest.mark.e2e
 def test_a_sheet_opens_as_a_tab_beside_the_script(clean_page: Page, screenshots: Path) -> None:
     """A nest used to be a 64 px thumbnail in a menu. It opens in the editor group now, big
-    enough to read before cutting - and the view is not what gets covered to do it."""
+    enough to read before cutting - and the view is not what gets covered to do it. Its
+    picture in the export is what opens it."""
     page = clean_page
-    _container(page, "sheets")
-    page.locator("bench-sheets .sheet").first.click()
+    page.locator("#export .sheet").first.click()
     page.wait_for_selector("#panel-sheet:not([hidden])", timeout=30_000)
     assert page.locator("#sheet-drawing").is_visible()
     assert page.locator("#editor").is_hidden(), "the sheet did not come to the front"
@@ -648,8 +702,7 @@ def test_a_sheet_opens_as_a_tab_beside_the_script(clean_page: Page, screenshots:
 @pytest.mark.e2e
 def test_a_sheet_tab_closes_and_the_script_cannot(clean_page: Page) -> None:
     page = clean_page
-    _container(page, "sheets")
-    page.locator("bench-sheets .sheet").first.click()
+    page.locator("#export .sheet").first.click()
     page.wait_for_selector("#panel-sheet:not([hidden])", timeout=30_000)
     assert page.locator("#tab-script .tab-close").count() == 0, "the script offers a close button"
     page.locator(".tab .tab-close").first.click()
@@ -680,19 +733,22 @@ def test_a_syntax_error_is_reported_on_its_own_line(
 
 
 @pytest.mark.e2e
-def test_a_failed_run_brings_the_panel_forward_by_itself(clean_page: Page) -> None:
-    """The one state that opens the panel without being asked: something went wrong and the
-    reason is the most useful thing on screen.
-
-    The panel is put away with a direct click rather than through :func:`_panel`, which brings
-    a tab forward and deliberately will not toggle.
-    """
+def test_a_failed_run_says_so_whatever_the_inspector_is_showing(clean_page: Page) -> None:
+    """Something went wrong and the reason is the most useful thing on screen, so it is said at
+    the top of the inspector whatever its subject is - here a part - without taking the part
+    away; and a run that works again takes it back down."""
     page = clean_page
-    page.click("#panel-tab-problems")
-    assert page.locator("#panel-body").is_hidden(), "the panel was not put away first"
+    _part(page, "runner")
     _typed(page, "\nif :")
     _reported(page, "error", "#error", "SyntaxError")
-    assert page.locator("#panel-body").is_visible(), "a failed run left the panel shut"
+    assert page.locator("#error").is_visible(), "a failed run was not said"
+    assert page.locator("#crumb-part").inner_text().strip() == "runner", "the part was taken away"
+    page.keyboard.press("Backspace")
+    page.keyboard.press("Backspace")
+    page.keyboard.press("Backspace")
+    page.keyboard.press("Backspace")
+    _reported(page, "ok", "#crumb-part")
+    page.locator("#error").wait_for(state="detached", timeout=BOOT_MS)
 
 
 SAYS_BOTH = (
@@ -750,7 +806,7 @@ def test_an_override_survives_a_scene_that_lands_mid_debounce(
     """
     page = clean_page
     at_four = _drawn(page)
-    _container(page, "parameters")
+    _project(page)
     page.fill("#param-units_x", "7")
     _ran(page, settle)
     at_seven = _drawn(page)
@@ -769,7 +825,7 @@ def test_an_override_survives_a_scene_that_lands_mid_debounce(
     assert round_trip > 900, f"the sleep did not slow the run down: {round_trip:.0f} ms"
 
     for early in (250, 150, 50):
-        _container(page, "parameters")
+        _project(page)
         page.click("#reset")
         _ran(page, settle)
         assert _drawn(page) == at_four, f"reset, {early} ms"
@@ -777,7 +833,7 @@ def test_an_override_survives_a_scene_that_lands_mid_debounce(
         # An edit to the script: 300 ms of debounce, then a run that answers in `round_trip`.
         _typed(page, f"\n# mid-debounce, {early} ms early")
         page.wait_for_timeout(max(DEBOUNCE_MS + round_trip - early, 0))
-        _container(page, "parameters")
+        _project(page)
         page.fill("#param-units_x", "7")
         _ran(page, settle)
 
@@ -865,8 +921,9 @@ CABINET_FIRST_LINE = (ROOT / "examples" / "gridfinity_cabinet.py").read_text().s
 
 
 def _files(page: Page) -> None:
-    """Put the open project's container in the sidebar."""
-    _container(page, "files")
+    """The open project's files - always the sidebar on a window this wide (decision-12), so
+    this only waits for them to be there."""
+    page.locator("#container-files").wait_for()
 
 
 def _switcher(page: Page) -> None:
@@ -1014,7 +1071,7 @@ def test_a_panel_edit_is_a_line_in_the_values_file(
     """The knob turned is a line somebody can read: the values are kept as TOML, and the
     same TOML opens as a tab beside the script - a document, not a widget."""
     page = files_page
-    _container(page, "parameters")
+    _project(page)
     page.fill("#param-w", "150")
     _ran(page, settle)
     assert _state(page) == "ok", _status(page)
@@ -1101,7 +1158,7 @@ def test_a_project_opened_from_disk_arrives_with_its_values(
     assert "class Settings" in _editor_text(page)
     # `hole_r` is `knob(8.0, min=2.0, max=20.0)`: 99 was sent, 20 was built, 20 is kept.
     assert _overrides(page, files_host.root, {"w": 40, "hole_r": 20}) == {"w": 40, "hole_r": 20}
-    _container(page, "parameters")
+    _project(page)
     assert page.locator("#param-hole_r").input_value() == "20"
     assert page.locator("#param-w").input_value() == "40"
 
@@ -1200,6 +1257,27 @@ def test_hovering_a_plate_names_its_part_its_stock_and_its_sheet(page: Page) -> 
 
 
 @pytest.mark.e2e
+def test_clicking_empty_space_goes_back_to_the_project(page: Page) -> None:
+    """decision-12: the inspector follows the selection, and a click on nothing is nothing
+    selected - the project, its knobs back in the inspector and nothing lit. And the bar over
+    the view holds only ways of looking at it, every action having moved to its subject."""
+    page.click("#fit")
+    page.wait_for_timeout(100)
+    _part(page, "runner")
+    assert page.locator("#crumb-part").get_attribute("aria-current") == "page"
+    assert _lit(page) > 0
+    box = _canvas3d(page)
+    page.mouse.click(box["x"] + box["width"] * 0.1, box["y"] + box["height"] * 0.1)
+    page.wait_for_timeout(150)
+    assert page.locator("#crumb-project").get_attribute("aria-current") == "page"
+    assert page.locator("#params").is_visible(), "the knobs did not come back"
+    assert _lit(page) == 0, "something is still lit after a click on nothing"
+    assert page.locator("#selection").inner_text().strip() == HOW_TO_SELECT
+    looks = [one.get_attribute("id") for one in page.locator(".viewer-bar button").all()]
+    assert looks == ["colour-faces-toggle", "section-toggle", "zoom-out", "fit", "zoom-in"], looks
+
+
+@pytest.mark.e2e
 def test_a_cancelled_press_does_not_land_as_a_click(page: Page) -> None:
     page.keyboard.press("Escape")
     assert page.evaluate(CANCELLED_CLICK) == HOW_TO_SELECT, "the cancelled press selected"
@@ -1224,13 +1302,15 @@ def test_the_dark_theme_renders(dark_page: Page, screenshots: Path) -> None:
 @pytest.mark.e2e
 def test_a_narrow_window_stacks_the_layout(dark_page: Page, screenshots: Path) -> None:
     """Four edges of chrome is what the shell costs, and a narrow window cannot pay it: the
-    sidebar stops sharing the row, and the script and the view stop sharing one too."""
+    sidebar stops sharing the row, the script and the view stop sharing one too, and the
+    inspector goes under them rather than away."""
     dark_page.set_viewport_size({"width": 420, "height": 900})
     dark_page.wait_for_function(ONE_COLUMN, timeout=5_000)
     dark_page.screenshot(path=str(screenshots / "04-narrow-dark.png"))
     assert dark_page.evaluate(ONE_COLUMN) is True, "the script and the view still share a row"
     assert dark_page.locator("#sidebar").is_hidden(), "the sidebar is still taking room"
     assert dark_page.locator("#canvas3d").is_visible(), "the view went away"
+    assert dark_page.locator("#inspector-pane").is_visible(), "the inspector went away"
 
 
 # ---- a printed part: the 3D pane, its refs, and what a printer reads --------------------
@@ -1293,10 +1373,22 @@ def _canvas3d(page: Page) -> FloatRect:
     return box
 
 
-_SPOTS = ((0.5, 0.55), (0.42, 0.6), (0.58, 0.5), (0.5, 0.42), (0.62, 0.62), (0.35, 0.45))
+_SPOTS = (
+    (0.5, 0.55),
+    (0.42, 0.6),
+    (0.58, 0.5),
+    (0.5, 0.42),
+    (0.62, 0.62),
+    (0.35, 0.45),
+    (0.4, 0.5),
+    (0.65, 0.55),
+    (0.75, 0.55),
+)
 """Where on the view to try: where a part lands under the camera is the camera's business, so
 a handful of points rather than insisting the middle is over material - a bin is mostly a hole
-seen from above, and a row of plates has gaps between them."""
+seen from above, and a row of plates has gaps between them. The last three are for that row
+of plates in the view the inspector leaves beside it (task-88): tall and narrow, so a row of
+five panels is a thin band across the middle."""
 
 
 def _click_a_face(page: Page, prefix: str = "bin/") -> str:
@@ -1369,7 +1461,7 @@ def test_the_stl_is_a_binary_stl(printed_page: Page, screenshots: Path) -> None:
     """Written by `bench.export.stl`, carried through the scene as base64 and decoded on the
     way out - so the bytes are checked, not the string."""
     page = printed_page
-    _panel(page, "files")
+    _project(page)
     stl_row = page.locator("bench-file-row", has_text="bin.stl")
     with page.expect_download() as caught:
         stl_row.locator("button", has_text="STL").click()
@@ -1387,7 +1479,7 @@ def test_the_stl_is_a_binary_stl(printed_page: Page, screenshots: Path) -> None:
 @pytest.mark.e2e
 def test_the_3mf_is_a_package_with_the_model_in_it(printed_page: Page, screenshots: Path) -> None:
     page = printed_page
-    _panel(page, "files")
+    _project(page)
     label = page.locator("#outputs bench-file-row .name", has_text=".3mf").first
     name = label.inner_text().strip()
     with page.expect_download() as caught:
@@ -1406,7 +1498,7 @@ def test_the_zip_carries_the_stl_as_bytes(printed_page: Page, screenshots: Path)
     """The archive is written by hand and its entries are encoded there, not by `save` - so
     a base64 STL that decodes on its own can still go into the zip as a wall of letters."""
     page = printed_page
-    _panel(page, "files")
+    _project(page)
     with page.expect_download() as caught:
         page.click("#zip")
     saved = screenshots / "printed.zip"
@@ -1443,9 +1535,10 @@ VENT = "wall_vent.py"
 # (decision-10's own vent), so the two faces `mated()` actually joins - the flange's `top`
 # and the attachment's `base/bottom` - are the ones no camera angle can see: each covers the
 # other. What the default framed view *can* see of the frame at all is a sliver of the
-# flange's own outer wall, peeking out under the attachment's base - found once, by scanning
-# the view, and pinned here rather than searched again every run.
-_VENT_FRAME_SPOTS = ((0.23, 0.68), (0.59, 0.815))
+# flange's own outer wall, peeking out under the attachment's base - found by scanning the
+# view, and pinned here rather than searched again every run. Scanned again for task-88, whose
+# inspector leaves the view narrower and so frames the pair smaller.
+_VENT_FRAME_SPOTS = ((0.7, 0.65), (0.45, 0.7), (0.3, 0.65))
 # A flat face of the attachment's own base - framed, so the pair can honestly write a line.
 _VENT_ATTACHMENT_FLAT_SPOTS = ((0.7, 0.5), (0.7, 0.6), (0.5, 0.7), (0.6, 0.7))
 # The funnel's loft, seen from most of the view's middle - curved, so `plane_of` refuses it
@@ -1567,12 +1660,12 @@ def test_a_failed_check_is_reported_and_its_line_is_marked(
     asked - marked in the editor exactly as a raised exception would be."""
     page = printed_page
     example(page, CHECKED)
-    _container(page, "parameters")
+    _project(page)
     page.fill("#param-wall", THIN_WALL)
-    # A finding lives on the Problems tab, and the panel draws one tab at a time - the checks
-    # before this one left Files in front. A violation does not steal the tab back (the run
-    # is `ok`; the badge and the red count say so instead), so ask for it the way a person would.
-    _panel(page, "problems")
+    # A finding lives on the part it is about (decision-12), and the status bar's count is the
+    # way there: it selects the part worst off, the way a person would get to it.
+    page.locator("#findings", has_text="error").click(timeout=BOOT_MS)
+    assert page.locator("#crumb-part").inner_text().strip() == CHECKED_PART
     found = page.locator(ERROR_ROW, has_text="thinnest wall").first
     found.wait_for(timeout=BOOT_MS)
     settle(page)
@@ -1588,16 +1681,23 @@ def test_a_failed_check_is_reported_and_its_line_is_marked(
     assert "line " in where, where
     assert f"{CHECKED_PART}/" in where, where
 
-    # And the tree marks the row the finding is about. The face itself sits under a shut
-    # branch, so the mark is read off the part's row, which carries it for everything under
-    # it - and not off the lid's, which no check found anything on.
-    _container(page, "refs")
+    # And the part's tree marks the row the finding is about. The face itself sits under a
+    # shut branch, so the mark is read off the part's row, which carries it for everything
+    # under it.
     box_row = page.locator(f'bench-refs-tree [data-ref="{CHECKED_PART}"]')
     box_row.wait_for(timeout=BOOT_MS)
     assert box_row.locator(".flag").count() == 1, f"{CHECKED_PART}'s row is not marked"
-    lid_row = page.locator(f'bench-refs-tree [data-ref="{UNCHECKED_PART}"]')
-    assert lid_row.count() == 1, f"{UNCHECKED_PART} is not in the tree"
-    assert lid_row.locator(".flag").count() == 0, f"{UNCHECKED_PART}'s row is marked"
+    # And the project's list says which part stands how - not the lid, which no check found
+    # anything on.
+    _project(page)
+    standing = page.locator(f'#parts .part[data-part="{CHECKED_PART}"] .badge').get_attribute(
+        "data-standing"
+    )
+    assert standing == "error", f"{CHECKED_PART} reads {standing}"
+    lid = page.locator(f'#parts .part[data-part="{UNCHECKED_PART}"] .badge').get_attribute(
+        "data-standing"
+    )
+    assert lid not in ("error", "warning"), f"{UNCHECKED_PART} reads {lid}"
 
     # The geometry is still drawn: a violation is a report, not a failure.
     assert int(page.locator("#canvas3d").get_attribute("data-triangles") or "0") > 0
@@ -1619,9 +1719,9 @@ def test_a_findings_line_number_takes_you_to_it(
     way back to it rather than a number to read out."""
     page = printed_page
     example(page, CHECKED)
-    _container(page, "parameters")
+    _project(page)
     page.fill("#param-wall", THIN_WALL)
-    _panel(page, "problems")
+    page.locator("#findings", has_text="error").click(timeout=BOOT_MS)
     found = page.locator(ERROR_ROW, has_text="thinnest wall").first
     found.wait_for(timeout=BOOT_MS)
     settle(page)
@@ -1648,23 +1748,39 @@ def test_an_example_whose_name_is_another_examples_prefix_still_picks_cleanly(
 
 
 @pytest.mark.e2e
-def test_a_warning_the_status_bar_counts_is_in_the_problems_panel(
-    printed_page: Page, example: Callable[[Page, str], None]
+def test_a_warning_the_status_bar_counts_goes_to_its_part(
+    printed_page: Page, example: Callable[[Page, str], None], screenshots: Path
 ) -> None:
-    """`task-53`: a run whose status bar says "1 warning" has to show that warning in the
-    Problems panel too, not only in the count - `systainer_tote.py`'s own `check_overhangs`
-    finding, read off the tab a person actually opens."""
+    """`task-53`: a run whose status bar says "1 warning" has to show that warning, not only
+    count it - and since decision-12 the count is the way to it: a click selects the part the
+    warning is on, whose inspector lists `systainer_tote.py`'s own `check_overhangs` finding
+    with every place it names, each a click away from being lit in the view."""
     page = printed_page
     example(page, TOTE)
-    assert "1 warning" in _status(page), _status(page)
-    _panel(page, "problems")
+    count = page.locator("#findings")
+    assert count.inner_text().strip() == "1 warning", count.inner_text()
+    count.click()
+    assert page.locator("#crumb-part").inner_text().strip() == "tote"
     # `check` is a host attribute for anything that needs to find a row by it, not text a
     # person reads - the visible head says the severity, and the message is where "socket-1"
     # is put in words, so the row is found by the attribute rather than its own text.
     found = page.locator('bench-violation[severity="warning"][check="overhangs"]').first
     found.wait_for(timeout=BOOT_MS)
-    where = found.locator(".where").inner_text()
-    assert "socket-1" in where, where
+    places = found.locator(".place")
+    assert places.count() > 1, "the finding's places are not a list"
+    assert found.locator('.place[data-ref="tote/socket-1"]').count() == 1, found.locator(
+        ".where"
+    ).inner_text()
+
+    # A place is lit where it is, and the inspector stays on the part for the next one.
+    unlit = _lit(page)
+    found.locator('.place[data-ref="tote/socket-1"]').click()
+    page.wait_for_timeout(150)
+    assert page.locator("#canvas3d").get_attribute("data-selected") == "tote/socket-1"
+    assert _lit(page) != unlit, "lighting a place changed nothing on the view"
+    assert page.locator("#crumb-part").get_attribute("aria-current") == "page", "the part was left"
+    assert found.locator('.place[aria-current="true"]').inner_text().strip() == "tote/socket-1"
+    page.screenshot(path=str(screenshots / "14-place-lit.png"))
 
 
 @pytest.mark.e2e
@@ -1689,7 +1805,7 @@ def test_without_the_modeller_a_laser_part_is_unaffected(
     example(page, LASER)
     page.wait_for_function(f"() => ({BODIES})() === 5", timeout=BOOT_MS)
     assert _state(page) == "ok", _status(page)
-    _panel(page, "files")
+    _project(page)
     assert page.locator("bench-file-row", has_text=".svg").count() > 0
 
 
@@ -1712,14 +1828,14 @@ def test_without_the_modeller_a_printed_part_still_has_every_ref(
 
     # The findings first, on their own tab - the panel draws one at a time, so reading them
     # after the Files tab is asked for would be reading a tab that is not there.
-    _panel(page, "problems")
+    _project(page)
     unchecked = page.locator(UNCHECKED_ROW).first
     head = unchecked.locator(".head").inner_text()
     said = unchecked.locator(".message").inner_text()
     assert "not checked" in head.lower(), head
     assert "no kernel" in said, said
 
-    _panel(page, "files")
+    _project(page)
     assert page.locator("bench-file-row", has_text=".stl").count() == 0, "an STL with nothing in it"
     # Not marked as an error in the editor: nobody said this part is wrong.
     assert page.locator(".cm-errorLine").count() == 0
@@ -1792,8 +1908,9 @@ def test_a_dropped_body_is_surveyed_and_its_report_opens_beside_the_script(
     assert page.locator("#tab-report").get_attribute("aria-selected") == "true"
     assert page.locator("#editor").is_hidden(), "the report did not come to the front"
     assert page.locator("#canvas3d").is_visible(), "opening the report covered the view"
-    # The chip says the body is held and the report is a click away.
-    assert page.locator("#reference").is_visible()
+    # A drop is the maker asking about the body, so the body is the inspector's subject: its
+    # name, and the report a click away.
+    assert page.locator("#reference-tools").is_visible()
     assert page.locator("#reference-name").inner_text().strip() == REFERENCE
     assert page.locator("#reference-report").is_enabled()
     # A real part's report is hundreds of lines: the tab is what scrolls, not the page.
@@ -1827,7 +1944,8 @@ def test_forgetting_the_body_takes_its_report_with_it(
     page = no_modeller_page
     page.click("#reference-clear")
     settle(page)
-    assert page.locator("#reference").is_hidden()
+    assert page.locator("bench-reference-tools").count() == 0, "the body's tools outlived it"
+    assert page.locator("#crumb-project").get_attribute("aria-current") == "page"
     assert page.locator("#tab-report").count() == 0, "the report outlived the body"
     assert page.locator("#panel-report").is_hidden()
     assert page.locator("#editor").is_visible()
@@ -1872,9 +1990,13 @@ def _orbit(page: Page) -> None:
 
 
 def _clear_reference(page: Page) -> None:
-    """Forget whatever reference is held, if any - the chip is inside a hidden container once
-    there is none, so a plain click times out waiting for it to become visible."""
-    if page.locator("#reference").is_visible():
+    """Forget whatever reference is on the view, if any: it is the active row of the project's
+    references, and choosing it brings up its tools, whose button takes it off. With none there
+    is no such row, and a plain click would time out waiting for one."""
+    _project(page)
+    active = page.locator('bench-reference-list [data-active="true"]')
+    if active.count() > 0:
+        active.first.click()
         page.click("#reference-clear")
         page.wait_for_timeout(300)
 
@@ -1897,28 +2019,28 @@ def _load_small_plate(page: Page, settle: Callable[[Page], None]) -> None:
 
 
 @pytest.mark.e2e
-def test_a_dropped_body_is_a_row_in_the_refs_container(
+def test_a_dropped_body_is_a_row_of_the_projects_references(
     no_modeller_page: Page, screenshots: Path
 ) -> None:
-    """task-44: a body somebody else made is listed where everything else selectable is
-    listed, and selecting it lights it up - but it is not a ref, so there is nothing to
-    insert and the button says so."""
+    """task-44: a body somebody else made is listed with the project it is in, and selecting
+    it makes it the inspector's subject and lights it up - but it is not a ref, so there is
+    nothing to insert and the button says so."""
     page = no_modeller_page
     _drop(page, REFERENCE, _bracket())
     page.wait_for_selector("#panel-report:not([hidden])", timeout=BOOT_MS)
-    _container(page, "refs")
+    _project(page)
 
-    row = page.locator(f'bench-refs-tree [data-reference="{REFERENCE}"]')
+    row = page.locator(f'bench-reference-list [data-reference="{REFERENCE}"]')
     row.wait_for(timeout=30_000)
-    assert row.count() == 1, "the dropped body is not listed in the refs container"
-    # A dropped body was named by no run, so it is not among what the run named.
-    assert page.locator(f'bench-refs-tree [data-ref="{REFERENCE}"]').count() == 0, (
-        "the dropped body was put in the run's own tree"
+    assert row.count() == 1, "the dropped body is not listed with the project"
+    # A dropped body was made by no run, so it is not among the parts the run made.
+    assert page.locator(f'#parts .part[data-part="{REFERENCE}"]').count() == 0, (
+        "the dropped body was listed as one of the run's parts"
     )
 
     row.click()
     page.wait_for_timeout(150)
-    assert row.get_attribute("aria-current") == "true", "the row did not take the selection"
+    assert page.locator("#reference-tools").is_visible(), "the body did not become the subject"
     assert page.locator("#canvas3d").get_attribute("data-reference") == "marked", (
         "selecting the dropped body did not light it up in the view"
     )
@@ -1939,38 +2061,42 @@ def test_a_ref_and_a_dropped_body_do_not_hold_the_selection_at_once(
     page = no_modeller_page
     _drop(page, REFERENCE, _bracket())
     page.wait_for_selector("#panel-report:not([hidden])", timeout=BOOT_MS)
-    _container(page, "refs")
+    _project(page)
 
-    # The ref is taken off the tree rather than off the drawing: what is under any given
-    # spot in the view depends on where the camera ended up after the drop framed the body,
-    # and this check is about the selection, not about picking.
-    first = page.locator("bench-refs-tree [data-ref]").first
+    # The ref is a part taken off the project's list rather than off the drawing: what is
+    # under any given spot in the view depends on where the camera ended up after the drop
+    # framed the body, and this check is about the selection, not about picking.
+    first = page.locator("#parts .part").first
     first.wait_for(timeout=30_000)
-    ref = first.get_attribute("data-ref") or ""
-    assert ref != "", "the run named nothing to select"
+    ref = first.get_attribute("data-part") or ""
+    assert ref != "", "the run made nothing to select"
     first.click()
     page.wait_for_timeout(150)
     assert page.locator("#insert").is_enabled(), "a picked ref did not offer itself"
 
-    page.locator(f'bench-refs-tree [data-reference="{REFERENCE}"]').click()
+    _project(page)
+    page.locator(f'bench-reference-list [data-reference="{REFERENCE}"]').click()
     page.wait_for_timeout(150)
-    assert page.locator(f'bench-refs-tree [data-ref="{ref}"]').get_attribute("aria-current") == (
-        "false"
-    ), "the ref kept the selection after a dropped body took it"
+    assert page.locator("#canvas3d").get_attribute("data-selected") == "", (
+        "the ref kept the selection after a dropped body took it"
+    )
+    assert page.locator("#canvas3d").get_attribute("data-reference") == "marked"
     assert page.locator("#insert").is_disabled()
 
-    page.locator(f'bench-refs-tree [data-ref="{ref}"]').click()
+    _part(page, ref)
     page.wait_for_timeout(150)
+    assert page.locator("#canvas3d").get_attribute("data-reference") == "", (
+        "the dropped body stayed lit after a ref took the selection"
+    )
+    assert page.locator("#canvas3d").get_attribute("data-selected") == ref
+    assert page.locator("#insert").is_enabled(), "Insert ref did not come back for a ref"
+    _project(page)
     assert (
-        page.locator(f'bench-refs-tree [data-reference="{REFERENCE}"]').get_attribute(
+        page.locator(f'bench-reference-list [data-reference="{REFERENCE}"]').get_attribute(
             "aria-current"
         )
         == "false"
     ), "the dropped body kept the selection"
-    assert page.locator("#canvas3d").get_attribute("data-reference") == "", (
-        "the dropped body stayed lit after a ref took the selection"
-    )
-    assert page.locator("#insert").is_enabled(), "Insert ref did not come back for a ref"
 
 
 @pytest.mark.e2e

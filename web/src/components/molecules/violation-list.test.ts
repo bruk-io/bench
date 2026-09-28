@@ -66,9 +66,36 @@ describe("bench-violation", () => {
     expect(row?.getAttribute("check")).toBe("wall");
   });
 
-  it("names where to look: the refs, then the line", async () => {
+  it("names where to look as a list of places, then the line", async () => {
     const [row] = rows(await mounted([WALL]));
-    expect(row && text(row, ".where")).toBe("lid/wall-0 · lid/wall-1 · line 12");
+    const places = Array.from(row?.shadowRoot?.querySelectorAll(".places .place") ?? [], (one) =>
+      one.textContent.trim(),
+    );
+    expect(places).toEqual(["lid/wall-0", "lid/wall-1"]);
+    expect(row && text(row, ".where .jump")).toBe("line 12");
+  });
+
+  it("asks for a place to be lit rather than lighting it, and marks the one the page lit", async () => {
+    const list = await mounted([WALL]);
+    const [row] = rows(list);
+    const asked: string[] = [];
+    list.addEventListener("place-pick", (event) => asked.push(event.detail.ref));
+    row?.shadowRoot?.querySelector<HTMLButtonElement>('.place[data-ref="lid/wall-1"]')?.click();
+    expect(asked).toEqual(["lid/wall-1"]);
+    expect(row?.shadowRoot?.querySelector('.place[aria-current="true"]')).toBeNull();
+    list.lit = "lid/wall-1";
+    await list.updateComplete;
+    await row?.updateComplete;
+    expect(row?.shadowRoot?.querySelector('.place[aria-current="true"]')?.textContent.trim()).toBe("lid/wall-1");
+  });
+
+  it("keeps a long sentence to its first lines until it is clicked", async () => {
+    const [row] = rows(await mounted([WALL]));
+    const message = row?.shadowRoot?.querySelector<HTMLElement>(".message");
+    expect(message?.dataset["open"]).toBe("false");
+    message?.click();
+    await row?.updateComplete;
+    expect(message?.dataset["open"]).toBe("true");
   });
 
   it("leaves out where to look when there is nowhere", async () => {

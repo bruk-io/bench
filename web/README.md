@@ -148,36 +148,42 @@ itself in the component test browser.
   thickness, with its engraved lines and lettering on top - and a printed part is its solid;
   they lie in rows on a grid, a row wrapping before it runs past 600 mm. Drag to orbit,
   right-drag to pan, wheel or pinch to dolly; `+`/`−` and `Fit` move the camera, which keeps
-  following the work until you move it yourself. The nest is not in the view: each sheet is a
-  thumbnail in the `Export` menu, beside its SVG and DXF.
+  following the work until you move it yourself. The bar over the view holds only ways of
+  looking at it - colour faces, a section, zoom and `Fit`; everything that acts on something
+  is in the inspector, beside what it acts on (decision-12).
+- **The inspector**: the right-hand column shows whatever is selected. With nothing selected
+  it is the project - its knobs, its parts each with a badge saying how it stands (errors,
+  warnings, not checked, ok), the findings that are on no one part, the reference meshes it
+  holds, and its export. A part shows what the checks found on it as a list of places, how it
+  is made, its faces as a tree, and its own files. A face shows its ref, its normal when it is
+  a plane, the findings that name it and its part's tree with its row revealed. A reference
+  mesh shows its survey, *detect faces* and the placement pick. Clicking empty space in the
+  view, `Escape`, or the project's name at the top goes back to the project; a failed run is
+  said at the top whatever the subject.
 - **Refs**: click any face - a plate's wall or hole, a printed part's face - or an engraved
-  line or line of lettering to select it: the bar over the viewer shows its ref, and hovering
-  shows it with the part's quantity, stock and sheet under it. A plate's walls answer to the
-  refs their cut paths carry in the SVG, so `drawer-front-1/pull` is the pull's wall.
-  `Insert ref` or `Ctrl/Cmd+I` puts `ref("…")` at the editor cursor - and brings the Code tab
-  to the front if the Parameters tab was, so you see it land; `Escape` clears it. Put the
-  cursor inside a `ref("…")` string and what it names lights up. (`Ctrl/Cmd+Shift+I`, which
-  this used to be, is DevTools in Chrome, Edge and Firefox.)
-- **Checks**: what `check_fits`, `check_wall`, `check_clearance` and `check_overhangs`
-  found is listed in the report over the viewer with its severity, the refs it is about and
-  the line that asked, and an `error` marks that line in the editor exactly as a raised exception does.
-  A check nothing could answer reads **not checked**, never as a pass.
-- **Code | Parameters**: the left pane is the script seen one way at a time - its code, or
-  the panel generated from what it declares - as two tabs, and the app remembers which was
-  in front. The Parameters tab shows how many there are. A parameter edit re-runs the script
-  with overrides instead of rewriting its text; `reset`, on that tab, drops them. While the
-  script has a failing line and the Parameters tab is in front, the Code tab carries a red
-  dot rather than taking the pane away.
-- **Export and the report**: the viewer has the whole right column, and nothing sits under
-  it. The files are in the `Export` menu on the viewer bar - SVG and DXF per nested sheet;
-  then, for the printer, one `.stl` per body and one `.3mf` with every body in it named; then
-  every extra file the build made (per-part SVGs, `baseplate.scad`), more than four of them
-  folded under their count; and `Download all` for the lot as a zip. What the run said is a
-  card over the bottom of the view, there only while there is something to read: a
-  failure, a check's finding, a nest warning or a line on stderr brings it up by itself,
-  `hide` puts it away until it says something new, and output on stdout alone waits behind a
-  small button that names it. The STL and the 3MF
-  are bytes, carried through the scene as base64 - `transport.binary(name)` says which
+  line or line of lettering to select it: the inspector shows its ref, and hovering shows it
+  with the part's quantity, stock and sheet under it. A plate's walls answer to the refs their
+  cut paths carry in the SVG, so `drawer-front-1/pull` is the pull's wall. `Insert ref` or
+  `Ctrl/Cmd+I` puts `ref("…")` at the editor cursor - and brings the script to the front if
+  something else was, so you see it land. Put the cursor inside a `ref("…")` string and what
+  it names lights up. (`Ctrl/Cmd+Shift+I`, which this used to be, is DevTools in Chrome, Edge
+  and Firefox.)
+- **Checks**: what `check_fits`, `check_wall`, `check_clearance` and `check_overhangs` found
+  is listed on the part it is about, with its severity, its places - each a click away from
+  being lit in the view - and the line that asked; an `error` marks that line in the editor
+  exactly as a raised exception does. The status bar counts errors and warnings, and a click
+  on the count selects the part worst off. A check nothing could answer reads **not checked**,
+  never as a pass.
+- **Knobs**: the panel generated from what the script declares is the project's, so it is
+  what the inspector shows with nothing selected. A knob turned re-runs the script with
+  overrides instead of rewriting its text; `reset` drops them.
+- **Export and the output**: the project's export lists every file the run made - SVG and DXF
+  per nested sheet, whose picture opens it as a tab beside the script; then, for the printer,
+  one `.stl` per body and one `.3mf` with every body in it named; then every extra file the
+  build made (per-part SVGs, `baseplate.scad`); and `Download all` for the lot as a zip. A
+  part's export lists only its own. What the script printed is the Output panel across the
+  bottom, with stdout and stderr on tabs of their own, folded until it is opened. The STL and
+  the 3MF are bytes, carried through the scene as base64 - `transport.binary(name)` says which
   entries those are - and decoded on the way out, in the archive as well as on their own.
 - **Projects**: a project is a directory on the host (decision-9) - its scripts, and one
   `bench.toml`:
@@ -208,7 +214,7 @@ itself in the component test browser.
   there is not written over, and the chip says the body is not kept. Opening a project whose
   `[reference]` names a mesh it holds puts that body back on the view, placed.
 
-  The Projects container on the rail lists the projects under the root, makes a new one from
+  The sidebar - the project and nothing else - lists the projects under the root, makes a new one from
   `templates/untitled.py`, and opens, renames, deletes and duplicates them; `Download` is the
   project's scripts and its document in one archive - the document as `<entry>.toml`, which is
   what `tools/build.py` reads beside a script until it reads `bench.toml` itself (task-50) - and
@@ -224,7 +230,7 @@ itself in the component test browser.
 ## How it fits together
 
 ```
-index.html          the layout: header, editor pane, viewer, params and output panels
+index.html          the layout: title bar, project sidebar, editor and view, output, inspector
 src/main.ts         wiring and state (the workspace, overrides, the last scene)
 src/files.ts        the projects as data: directories of scripts, each with its entry,
                     values and placement, the open one - new, rename, delete, an example
@@ -247,9 +253,13 @@ src/viewer3d.ts     every part in three.js - plates, solids, engraved lines and 
                     drawn where the scene's stage put them: orbit, picking, highlight
 src/overrides.ts    the override table as data: read back from storage, set, pruned to
                     what the script declares - the page owns the one copy
-src/components/     the Lit elements, atoms up: a callout; a violation, a file row and a
-                    parameter field; the report, the Files, Examples and Export menus and the parameters panel,
-                    each with its *.test.ts beside it
+src/components/     the Lit elements, atoms up: a callout; a violation, a file row, a
+                    parameter field and the reference list; the inspector and what it is made
+                    of - the parameters, the refs tree, the export, the reference tools - the
+                    Output panel, the Files and Examples menus, each with its *.test.ts beside it
+src/subjects.ts     what the inspector is about: the subject a selection makes, a part's
+                    findings and standing, the part worst off, the mated(...) line of a pair
+src/reference-body.ts  the reference mesh on the view: its survey, detection and pick
 src/downloads.ts    a file at a time, or a store-only zip written by hand
 src/scene.ts        the contract of bench.script as TypeScript types, and `received`, which
                     checks a payload and its buffers before the UI reads them

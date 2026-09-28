@@ -53,6 +53,27 @@ const single = ([name, data]: readonly [string, string]): Row => ({
   downloads: [{ label: format(name), name, data }],
 });
 
+/** The files that are one part's own, in the same three groups: the sheets it is cut from, its
+ * body for the printer (`<label>.stl`), and its own drawing (`part-<label>.svg`) - the names
+ * `bench.views` gives them. The project's `.3mf` holds every body at once, so it is Export all's
+ * and not any one part's. */
+export function partLayout(
+  part: { readonly ref: string; readonly label: string },
+  sheets: readonly SheetView[],
+  files: Readonly<Record<string, string>>,
+): Layout {
+  const own = new Set([`${part.label}.stl`, `part-${part.label}.svg`]);
+  const onIt = sheets.filter((sheet) => sheet.parts.includes(part.ref));
+  const kept = Object.entries(files).filter(
+    ([name]) => own.has(name) || onIt.some((sheet) => sheetFile(sheet, name)),
+  );
+  return layout(onIt, Object.fromEntries(kept));
+}
+
+/** Whether `name` is one of `sheet`'s own cut files. */
+const sheetFile = (sheet: SheetView, name: string): boolean =>
+  name === `${sheet.name}.svg` || name === `${sheet.name}.dxf`;
+
 /** The three groups, from the scene's sheets and files. */
 export function layout(
   sheets: readonly SheetView[],

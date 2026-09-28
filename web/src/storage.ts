@@ -7,9 +7,9 @@
 
 /** Every key the app keeps something under.
  *
- * Most of these are about *this browser on this device* and go nowhere else: which container
- * the rail had open, whether the panel was shut, the log level, the fingerprint of a script
- * the watchdog stopped, which project this browser has open. `files` is the exception: the
+ * Most of these are about *this browser on this device* and go nowhere else: whether the panel
+ * was opened, the log level, the fingerprint of a script the watchdog stopped, which project
+ * this browser has open. `files` is the exception: the
  * projects a browser kept before they lived on the host, read once - through
  * `store-local.ts` - to adopt them there (task-46), and never written again.
  */
@@ -32,9 +32,7 @@ export const KEYS = {
   overrides: "bench.overrides",
   /** The fingerprint of a script the watchdog had to stop, so a reload does not replay it. */
   hang: "bench.lastHang",
-  /** Which container the rail last had open in the sidebar. */
-  container: "bench.container",
-  /** Whether the bottom panel was last put away. */
+  /** Whether the bottom panel was last opened - it starts folded (decision-12). */
   panel: "bench.panel",
   /** The console's log level. */
   log: "bench.log",

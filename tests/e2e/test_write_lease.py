@@ -272,7 +272,7 @@ def test_the_first_to_open_writes_and_the_second_reads_is_told_why_and_keeps_not
         assert download.value.suggested_filename == "plates.zip"
 
         # AC#7: a knob turns, the model runs on it, and the value goes nowhere at all.
-        tablet.click("#rail-parameters")
+        tablet.click("#crumb-project")
         assert tablet.locator("#params-unkept").is_visible()
         tablet.fill("#param-n", "4")
         tablet.wait_for_function(f"() => ({BODIES})() === 4", timeout=BOOT_MS)
@@ -286,7 +286,7 @@ def test_the_first_to_open_writes_and_the_second_reads_is_told_why_and_keeps_not
         assert (root / "plates" / "plates.py").read_text() == script
 
         # The writer is untouched by any of it, and still writes.
-        desk.click("#rail-parameters")
+        desk.click("#crumb-project")
         desk.fill("#param-n", "3")
         desk.wait_for_function(f"() => ({BODIES})() === 3", timeout=BOOT_MS)
         assert _eventually(lambda: _values(root), {"n": 3}) == {"n": 3}
@@ -322,11 +322,11 @@ def test_a_reader_can_take_the_project_over_after_being_told_whose_it_is(
         _shot(desk, "lease-taken-over.png")
 
         # The new writer writes, and the old one can no longer.
-        tablet.click("#rail-parameters")
+        tablet.click("#crumb-project")
         tablet.fill("#param-n", "5")
         assert _eventually(lambda: _values(root), {"n": 5}) == {"n": 5}
         desk_sent = _written(desk)
-        desk.click("#rail-parameters")
+        desk.click("#crumb-project")
         desk.fill("#param-n", "1")
         desk.wait_for_function(f"() => ({BODIES})() === 1", timeout=BOOT_MS)
         desk.wait_for_timeout(1500)
@@ -358,7 +358,7 @@ def test_a_lease_nobody_renews_lapses_and_the_reader_becomes_the_writer_by_itsel
         _writer(page, timeout=15_000)
         _rendered(page)
         assert page.locator("#standing").is_hidden()
-        page.click("#rail-parameters")
+        page.click("#crumb-project")
         page.fill("#param-n", "3")
         assert _eventually(lambda: _values(root), {"n": 3}) == {"n": 3}
         page.context.close()
