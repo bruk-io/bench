@@ -6,7 +6,10 @@ projects/tower's ``coupon.py`` was stopped at 15 s on its first run after a page
 measure the same - but whatever the worker was doing when Run was pressed: the survey of the
 project's reference, which takes minutes on a quarter of a million triangles and which the run
 had to wait behind with its watchdog already running. The run now takes the worker from a
-survey, and its watchdog starts when the script does (AC#2, AC#3, AC#5).
+survey, and its watchdog starts when the script does (AC#2, AC#3, AC#5). The same clock used to
+count the rest of a run still working when Run was pressed again; and the guarantee it is there
+for still holds - a ``while True`` somebody has already typed over dies at the limit from its
+own start, and the script after it runs on the fresh worker instead of being blamed (AC#2).
 
 The second half is the other symptom (AC#4): after a runaway, a page opened on the same script -
 a reading tab or the writer's own reload - held the script back as it should, but left the
@@ -84,6 +87,24 @@ opened on the same script does not run again by itself."""
 OPEN = "bench.open"
 """``KEYS.open``: which project and script the browser has open."""
 
+BUSY = (
+    "import time\n"
+    "\n"
+    "from bench import *\n"
+    "\n"
+    "begun = time.monotonic()\n"
+    "while time.monotonic() - begun < 10:\n"
+    "    pass\n"
+    "print('worked')\n"
+    "show(part('plate', fill(rect(60, 40)), Stock(3, 'ply')))\n"
+)
+"""Ten seconds of work and then a plate: two of it back to back take longer than the watchdog,
+one alone does not."""
+
+QUICK = "from bench import *\n\nshow(part('plate', fill(rect(30, 20)), Stock(3, 'ply')))\n"
+
+RUNAWAY = "while True:\n    pass\n"
+
 
 def _pins() -> bytes:
     """A field of round pins as a binary STL: ``ACROSS`` x ``ACROSS`` of them, each a closed
@@ -119,17 +140,21 @@ def hosted(tmp_path_factory: pytest.TempPathFactory, built_app: Path) -> Iterato
     (project / "fit.py").write_text(SCRIPT)
     (project / "bench.toml").write_text(TABLE)
     (project / MESH).write_bytes(_pins())
+    for name, entry, text in (("busy", "work.py", BUSY), ("loop", "quick.py", QUICK)):
+        (root / name).mkdir()
+        (root / name / entry).write_text(text)
+        (root / name / "bench.toml").write_text(f'[project]\nentry = "{entry}"\n')
     with preview.served(env={VARIABLE: str(root)}) as url:
         yield url
 
 
-def _context(browser: Browser) -> BrowserContext:
+def _context(browser: Browser, project: str = PROJECT, script: str = "fit.py") -> BrowserContext:
     """A browser of its own - its own storage, so nothing one check remembered reaches the
-    next - that opens ``heavy`` the way the app reopens where it was left."""
+    next - that opens ``project`` at ``script`` the way the app reopens where it was left."""
     context = browser.new_context(viewport={"width": 1440, "height": 900}, color_scheme="light")
     context.add_init_script(
         f"localStorage.setItem('{OPEN}',"
-        f" JSON.stringify({{project: '{PROJECT}', script: 'fit.py'}}));"
+        f" JSON.stringify({{project: '{project}', script: '{script}'}}));"
     )
     return context
 
@@ -260,4 +285,66 @@ def test_after_a_runaway_a_reading_tab_and_the_writers_reload_both_hold_the_name
     _run(writer)
     assert _state(writer) == "ok", _said(writer)
     assert SAID in _said(writer)
+    context.close()
+
+
+# ---- AC#2: the clock is the script's own, and a runaway still dies at the limit -------------
+
+_BOOTED = "() => performance.getEntriesByName('bench.boot.bench').length > 0"
+"""Python is up - and so the page's own first run, asked for before it was, has begun."""
+
+
+def _replaced(page: Page, text: str) -> None:
+    """Put ``text`` in the editor in place of the script, as one change."""
+    page.click("#tab-script")
+    page.locator(".cm-content").click()
+    page.keyboard.press("ControlOrMeta+a")
+    page.keyboard.insert_text(text)
+
+
+def test_a_run_pressed_while_another_is_working_is_timed_from_its_own_start(
+    hosted: str, browser: Browser
+) -> None:
+    """Ten seconds of script, pressed again a second into it: the second run waits out the
+    first and then takes ten seconds of its own. Twenty from the press, but fifteen of them
+    the second run's clock used to count."""
+    context = _context(browser, "busy", "work.py")
+    page = context.new_page()
+    page.goto(hosted)
+    page.wait_for_function(_BOOTED, timeout=BOOT_MS)
+    page.wait_for_timeout(1_000)
+
+    _run(page)
+
+    assert _state(page) == "ok", _said(page)
+    assert "worked" in _said(page)
+    context.close()
+
+
+def test_a_runaway_that_was_superseded_still_dies_and_the_script_after_it_runs(
+    hosted: str, browser: Browser
+) -> None:
+    """``while True`` started, then replaced by a script that finishes: the loop is the
+    runaway and is stopped at the limit from its own start, and the script after it - the one
+    somebody is waiting on - is handed to the fresh worker and runs, and is not remembered as
+    the runaway."""
+    context = _context(browser, "loop", "quick.py")
+    page = context.new_page()
+    said: list[str] = []
+    page.on("console", lambda message: said.append(message.text))
+    page.goto(hosted)
+    _ran(page)
+    assert _state(page) == "ok", _said(page)
+
+    _replaced(page, RUNAWAY)
+    page.wait_for_selector("#stop:not([disabled])", timeout=RUN_MS)
+    page.wait_for_timeout(2_000)
+    page.evaluate("() => { document.querySelector('#timing').textContent = ''; }")
+    _replaced(page, QUICK + "# after the loop\n")
+    _ran(page)
+
+    assert _state(page) == "ok", _said(page)
+    assert "did not finish" not in _said(page)
+    assert any("a superseded run passed the watchdog" in one for one in said), said
+    assert page.evaluate(f"() => localStorage.getItem('{HANG}')") is None
     context.close()

@@ -119,8 +119,10 @@ class Runner(Protocol):
     ``None``s to satisfy a type rather than a runtime.
 
     The reference crosses as text rather than as bytes because a string is the one thing both
-    runtimes agree about without a proxy in the middle - and a body dropped on the view is
-    read once per run, not per frame, so the copy costs nothing anybody can feel. ``table`` is
+    runtimes agree about without a proxy in the middle - and it crosses twice a run, to
+    ``hold`` and then to the run, not once a frame: for tower's ten-megabyte fixture the second
+    crossing, and the comparison that finds it is the body already held, measured 66 ms in
+    Pyodide (task-96), against the half a second reading it again would take. ``table`` is
     ``None`` without a ``stl``, or with one that has nothing said about it - decision-4's
     "no table, no move". ``modules`` is ``None`` for a project of one script, exactly as
     ``tools.build``'s import path holds one entry alone when there is nothing beside it.
