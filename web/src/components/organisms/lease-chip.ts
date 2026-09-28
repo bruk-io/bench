@@ -57,6 +57,13 @@ export class BenchLeaseChip extends LitElement {
         color: var(--danger);
       }
 
+      /* A narrow header has room for the one word; the popover still says all of it. */
+      @media (max-width: 760px) {
+        .why {
+          display: none;
+        }
+      }
+
       .pop {
         position: absolute;
         top: calc(100% + 8px);
@@ -153,7 +160,7 @@ export class BenchLeaseChip extends LitElement {
         title=${words.title}
         @click=${this.toggle}
       >
-        ${words.badge}
+        <span>${words.chip}<span class="why"> · ${words.badgeWhy}</span></span>
       </button>
       <span class="said" role="status">${words.title}</span>
       <div id="lease-pop" class="pop" role="dialog" aria-labelledby="lease-title" ?hidden=${!this.open}>

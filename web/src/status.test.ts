@@ -14,6 +14,7 @@ describe("readOnlyWords", () => {
     expect(said.text).toContain("nothing you change is kept");
     expect(said.chip).toBe("read-only");
     expect(said.badge).toBe("read-only · held elsewhere");
+    expect(said.badge).toBe(`${said.chip} · ${said.badgeWhy}`);
   });
 
   it("asks before taking it over, naming whose it is and what that one loses", () => {

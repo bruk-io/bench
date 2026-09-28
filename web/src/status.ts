@@ -75,8 +75,10 @@ interface Holder {
 
 /** Everything a tab that is only reading a project says about it (`readOnlyWords`). */
 export interface ReadOnlyWords {
-  /** The header chip's own words - short, since the rest is one click away (task-91). */
+  /** The header chip's own words - short, since the rest is one click away (task-91) - and
+   * the part of them after `chip`'s word, which a narrow header leaves off. */
   readonly badge: string;
+  readonly badgeWhy: string;
   /** The chip's popover: whose it is and where, then for how long and what a reader can do. */
   readonly title: string;
   readonly text: string;
@@ -106,8 +108,10 @@ export function readOnlyWords(project: string, holder: Holder, lost: boolean): R
   const confirm =
     `Take ${project} from ${who}? From then on it can keep nothing: an edit it has not saved yet ` +
     "is refused, and it is told you took it over. Do this when that one is somewhere you cannot reach.";
+  const badgeWhy = lost ? "taken over" : "held elsewhere";
   return {
-    badge: lost ? "read-only · taken over" : "read-only · held elsewhere",
+    badge: `read-only · ${badgeWhy}`,
+    badgeWhy,
     title,
     text,
     confirm,

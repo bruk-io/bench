@@ -1017,6 +1017,11 @@ kbd {
     display: none;
   }
 
+  /* The status bar says the same, and the header needs the room for the layout switch. */
+  #made {
+    display: none;
+  }
+
   kbd {
     display: none;
   }
