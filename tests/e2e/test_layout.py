@@ -214,3 +214,23 @@ def test_a_browser_that_keeps_nothing_still_draws_and_still_switches(
         page.keyboard.press("Control+Backslash")
         assert _layout(page) == "code"
         assert page.locator("#editor").is_visible()
+
+
+# ---- what the editor group has to say is never put away with it ----------------------------
+
+
+def test_a_notice_in_the_editor_group_is_shown_even_in_the_view_layout(
+    browser: Browser, tmp_path: Path, built_app: Path
+) -> None:
+    """A host whose projects root is missing says so over the editor; a browser that last
+    chose View must still be told, so the centre is split again while it is up."""
+    with preview.served(env={VARIABLE: str(tmp_path / "not-there")}) as url:
+        context = browser.new_context(viewport={"width": 1440, "height": 900}, color_scheme="light")
+        context.add_init_script("localStorage.setItem('bench.layout', 'view')")
+        page = context.new_page()
+        page.goto(url)
+        page.wait_for_selector("#no-host:not([hidden])", timeout=BOOT_MS)
+        assert _layout(page) == "view"
+        assert page.locator("#no-host").is_visible()
+        assert page.locator("#canvas3d").is_visible()
+        context.close()
