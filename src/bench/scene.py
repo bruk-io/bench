@@ -154,7 +154,8 @@ class SummaryView(TypedDict, closed=True):
 
     ``parts`` and ``sheets`` are what was made and nested; ``errors`` and ``warnings`` are what
     the checks found, and ``error_line`` is the script line of the first error, or ``None``.
-    ``solid`` counts the parts with a body to draw and ``unbuilt`` the parts without one.
+    ``solid`` counts the parts with a body to draw and ``unbuilt`` the parts without one;
+    ``printed`` counts the printed parts, the ones the view's *On bed* has to lay.
     """
 
     parts: int
@@ -164,6 +165,7 @@ class SummaryView(TypedDict, closed=True):
     error_line: int | None
     solid: int
     unbuilt: int
+    printed: int
 
 
 class PartView(TypedDict, closed=True):

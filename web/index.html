@@ -123,10 +123,12 @@
           <!-- The view: a pane, never a tab. Ref selection highlights a face here, so this
                surface can never be the one that is not on screen. -->
           <section class="group group-view">
-            <!-- The view keeps only ways of looking at it (decision-12): colour the faces, cut
-                 a section, zoom and fit. Everything that acts on something - insert a ref,
-                 survey a body, place it - is in the inspector, beside what it acts on. -->
+            <!-- The view keeps only ways of looking at it (decision-12): the view mode, colour
+                 the faces, where a section cuts, zoom and fit. Everything that acts on
+                 something - insert a ref, survey a body, place it - is in the inspector, beside
+                 what it acts on. -->
             <div class="viewer-bar" role="toolbar" aria-label="How to look at the view">
+              <bench-view-modes id="view-modes"></bench-view-modes>
               <button
                 id="colour-faces-toggle"
                 type="button"
@@ -136,16 +138,7 @@
               >
                 colour faces
               </button>
-              <div class="sectionbar" role="group" aria-label="Section view">
-                <button
-                  id="section-toggle"
-                  type="button"
-                  class="look"
-                  title="Clip the view at a plane, to see what a part hides inside it"
-                  aria-pressed="false"
-                >
-                  section
-                </button>
+              <div class="sectionbar" role="group" aria-label="Where the section cuts">
                 <select id="section-axis" class="section-axis" disabled aria-label="Section axis">
                   <option value="x">X</option>
                   <option value="y">Y</option>

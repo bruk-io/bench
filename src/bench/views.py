@@ -32,6 +32,7 @@ from .model import (
     Ref,
     Stock,
     Stocked,
+    Volume,
     index,
 )
 from .nest import Bed, PartSpec, Sheet, nest, sheet_name
@@ -113,7 +114,7 @@ def scene(
     kernel: Kernel | None,
     reference: Mesh | None = None,
     context: Sequence[Context] = (),
-    printer: Printer | None = None,
+    printer: Printer | Volume | None = None,
     said: PrinterSaid = "host",
     stdout: str,
     stderr: str,
@@ -139,9 +140,10 @@ def scene(
     body labelled as a part is refused where :func:`_unclashed` finds it - a ref under the one
     label would name both, and a click on one would light the other.
 
-    ``printer`` is the machine the printed parts are laid on for the view's *On bed*, and
-    ``said`` who chose it; each printed part is laid down by the move its STL is written with
-    - :func:`bench.export.laid_on_bed`, once, for both - put beside the others by
+    ``printer`` is the machine the printed parts are laid on for the view's *On bed* - a bare
+    :class:`~bench.model.Volume` when nobody knows its name - and ``said`` who chose it. Each
+    printed part is laid down by the move its STL is written with -
+    :func:`bench.export.laid_on_bed`, once, for both - put beside the others by
     :func:`bench.stage.on_bed`, and asked :func:`bench.checks.fits` against the volume. No
     printer, and no part is laid anywhere and none is asked; the files are the same either way.
     """
@@ -196,7 +198,7 @@ def scene(
             )
         ],
         stage=_stage_view(box),
-        summary=_summary(violations, len(parts), len(sheets), bodies),
+        summary=_summary(violations, parts, len(sheets), bodies),
         refs=[str(found) for found in index(assembly)],
         sheets=[view for view, _ in nested],
         files=files,
@@ -329,7 +331,7 @@ def _bed(
     parts: Sequence[Part],
     laid: Sequence[Laid | None],
     offsets: Sequence[Offset | None],
-    printer: Printer | None,
+    printer: Printer | Volume | None,
     said: PrinterSaid,
 ) -> tuple[tuple[PrintingView | None, ...], BedView | None]:
     """How each part prints - ``None`` for a part that is not printed - and the bed they are
@@ -351,7 +353,7 @@ def _bed(
             None if orient is None else _printing_view(part, orient, asked=False)
             for part, orient in zip(parts, printing, strict=True)
         ), None
-    volume = printer.volume
+    volume = printer.volume if isinstance(printer, Printer) else printer
     boxes = tuple(
         None if one is None or orient is None else extent(one.mesh)
         for one, orient in zip(laid, printing, strict=True)
@@ -368,7 +370,7 @@ def _bed(
             placement = [value for row in move.rows for value in row]
         views.append(_printing_view(part, orient, fits(part, volume), placement=placement))
     return tuple(views), BedView(
-        printer=printer.name,
+        printer=printer.name if isinstance(printer, Printer) else None,
         said=said,
         volume=[volume.w, volume.d, volume.h],
         bounds=[box.x0, box.y0, box.z0, box.x1, box.y1, box.z1],
@@ -572,20 +574,24 @@ def _frames_view(
 
 
 def _summary(
-    violations: Sequence[Violation], parts: int, sheets: int, bodies: Sequence[Mesh | None]
+    violations: Sequence[Violation],
+    parts: Sequence[Part],
+    sheets: int,
+    bodies: Sequence[Mesh | None],
 ) -> SummaryView:
     """What a run amounts to: what it made and nested, what its checks found and the line of
-    the first error, and how many of its parts have a body to draw."""
+    the first error, how many of its parts have a body to draw and how many are printed."""
     errors = [one for one in violations if one.severity is Severity.ERROR]
     solid = sum(1 for body in bodies if body is not None and body.refs)
     return SummaryView(
-        parts=parts,
+        parts=len(parts),
         sheets=sheets,
         errors=len(errors),
         warnings=sum(1 for one in violations if one.severity is Severity.WARNING),
         error_line=next((one.line for one in errors if one.line is not None), None),
         solid=solid,
-        unbuilt=parts - solid,
+        unbuilt=len(parts) - solid,
+        printed=sum(1 for part in parts if part.process is Process.PRINT),
     )
 
 

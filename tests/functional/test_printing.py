@@ -100,7 +100,7 @@ def test_the_volume_a_script_checks_against_is_the_bed_it_is_laid_on() -> None:
     scene = _ok(run(BEAM.format(check=big), printer=PRINTER))
     bed = scene["bed"]
     assert bed is not None
-    assert (bed["printer"], bed["said"]) == ("500 x 500 x 500 mm", "script")
+    assert (bed["printer"], bed["said"]) == (None, "script")
     printing = scene["parts"][0]["printing"]
     assert printing is not None
     assert printing["fits"] is True

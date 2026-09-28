@@ -598,20 +598,20 @@ def _ran(
 class _Machine(TypedDict):
     """The printer :func:`bench.views.scene` lays the printed parts on, and who chose it."""
 
-    printer: Printer | None
+    printer: Printer | Volume | None
     said: PrinterSaid
 
 
 def _machine(asked: Volume | None, host: Printer | None) -> _Machine:
     """The printer a run's printed parts are laid on: the volume the script's ``check_fits``
-    first asked about - by the host's own machine's name when it is that machine's volume, by
-    its size when it is not - or else the host's machine, or else none."""
+    first asked about - named as the host's own machine when it is that machine's volume, and
+    a bare volume nobody has a name for when it is not - or else the host's machine, or else
+    none."""
     if asked is None:
         return _Machine(printer=host, said="host")
     if host is not None and host.volume == asked:
         return _Machine(printer=host, said="script")
-    named = f"{asked.w:g} x {asked.d:g} x {asked.h:g} mm"
-    return _Machine(printer=Printer(named, asked), said="script")
+    return _Machine(printer=asked, said="script")
 
 
 def _namespace(

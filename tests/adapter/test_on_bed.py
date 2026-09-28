@@ -185,7 +185,7 @@ def test_a_script_asking_about_another_machine_is_laid_on_that_one(
     assert bed is not None
     assert bed["said"] == "script"
     assert bed["volume"] == [256.0, 256.0, 256.0]
-    assert bed["printer"] == "256 x 256 x 256 mm"
+    assert bed["printer"] is None
 
 
 def test_a_part_bigger_than_the_bed_is_marked_and_runs_off_it(measured: dict[str, Any]) -> None:

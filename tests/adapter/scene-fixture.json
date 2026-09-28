@@ -2164,7 +2164,8 @@
     "warnings": 0,
     "error_line": null,
     "solid": 14,
-    "unbuilt": 0
+    "unbuilt": 0,
+    "printed": 0
   },
   "refs": [
     "drawer-front-1",

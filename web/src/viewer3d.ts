@@ -19,15 +19,31 @@
  * facets shade flat.
  *
  * **Coordinates.** Bench is millimetres with Z up; three.js assumes Y up, so the camera is
- * told its own up vector and the orbit follows. Nothing rotates the geometry: a part in the
- * viewer lies the way it lies on the bed, and the grid it lies on is the XY plane.
+ * told its own up vector and the orbit follows. Nothing here rotates the geometry of its own
+ * accord.
+ *
+ * **Three ways of looking** (decision-12). *Assembled* draws the parts where the script puts
+ * them, the reference and the context bodies beside them, and no floor - an assembly has no
+ * bed. *On bed* draws each printed part the way it prints on the printer's bed: the move that
+ * lays it there is a matrix Python composed (`PrintingView.placement` - the same move its STL
+ * is written with, then a step across the bed), applied to the body already drawn, and the
+ * bed's floor and build volume are lines Python placed; the faces the run's overhang findings
+ * name are painted, and a part that does not fit is tinted. Nothing else is on the bed - a cut
+ * part, the reference and a context body are not printed. *Section* is *Assembled* clipped at
+ * one plane - parts, reference and context bodies alike - with each kind's cut face filled in
+ * where the plane passes through it (a stencil count of the surfaces behind the plane, the
+ * usual capping trick: drawing only, no cross-section is computed), so a foot in its pocket
+ * reads as two solids and a gap.
  *
  * **For a test to read.** A canvas is one opaque element, so what is on it is also said on
  * the container: `data-bodies` and `data-triangles` for what was drawn, `data-bounds` for the
  * box it fills, `data-selected` and `data-pointed` for the refs lit, `data-lit` for how many
  * triangles are painted as selected, `data-distance` for how far the camera stands from what
  * it looks at, `data-datum` for how long the origin's own X/Y/Z arms are drawn,
- * `data-section` for the axis and position a section is clipping at (empty when off),
+ * `data-mode` for the way of looking, `data-section` for the axis and position a section is
+ * clipping at (empty unless in *Section*), `data-bed` for the printer *On bed* lays parts on,
+ * `data-unfit` for how many parts laid on it do not fit and `data-overhang` for how many
+ * triangles are painted as an overhang,
  * `data-colour-faces` for whether every named face is painted its own colour (empty when off),
  * `data-hidden` for how many triangles the refs container's eye toggles are hiding right now,
  * and `data-context` and `data-context-triangles` for the bodies shown for context.
@@ -41,9 +57,9 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import type {
+  BedView,
   ContextView,
   FrameView,
-  GridView,
   LetteringView,
   MarksView,
   MeshView,
@@ -68,6 +84,10 @@ export interface SectionState {
   readonly position: number;
 }
 
+/** The three ways of looking at a scene (decision-12): where the script puts the parts, how
+ * they print on the printer's bed, and the assembled scene cut at a plane. */
+export type ViewMode = "assembled" | "bed" | "section";
+
 /** The four states a face can be in, and the ink an engraving is drawn in when it is in none
  * of them. */
 const BASE = new THREE.Color(0x9fb0c0);
@@ -78,8 +98,21 @@ const CURSOR = new THREE.Color(0xe38b00);
 
 /** What a cut face is painted, unlit - a section is not lighting, and reading it as one more
  * shaded surface among the part's own would hide the one thing it is there to say: this is
- * open material, not a face the part actually has. */
+ * open material, not a face the part actually has. A reference's cut and a context body's are
+ * painted in their own colours, darker than their ghosts, so a foot in its pocket reads as two
+ * different solids with a gap between them. */
 const CUT = new THREE.Color(0xb23a2e);
+const REFERENCE_CUT = new THREE.Color(0x5f6874);
+const CONTEXT_CUT = new THREE.Color(0xa9803d);
+
+/** *On bed*: a face the run's overhang findings name, and a part that does not fit the bed. A
+ * selection, the cursor and a hover still outrank both, as they outrank `BASE`. */
+const OVERHANG = new THREE.Color(0xf0b429);
+const UNFIT = new THREE.Color(0xd9776c);
+
+/** The bed's floor and the edges of its build volume. */
+const FLOOR = 0xaab2bb;
+const VOLUME_EDGE = 0x6d8fb3;
 
 /** What a body shown for context is painted, and how much of it: a warm sand no part, no
  * selection and no reference wears, thin enough that the part inside or behind it reads
@@ -112,14 +145,22 @@ export interface Viewer3D {
   /** Draw these parts - the ones with a body; anything else is not ours to show - standing
    * where the stage says. `sheets` is only read to say which sheet a part is cut from,
    * `reference` is a body somebody else made, stood behind the work and never selectable, and
-   * `context` the bodies the script showed for context, drawn translucent where they stand. */
+   * `context` the bodies the script showed for context, drawn translucent where they stand.
+   * `bed` is the printer *On bed* lays the printed parts on, and `overhangs` the refs the run's
+   * overhang findings name, painted *On bed*. */
   show(
     parts: readonly PartView[],
     stage: StageView,
     sheets: readonly SheetView[],
     reference?: MeshView | null,
     context?: readonly ContextView[],
+    bed?: BedView | null,
+    overhangs?: readonly string[],
   ): void;
+  /** Look at the scene assembled, on the bed or in section - see the module's own note.
+   * Untouched by `show()`: a re-run keeps the way of looking, as it keeps the section. The
+   * camera frames what the new way shows. *Assembled* by default. */
+  mode(mode: ViewMode): void;
   /** Frame everything, and forget that anybody moved the camera. */
   fit(): void;
   /** Dolly in or out about the middle - what the +/- buttons do. */
@@ -146,12 +187,14 @@ export interface Viewer3D {
    * `onDetectPick`. `null` turns detection off: the backdrop goes back to its plain ghost
    * and stops answering clicks, exactly as before this existed. */
   detect(flatIndex: readonly (number | null)[] | null): void;
-  /** Clip every part at a plane along `axis`, at `position` millimetres in the scene's own
+  /** Where *Section* cuts: a plane along `axis`, at `position` millimetres in the scene's own
    * coordinates - three.js clipping planes, drawing only, nothing computed here that Python
-   * has not already placed. Cut faces are painted `CUT` so a gap between two parts at the
-   * section is a gap, not one more shaded surface. `null` turns the section off. Untouched by
-   * `show()` - it stays exactly as set across a re-run or a knob change, which is what lets
-   * dragging a pose knob sweep the section through the geometry. Off by default. */
+   * has not already placed. It clips the parts, the reference and the context bodies, and
+   * each one's cut face is filled in its own colour - `CUT` for a part - so a gap between two
+   * bodies at the section is a gap, not one more shaded surface. It clips only while the mode
+   * is *Section*; `null` is no plane at all. Untouched by `show()` - it stays exactly as set
+   * across a re-run or a knob change, which is what lets dragging a pose knob sweep the
+   * section through the geometry. */
   section(state: SectionState | null): void;
   /** Colour every named face of every built part in its own pastel from the same palette
    * `detect` uses - one index run across every part in the scene, so two faces never share a
@@ -207,20 +250,16 @@ export interface Viewer3DHooks {
  * colours painted on them. */
 interface Body {
   readonly mesh: THREE.Mesh;
-  /** The same triangles again, painted `CUT` and drawn from the back - the section's cut
-   * face. Shares `mesh`'s own geometry (one buffer, two views onto it), visible only while a
-   * section is on, so nothing here computes a cross-section: what shows through where the
-   * front skin was clipped away is the part's own inside surface, tinted so it reads as cut
-   * rather than as one more lit face. */
-  readonly cap: THREE.Mesh;
   readonly refs: readonly string[];
   readonly index: Uint32Array;
   readonly colors: THREE.BufferAttribute;
   readonly part: PartView;
+  /** Where *On bed* lays it: Python's placement as a matrix, or `null` for a part that is not
+   * laid on the bed - one not printed, or a run with no body or no bed. */
+  readonly placement: THREE.Matrix4 | null;
 }
 
-/** A body shown for context on screen: a part's `Body` without the section's cap - a ghost is
- * clipped like the parts, and its inside is not open material worth painting. */
+/** A body shown for context on screen, numbered and coloured the way a part's is. */
 interface Ghost {
   readonly mesh: THREE.Mesh;
   readonly refs: readonly string[];
@@ -354,7 +393,8 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
 
   let renderer: THREE.WebGLRenderer | null = null;
   try {
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    // `stencil`, which three.js leaves off by default, is what *Section* fills its cut faces with.
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, stencil: true });
   } catch {
     // No WebGL at all - an old browser, a blocked context, a machine with no GPU driver.
     // Everything else still works, so say so here and let the rest of the app carry on.
@@ -374,6 +414,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       empty: () => true,
       say: () => {},
       detect: () => {},
+      mode: () => {},
       section: () => {},
       colourFaces: () => {},
       markReference: () => {},
@@ -407,17 +448,21 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
   rim.position.set(0.1, 1.5, -0.75);
   scene.add(rim);
 
-  const grid = new THREE.GridHelper(1, 1, 0x9aa0a6, 0xcfd4da);
-  grid.rotateX(Math.PI / 2);
-  const lines = grid.material;
-  if (lines instanceof THREE.Material) {
-    lines.transparent = true;
-    lines.opacity = 0.55;
-  }
-  scene.add(grid);
+  /** *On bed*'s printer: its floor and the edges of its build volume, both from the numbers
+   * `BedView` carries. Drawn in no other mode - an assembly has no bed. */
+  const bedGroup = new THREE.Group();
+  bedGroup.visible = false;
+  scene.add(bedGroup);
 
   const parts = new THREE.Group();
   scene.add(parts);
+
+  /** *Section*'s cut faces: for each kind of body - the parts, the reference, the context - a
+   * pair of stencil passes over its triangles and a quad on the plane that paints only where
+   * they counted it open. Out here rather than in `parts` so no raycast ever meets one. */
+  const capping = new THREE.Group();
+  capping.visible = false;
+  scene.add(capping);
 
   /** The dropped body, if there is one, in a group of its own.
    *
@@ -488,13 +533,14 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
   const faceFrames = new THREE.Group();
   scene.add(faceFrames);
 
-  /** `ref`'s frame, read off whichever body's `PartView.frames` names it, or `null` for a
-   * ref with none - unpicked, no body drawn for it, or a face `plane_of` could not frame. */
-  function frameOf(ref: string | null): FrameView | null {
+  /** `ref`'s frame, read off whichever body's `PartView.frames` names it, with that body - or
+   * `null` for a ref with none - unpicked, no body drawn for it, or a face `plane_of` could not
+   * frame. */
+  function frameOf(ref: string | null): { readonly frame: FrameView; readonly body: Body } | null {
     if (ref === null) return null;
     for (const body of bodies) {
       const found = body.part.frames[ref];
-      if (found !== undefined) return found;
+      if (found !== undefined) return { frame: found, body };
     }
     return null;
   }
@@ -560,8 +606,13 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     let drawn = 0;
     for (const ref of [chosen, chosenSecond]) {
       const found = frameOf(ref);
-      if (found === null) continue;
-      faceFrames.add(frameGizmo(found, length));
+      if (found === null || !found.body.mesh.visible) continue;
+      const gizmo = frameGizmo(found.frame, length);
+      // A frame is where its face is drawn, so *On bed* it goes where its body went - by the
+      // body's own matrix, the one Python sent, and no other.
+      gizmo.matrixAutoUpdate = false;
+      gizmo.matrix.copy(found.body.mesh.matrix);
+      faceFrames.add(gizmo);
       drawn += 1;
     }
     // For a test to read, the "for a test to read" convention `data-bodies` etc already use:
@@ -602,16 +653,23 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
   let hovered: string | null = null;
   let frame = 0;
 
-  // ---- section --------------------------------------------------------------------
+  // ---- the way of looking, and the section ------------------------------------------
   //
-  // One plane, shared by every body's front and cap material - moving it moves every part's
-  // section at once, and is the only thing changing it ever does, so no material is rebuilt
-  // when the axis, the position or the on/off state changes. Clipping is enabled or disabled
-  // for the whole renderer instead of by emptying `clippingPlanes`, which is what keeps a
-  // toggle from asking three.js to recompile every part's shader.
+  // One plane, shared by every clipped material - moving it moves every body's section at
+  // once, and is the only thing changing it ever does, so no material is rebuilt when the
+  // axis, the position or the mode changes. Clipping is enabled or disabled for the whole
+  // renderer instead of by emptying `clippingPlanes`, which is what keeps a change of mode
+  // from asking three.js to recompile every part's shader.
   view.localClippingEnabled = false;
   const clipPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
   let section: SectionState | null = null;
+  let look: ViewMode = "assembled";
+  /** The box *Assembled* and *Section* frame - the stage, and a reference beside it - and the
+   * one *On bed* frames, the bed and everything on it; `bounds` is whichever is on screen. */
+  let stageBox = new THREE.Box3(new THREE.Vector3(-50, -50, 0), new THREE.Vector3(50, 50, 50));
+  let bedBox: THREE.Box3 | null = null;
+  /** The refs the run's overhang findings name - painted *On bed*. */
+  let overhanging: ReadonlySet<string> = new Set();
 
   function planeFor(state: SectionState): void {
     switch (state.axis) {
@@ -630,13 +688,149 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     }
   }
 
+  /** One kind of body's cut face. Every surface of the kind is drawn twice more, into the
+   * stencil only and clipped like the body: its back faces counting up, its front faces down,
+   * so a pixel whose count is not zero is one where the plane passes through the inside of a
+   * closed body. The quad on the plane then paints exactly those pixels, depth-tested so a
+   * part in front still hides it, and puts the count back to zero as it goes, ready for the
+   * next kind. `order` keeps each kind's passes and quad together and in turn. */
+  interface Capper {
+    readonly back: THREE.Material;
+    readonly front: THREE.Material;
+    readonly quad: THREE.Mesh;
+    readonly order: number;
+  }
+
+  function stencilPass(side: THREE.Side, op: THREE.StencilOp): THREE.MeshBasicMaterial {
+    return new THREE.MeshBasicMaterial({
+      side,
+      colorWrite: false,
+      depthWrite: false,
+      depthTest: false,
+      stencilWrite: true,
+      stencilFunc: THREE.AlwaysStencilFunc,
+      stencilFail: op,
+      stencilZFail: op,
+      stencilZPass: op,
+      clippingPlanes: [clipPlane],
+    });
+  }
+
+  /** The stencil passes, one pair per body, rebuilt with the bodies; the quads outlive them. */
+  const passes = new THREE.Group();
+  capping.add(passes);
+
+  function capper(colour: THREE.Color, order: number): Capper {
+    const quad = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({
+        color: colour,
+        side: THREE.DoubleSide,
+        stencilWrite: true,
+        stencilRef: 0,
+        stencilFunc: THREE.NotEqualStencilFunc,
+        stencilFail: THREE.ReplaceStencilOp,
+        stencilZFail: THREE.ReplaceStencilOp,
+        stencilZPass: THREE.ReplaceStencilOp,
+      }),
+    );
+    quad.renderOrder = order + 1;
+    capping.add(quad);
+    return {
+      back: stencilPass(THREE.BackSide, THREE.IncrementWrapStencilOp),
+      front: stencilPass(THREE.FrontSide, THREE.DecrementWrapStencilOp),
+      quad,
+      order,
+    };
+  }
+
+  const partCaps = capper(CUT, 1);
+  const referenceCaps = capper(REFERENCE_CUT, 3);
+  const contextCaps = capper(CONTEXT_CUT, 5);
+
+  /** Count `geometry`'s surfaces into `kind`'s cut face - two more meshes over the same
+   * buffer, so a body hidden by the refs container is hidden from its count as well. */
+  function counted(geometry: THREE.BufferGeometry, kind: Capper): void {
+    for (const material of [kind.back, kind.front]) {
+      const pass = new THREE.Mesh(geometry, material);
+      pass.renderOrder = kind.order;
+      passes.add(pass);
+    }
+  }
+
+  /** Stand each kind's quad on the plane, big enough to cover everything it could cut - the
+   * plane's own axis and position, and the middle of the stage, and nothing measured. */
+  function layCaps(state: SectionState): void {
+    const size = stageBox.getSize(new THREE.Vector3()).length() * 2 + 10;
+    const middle = stageBox.getCenter(new THREE.Vector3());
+    for (const { quad } of [partCaps, referenceCaps, contextCaps]) {
+      quad.scale.set(size, size, 1);
+      quad.rotation.set(0, 0, 0);
+      switch (state.axis) {
+        case "x":
+          quad.rotation.y = Math.PI / 2;
+          quad.position.set(state.position, middle.y, middle.z);
+          break;
+        case "y":
+          quad.rotation.x = Math.PI / 2;
+          quad.position.set(middle.x, state.position, middle.z);
+          break;
+        case "z":
+          quad.position.set(middle.x, middle.y, state.position);
+          break;
+      }
+    }
+  }
+
+  /** Put the view back to what `look` and `section` say: which bodies are drawn, where each
+   * one stands, what is clipped and what is framed. Everything it changes is visibility, a
+   * matrix Python sent, or the plane - so it costs nothing to run on every change. */
+  function applyLook(): void {
+    const onBed = look === "bed";
+    const cutting = look === "section" && section !== null;
+    if (section !== null) planeFor(section);
+    view.localClippingEnabled = cutting;
+    capping.visible = cutting;
+    if (cutting && section !== null) layCaps(section);
+    bedGroup.visible = onBed;
+    let unfit = 0;
+    for (const body of bodies) {
+      const laid = onBed ? body.placement : null;
+      body.mesh.visible = !onBed || laid !== null;
+      if (laid === null) body.mesh.matrix.identity();
+      else body.mesh.matrix.copy(laid);
+      body.mesh.matrixWorldNeedsUpdate = true;
+      if (laid !== null && body.part.printing?.fits === false) unfit += 1;
+    }
+    for (const one of scored) one.lines.visible = !onBed;
+    for (const one of lettered) one.quad.visible = !onBed && !isHidden(one.ref ?? one.part.ref);
+    for (const ghost of ghosts) ghost.mesh.visible = !onBed;
+    backdrop.visible = !onBed;
+    bounds = onBed && bedBox !== null ? bedBox : stageBox;
+    layDatum(bounds);
+    scene.updateMatrixWorld();
+    container.dataset["mode"] = look;
+    container.dataset["section"] =
+      cutting && section !== null ? `${section.axis}:${section.position.toFixed(2)}` : "";
+    container.dataset["unfit"] = String(unfit);
+    paint();
+  }
+
   function applySection(state: SectionState | null): void {
     section = state;
-    if (state !== null) planeFor(state);
-    view.localClippingEnabled = state !== null;
-    for (const body of bodies) body.cap.visible = state !== null;
-    container.dataset["section"] = state === null ? "" : `${state.axis}:${state.position.toFixed(2)}`;
-    draw();
+    applyLook();
+  }
+
+  function applyMode(next: ViewMode): void {
+    const reframe = (next === "bed") !== (look === "bed");
+    look = next;
+    applyLook();
+    // On and off the bed the work stands somewhere else, so the camera goes to it; between
+    // *Assembled* and *Section* nothing moved, and a camera aimed at a cut stays aimed.
+    if (reframe) {
+      touched = false;
+      fit();
+    }
   }
 
   // ---- colour faces -----------------------------------------------------------------
@@ -700,7 +894,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     for (const one of scored) {
       one.lines.geometry.setIndex(filteredIndex(one.refs, one.index, one.part.ref, 2));
     }
-    for (const one of lettered) one.quad.visible = !isHidden(one.ref ?? one.part.ref);
+    for (const one of lettered) one.quad.visible = look !== "bed" && !isHidden(one.ref ?? one.part.ref);
     // For a test to read, the same "for a test to read" convention `data-bodies` etc already
     // use: how many triangles across every body are hidden right now.
     let hidden = 0;
@@ -750,10 +944,19 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
    * on. */
   function paint(): void {
     let lit = 0;
+    let overhang = 0;
+    const onBed = look === "bed";
     for (const body of bodies) {
+      const unfit = onBed && body.part.printing?.fits === false;
       for (let triangle = 0; triangle < body.index.length; triangle += 1) {
         const ref = refIn(body.refs, body.index, triangle);
-        const base = colouring && ref !== null ? (faceColour.get(ref) ?? BASE) : BASE;
+        let base = colouring && ref !== null ? (faceColour.get(ref) ?? BASE) : BASE;
+        // *On bed*, what a printer will have trouble with outranks a face's own colour: an
+        // overhang the run found, then a part too big for the bed.
+        if (onBed && ref !== null && overhanging.has(ref)) {
+          base = OVERHANG;
+          overhang += 1;
+        } else if (unfit) base = UNFIT;
         const colour = shade(ref ?? body.part.ref, base);
         if (colour === SELECTED) lit += 1;
         for (let corner = 0; corner < 3; corner += 1) {
@@ -786,6 +989,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     container.dataset["second"] = chosenSecond ?? "";
     container.dataset["pointed"] = pointed ?? "";
     container.dataset["lit"] = String(lit);
+    container.dataset["overhang"] = String(overhang);
     layFaceFrames();
     container.dataset["colourFaces"] = colouring ? "on" : "";
     draw();
@@ -793,13 +997,11 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
 
   function clear(): void {
     for (const body of bodies) {
-      // `cap` shares `mesh`'s own geometry - one buffer, two meshes - so it is disposed once,
-      // through whichever of the pair does it first.
+      // The section's stencil passes share this geometry and the cappers' materials, so the
+      // geometry goes once, here, and the passes are only let go of below.
       body.mesh.geometry.dispose();
       const material = body.mesh.material;
       if (material instanceof THREE.Material) material.dispose();
-      const capMaterial = body.cap.material;
-      if (capMaterial instanceof THREE.Material) capMaterial.dispose();
     }
     for (const one of scored) {
       one.lines.geometry.dispose();
@@ -825,6 +1027,14 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     detectedIndex = null;
     backdrop.clear();
     parts.clear();
+    passes.clear();
+    for (const child of bedGroup.children) {
+      if (child instanceof THREE.LineSegments) {
+        child.geometry.dispose();
+        if (child.material instanceof THREE.Material) child.material.dispose();
+      }
+    }
+    bedGroup.clear();
     bodies = [];
     ghosts = [];
     scored = [];
@@ -876,9 +1086,11 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
         opacity: GHOST_OPACITY,
         depthWrite: false,
         side: THREE.DoubleSide,
+        clippingPlanes: [clipPlane],
       }),
     );
     backdrop.add(standing);
+    counted(geometry, referenceCaps);
     // A run redraws the same body on every keystroke, and a mesh built here starts plain -
     // so a body that was lit before the redraw is lit again after it.
     paintReference();
@@ -1015,19 +1227,23 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       clippingPlanes: [clipPlane],
     });
     const mesh = new THREE.Mesh(geometry, surface);
+    // Where it stands is set by `applyLook` alone - nowhere, or Python's placement *On bed* -
+    // so three.js is never asked to work a matrix out of a position and a rotation.
+    mesh.matrixAutoUpdate = false;
     parts.add(mesh);
-    // Same geometry, drawn from the back and tinted flat: where the section clips the front
-    // skin away, this is what shows through - the part's own inside surface, painted `CUT`
-    // rather than left to read as one more lit face. `BackSide` alone would show it whenever
-    // the camera looks into the part from outside, which never happens on a body nothing has
-    // clipped; the plane is what actually opens it up.
-    const cap = new THREE.Mesh(
-      geometry,
-      new THREE.MeshBasicMaterial({ color: CUT, side: THREE.BackSide, clippingPlanes: [clipPlane] }),
-    );
-    cap.visible = section !== null;
-    parts.add(cap);
-    return { mesh, cap, refs, index, colors, part };
+    counted(geometry, partCaps);
+    const rows = part.printing?.placement ?? null;
+    const placement =
+      rows === null
+        ? null
+        : new THREE.Matrix4().set(
+            ...(rows as [number, number, number, number, number, number, number, number, number, number, number, number]),
+            0,
+            0,
+            0,
+            1,
+          );
+    return { mesh, refs, index, colors, part, placement };
   }
 
   /** A body shown for context: vertex-coloured like a part's so its faces can light, and
@@ -1051,6 +1267,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     });
     const drawn = new THREE.Mesh(geometry, surface);
     parts.add(drawn);
+    counted(geometry, contextCaps);
     return { mesh: drawn, refs: mesh.refs, index: mesh.ref_index, colors, context };
   }
 
@@ -1092,8 +1309,11 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     sheets: readonly SheetView[],
     reference: MeshView | null = null,
     context: readonly ContextView[] = [],
+    bed: BedView | null = null,
+    overhangs: readonly string[] = [],
   ): void {
     clear();
+    overhanging = new Set(overhangs);
     if (reference !== null && reference.positions.length > 0) stand(reference.positions);
     const on = new Map<string, string[]>();
     for (const sheet of sheets) {
@@ -1135,7 +1355,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     faceColour = new Map(named.map((ref, at) => [ref, facePalette[at] ?? BASE]));
 
     const [x0 = -50, y0 = -50, z0 = 0, x1 = 50, y1 = 50, z1 = 50] = stage.bounds;
-    bounds = new THREE.Box3(new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1));
+    stageBox = new THREE.Box3(new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1));
     // The stage measures the work, and a dropped body is not part of it - but if somebody
     // dropped it they meant to look at it, and a backdrop framed out of view or drawn as a
     // speck in the corner is the same as one that never arrived. So the view is framed round
@@ -1143,13 +1363,13 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     if (standing !== null) {
       standing.geometry.computeBoundingBox();
       const around = standing.geometry.boundingBox;
-      if (around !== null) bounds.union(around);
+      if (around !== null) stageBox.union(around);
     }
     // Origin included too, always - the datum's whole point is showing where it sits relative
     // to the work, which a box that only ever covered the work could not do the one time that
     // question matters: everything sits hundreds of millimetres from a dropped body's origin.
-    bounds.expandByPoint(ORIGIN);
-    layDatum(bounds);
+    stageBox.expandByPoint(ORIGIN);
+    bedBox = layBed(bed);
     container.dataset["bodies"] = String(bodies.length);
     container.dataset["triangles"] = String(bodies.reduce((sum, one) => sum + one.index.length, 0));
     container.dataset["bounds"] = stage.bounds.join(",");
@@ -1157,7 +1377,8 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     container.dataset["contextTriangles"] = String(
       ghosts.reduce((sum, one) => sum + one.index.length, 0),
     );
-    lay(stage.grid);
+    container.dataset["bed"] = bed === null ? "" : (bed.printer ?? bed.volume.join(" x "));
+    container.dataset["laid"] = String(bodies.filter((one) => one.placement !== null).length);
 
     // A selected or pointed-at ref the new scene no longer has is dropped, and the host is
     // told, so the status bar does not keep offering a name nothing answers to.
@@ -1167,9 +1388,11 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     if (lostSecond) chosenSecond = null;
     if (pointed !== null && !known(pointed)) pointed = null;
     hovered = null;
-    // Every body, wire and quad above is freshly built and starts plain, so what `hiddenRefs`
-    // says has to be put back on it - the same reason `stand()` repaints a lit reference on
-    // every redraw - and this is what paints, so nothing here calls `paint()` a second time.
+    // Every body, wire and quad above is freshly built, standing nowhere and plain, so where
+    // the way of looking puts it and what `hiddenRefs` says have to be put back on it - the
+    // same reason `stand()` repaints a lit reference on every redraw. `applyHidden` is what
+    // paints, so nothing here calls `paint()` a third time.
+    applyLook();
     applyHidden();
     if (lost) hooks.onSelect(null);
     if (lostSecond) hooks.onSelectSecond(null);
@@ -1184,7 +1407,8 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     // move is the mesh itself - only the camera.
     const arrived = !sameReference(reference, referenceDrawn);
     referenceDrawn = reference;
-    if (arrived || (!touched && (bodies.length > 0 || ghosts.length > 0 || standing !== null))) fit();
+    const something = bodies.length > 0 || ghosts.length > 0 || standing !== null || bedBox !== null;
+    if (arrived || (!touched && something)) fit();
     else draw();
   }
 
@@ -1194,13 +1418,29 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     lettered.some((one) => one.ref === ref) ||
     ghosts.some((one) => one.refs.includes(ref));
 
-  /** The floor the stage asked for. */
-  function lay(floor: GridView): void {
-    const old = grid.geometry;
-    grid.geometry = new THREE.GridHelper(floor.size, floor.divisions).geometry;
-    old.dispose();
-    const [x = 0, y = 0] = floor.centre;
-    grid.position.set(x, y, 0);
+  /** The printer's floor and build volume, drawn from `bed`'s own numbers into `bedGroup`, and
+   * the box *On bed* frames - or `null` when no printer was named. */
+  function layBed(bed: BedView | null): THREE.Box3 | null {
+    if (bed === null) return null;
+    const floor = new THREE.BufferGeometry();
+    floor.setAttribute("position", new THREE.BufferAttribute(new Float32Array(bed.floor), 3));
+    const grid = new THREE.LineSegments(
+      floor,
+      new THREE.LineBasicMaterial({ color: FLOOR, transparent: true, opacity: 0.6 }),
+    );
+    const [w = 0, d = 0, h = 0] = bed.volume;
+    const edges = new THREE.BufferGeometry();
+    // The volume's twelve edges, corner to corner - the numbers `bed.volume` already is.
+    const corners = [
+      [0, 0, 0, w, 0, 0], [w, 0, 0, w, d, 0], [w, d, 0, 0, d, 0], [0, d, 0, 0, 0, 0],
+      [0, 0, h, w, 0, h], [w, 0, h, w, d, h], [w, d, h, 0, d, h], [0, d, h, 0, 0, h],
+      [0, 0, 0, 0, 0, h], [w, 0, 0, w, 0, h], [w, d, 0, w, d, h], [0, d, 0, 0, d, h],
+    ].flat();
+    edges.setAttribute("position", new THREE.BufferAttribute(new Float32Array(corners), 3));
+    const volume = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: VOLUME_EDGE }));
+    bedGroup.add(grid, volume);
+    const [x0 = 0, y0 = 0, z0 = 0, x1 = w, y1 = d, z1 = h] = bed.bounds;
+    return new THREE.Box3(new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1)).expandByPoint(ORIGIN);
   }
 
   /** Frame the work from the standing three-quarter view a maker holds a part at.
@@ -1264,7 +1504,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
    * first vertex regardless of which entries of the index were kept. */
   function foundBy(hit: THREE.Intersection): Found | null {
     const triangle = hit.face !== null && hit.face !== undefined ? Math.floor(hit.face.a / 3) : -1;
-    const body = bodies.find((one) => one.mesh === hit.object || one.cap === hit.object);
+    const body = bodies.find((one) => one.mesh === hit.object);
     if (body !== undefined) {
       const ref = refIn(body.refs, body.index, triangle) ?? body.part.ref;
       return { ref, part: body.part, context: null };
@@ -1302,11 +1542,14 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     // and a ghost's face is only the answer when no part is under the pointer at all.
     let behind: Found | null = null;
     for (const hit of caster.intersectObjects(parts.children, false)) {
+      // Nor does it know what is drawn: *On bed* hides a cut part and every context body, and
+      // what is not drawn is not under the pointer.
+      if (!hit.object.visible) continue;
       // The raycaster knows nothing of clipping planes - it would happily hand back a
       // triangle the section has clipped away, since that clip only ever happened in the
       // fragment shader. So a section on filters the same way it paints: a hit on the wrong
       // side of the plane is not under the pointer at all.
-      if (section !== null && clipPlane.distanceToPoint(hit.point) < 0) continue;
+      if (view.localClippingEnabled && clipPlane.distanceToPoint(hit.point) < 0) continue;
       const found = foundBy(hit);
       if (found === null) continue;
       // Belt and braces beside `applyHidden`'s own index rebuild, which is what actually
@@ -1440,6 +1683,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       note.textContent = text;
     },
     detect,
+    mode: applyMode,
     section: applySection,
     colourFaces(on) {
       colouring = on;

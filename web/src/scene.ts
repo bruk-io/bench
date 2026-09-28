@@ -67,17 +67,38 @@ export interface LetteringView {
   readonly corners: readonly number[];
 }
 
-/** The floor under the work: its width, how many cells across, and its middle `x, y`. */
-export interface GridView {
-  readonly size: number;
-  readonly divisions: number;
-  readonly centre: readonly number[];
-}
-
-/** Where the bodies stand: the box they fill, `x0, y0, z0, x1, y1, z1`, and the floor. */
+/** Where the bodies stand, assembled: the box they fill, `x0, y0, z0, x1, y1, z1`. No floor -
+ * an assembly has no bed; the one floor a scene draws is the bed's. */
 export interface StageView {
   readonly bounds: readonly number[];
-  readonly grid: GridView;
+}
+
+/** Who chose the printer: the script, through the volume its `check_fits` asked about, or the
+ * host, because the script named none. */
+export type PrinterSaid = "script" | "host";
+
+/** The printer's bed *On bed* lays the printed parts on: its name, who chose it, its volume
+ * `w, d, h` with its corner at the origin, the box it and every part laid on it fill (what *On
+ * bed* frames), and its grid - six numbers per line, both ends. */
+export interface BedView {
+  /** The machine's name, or `null` for a volume a script asked about that has none. */
+  readonly printer: string | null;
+  readonly said: PrinterSaid;
+  readonly volume: readonly number[];
+  readonly bounds: readonly number[];
+  readonly floor: readonly number[];
+}
+
+/** How a printed part prints, worked out in Python: `up` in its own coordinates, the face it
+ * stands on, whether it fits the bed (`null` with no bed to ask) and why not, and `placement` -
+ * the rigid move, three rows of a 4x4 matrix, that lays its drawn body on the bed where its STL
+ * has it; `null` without a body or a bed. The view applies it and works nothing out. */
+export interface PrintingView {
+  readonly up: readonly [number, number, number];
+  readonly bed_face: string | null;
+  readonly fits: boolean | null;
+  readonly over: string | null;
+  readonly placement: readonly number[] | null;
 }
 
 export type Severity = "error" | "warning" | "unchecked";
@@ -111,6 +132,10 @@ export interface PartView {
    * and neither does a round face with no `around=` to take a tangent at, which is what tells
    * *Insert fit* a pick cannot be framed. */
   readonly frames: Readonly<Record<string, FrameView>>;
+  /** Every named face of `mesh` and its area in mm², summed in Python. */
+  readonly areas: Readonly<Record<string, number>>;
+  /** How a printed part prints; `null` for a part that is not printed. */
+  readonly printing: PrintingView | null;
 }
 
 /** A body the script showed for context - `context(pipe, label="pipe")` - drawn where it was
@@ -124,8 +149,8 @@ export interface ContextView {
 }
 
 /** What a run amounts to, counted in Python so the app only words it: what was made and
- * nested, what the checks found and the line of the first error, and how many parts have a
- * body to draw and how many do not. */
+ * nested, what the checks found and the line of the first error, how many parts have a body
+ * to draw and how many do not, and how many are printed. */
 export interface SummaryView {
   readonly parts: number;
   readonly sheets: number;
@@ -134,6 +159,8 @@ export interface SummaryView {
   readonly error_line: number | null;
   readonly solid: number;
   readonly unbuilt: number;
+  /** How many parts are printed - the ones *On bed* lays. */
+  readonly printed: number;
 }
 
 /** One nested sheet: its cut file's SVG, and the same drawing with lines wide enough to see
@@ -173,6 +200,8 @@ export interface OkScene {
   /** Every body the script showed for context, in the order it said them - drawn translucent
    * beside the parts and, like `reference`, never a part and never exported. */
   readonly context: readonly ContextView[];
+  /** The printer *On bed* lays the printed parts on, or `null` when nothing named one. */
+  readonly bed: BedView | null;
 }
 
 export interface ErrorScene {
@@ -235,7 +264,7 @@ function framesProblem(value: unknown, where: string): string | null {
 /** A buffer's number in the list that came with the JSON. */
 const isSlot = (value: unknown): value is number => Number.isInteger(value) && Number(value) >= 0;
 
-const SUMMARY_COUNTS = ["parts", "sheets", "errors", "warnings", "solid", "unbuilt"] as const;
+const SUMMARY_COUNTS = ["parts", "sheets", "errors", "warnings", "solid", "unbuilt", "printed"] as const;
 
 /** The first thing wrong with what a run amounts to, or `null`. */
 function summaryProblem(value: unknown): string | null {
@@ -265,12 +294,46 @@ function listsProblem(value: unknown, where: string, first: "positions" | "segme
 function stageProblem(value: unknown): string | null {
   if (!isObject(value)) return "stage is not an object";
   if (!isNumbers(value["bounds"], 6)) return "stage.bounds is not six numbers";
-  const floor = value["grid"];
-  if (!isObject(floor)) return "stage.grid is not an object";
-  if (!isNumber(floor["size"]) || !isNumber(floor["divisions"])) {
-    return "stage.grid has no numeric size and divisions";
+  return null;
+}
+
+/** The first thing wrong with the printer's bed, or `null` - a scene with none is not one. */
+function bedProblem(value: unknown): string | null {
+  if (value === null) return null;
+  if (!isObject(value)) return "bed is not an object or null";
+  if (!isOptionalText(value["printer"])) return "bed.printer is not a string or null";
+  if (value["said"] !== "script" && value["said"] !== "host") return 'bed.said is not "script" or "host"';
+  if (!isNumbers(value["volume"], 3)) return "bed.volume is not three numbers";
+  if (!isNumbers(value["bounds"], 6)) return "bed.bounds is not six numbers";
+  const floor = value["floor"];
+  if (!isList(floor) || floor.length % 6 !== 0 || !floor.every(isNumber)) {
+    return "bed.floor is not six numbers per line";
   }
-  if (!isNumbers(floor["centre"], 2)) return "stage.grid.centre is not two numbers";
+  return null;
+}
+
+/** The first thing wrong with how a part prints, or `null`. */
+function printingProblem(value: unknown, where: string): string | null {
+  if (value === null) return null;
+  if (!isObject(value)) return `${where} is not an object or null`;
+  if (!isNumbers(value["up"], 3)) return `${where}.up is not three numbers`;
+  if (!isOptionalText(value["bed_face"])) return `${where}.bed_face is not a string or null`;
+  if (value["fits"] !== null && typeof value["fits"] !== "boolean") {
+    return `${where}.fits is not a boolean or null`;
+  }
+  if (!isOptionalText(value["over"])) return `${where}.over is not a string or null`;
+  if (value["placement"] !== null && !isNumbers(value["placement"], 12)) {
+    return `${where}.placement is not twelve numbers or null`;
+  }
+  return null;
+}
+
+/** The first thing wrong with a part's face areas, or `null`. */
+function areasProblem(value: unknown, where: string): string | null {
+  if (!isObject(value)) return `${where} is not an object`;
+  for (const [ref, area] of Object.entries(value)) {
+    if (!isNumber(area)) return `${where}[${JSON.stringify(ref)}] is not a number`;
+  }
   return null;
 }
 
@@ -309,7 +372,9 @@ function partProblem(value: unknown, at: number): string | null {
   return (
     listsProblem(value["mesh"], `${where}.mesh`, "positions") ??
     listsProblem(value["marks"], `${where}.marks`, "segments") ??
-    framesProblem(value["frames"], `${where}.frames`)
+    framesProblem(value["frames"], `${where}.frames`) ??
+    areasProblem(value["areas"], `${where}.areas`) ??
+    printingProblem(value["printing"], `${where}.printing`)
   );
 }
 
@@ -399,7 +464,9 @@ function okProblem(value: unknown): string | null {
     const problem = contextProblem(one, at);
     if (problem !== null) return problem;
   }
-  return null;
+  // Required and nullable, the same as `reference`: `null` is a scene no printer was named for.
+  if (!("bed" in value)) return "bed is absent";
+  return bedProblem(value["bed"]);
 }
 
 /** The first thing wrong with a scene that claims `ok: false`, or `null`. */
