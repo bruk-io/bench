@@ -21,6 +21,7 @@ function wire(part: Record<string, unknown> = {}): Record<string, unknown> {
         lettering: [{ text: "1", ref: "plate/label", corners: Array.from({ length: 12 }, () => 0) }],
         frames: {},
         areas: { "plate/hole": 12.5 },
+        sights: { "plate/hole": { bounds: [0, 0, 0, 10, 10, 3], eye: [0, 0, 1] } },
         printing: null,
         ...part,
       },
@@ -187,6 +188,18 @@ describe("received, how a printed part prints and the bed it is laid on", () => 
   it("refuses an area that is not a number", () => {
     expect(problemOf(wire({ areas: { "plate/hole": "big" } }))).toBe(
       'parts[0] (plate).areas["plate/hole"] is not a number',
+    );
+  });
+
+  it("refuses a sight whose eye is not three numbers", () => {
+    expect(problemOf(wire({ sights: { "plate/hole": { bounds: [0, 0, 0, 10, 10, 3], eye: [0, 1] } } }))).toBe(
+      'parts[0] (plate).sights["plate/hole"].eye is not three numbers',
+    );
+  });
+
+  it("refuses a sight whose box is not six numbers", () => {
+    expect(problemOf(wire({ sights: { plate: { bounds: [0, 0, 0], eye: [0, 0, 1] } } }))).toBe(
+      'parts[0] (plate).sights["plate"].bounds is not six numbers',
     );
   });
 

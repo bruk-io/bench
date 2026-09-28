@@ -68,17 +68,13 @@ CHANGED = """(before) => {
 DRAWS = "() => performance.getEntriesByName('bench.view.geometry').length"
 """How many scenes the view has drawn - one ``bench.view.geometry`` span per run that worked."""
 
-TURN_A_KNOB = """([name, value]) => {
-    document.querySelector('#inspector').dispatchEvent(new CustomEvent('param-change', {
-        bubbles: true, composed: true, detail: { name, value },
-    }));
-}"""
-"""A knob turned, as the knob itself says so: its own ``param-change``, from the inspector.
+SEEN_FROM_UNDER = "tote/socket-1"
+"""A place of the tote's overhang warning on its underside: a socket sunk into the floor,
+whose ceiling faces down - out of sight of the view's standing three-quarter view."""
 
-The knobs are the project's in the inspector today (task-88), so a person cannot turn one with a
-part selected - reaching them from a part is task-94's. The event is the one a knob sends, and
-it goes through the page's own handler, override table and debounced run; only the click on a
-knob that is not on screen is skipped."""
+THROUGH_THE_WALL = "tote/grip-left/top"
+"""Another: the top of the hand-hold cut through the tote's left wall, which faces down into
+the slot - and the floor is between it and anywhere straight underneath."""
 
 
 # ---- the page -------------------------------------------------------------------------
@@ -192,9 +188,13 @@ def _script_drawers(page: Page, was: str, now: str) -> None:
 
 
 def _knob_drawers(page: Page, value: int) -> None:
-    """Turn the cabinet's ``drawers`` knob and wait for the run that makes something else."""
+    """Turn the cabinet's ``drawers`` knob - the real one, in the inspector over whatever is
+    selected (task-94), unfolded first when a selection has it folded - and wait for the run
+    that makes something else."""
     before = _drawn(page)
-    page.evaluate(TURN_A_KNOB, ["drawers", value])
+    if page.locator("#knobs-fold").get_attribute("aria-expanded") != "true":
+        page.click("#knobs-fold")
+    page.fill("#param-drawers", str(value))
     page.wait_for_function(CHANGED, arg=before, timeout=BOOT_MS)
     _settled(page)
 
@@ -250,13 +250,17 @@ def test_a_part_stays_selected_across_a_knob_and_goes_when_the_knob_retires_it(
     page: Page,
 ) -> None:
     """The same rule for a run a knob made: the part stays while it is made, and the project
-    is the subject once it is not (see ``TURN_A_KNOB`` on why the knob is not clicked)."""
+    is the subject once it is not. The knob is the real one, turned with the part selected -
+    what task-94 made reachable - and the knobs stay open over the part across the run."""
     _part(page, KEPT)
     _knob_drawers(page, 2)
     try:
         assert _part_crumb(page) == KEPT, "a knob's run put the part down"
         assert not _on_project(page)
         assert _selected(page) == KEPT
+        assert _hash(page) == f"#part={KEPT}"
+        assert page.locator("#params").is_visible(), "the knobs folded away under the part"
+        assert page.locator("#param-drawers").input_value() == "2"
     finally:
         _knob_drawers(page, 6)
 
@@ -398,6 +402,81 @@ def test_the_count_selects_the_worst_part_and_lights_its_first_place(
     _settled(page)
     assert _part_crumb(page) == "tote"
     assert _selected(page) == first, f"a re-run left {_selected(page)!r} lit"
+
+
+@pytest.mark.e2e
+def test_a_place_is_framed_an_underside_seen_from_underneath(page: Page, screenshots: Path) -> None:
+    """task-94 AC#2: a click on a place of a finding turns the camera and zooms to it, from
+    where Python said to stand - under the tote for a socket sunk into its floor, which the
+    standing view looks down on from above - and *Fit* puts it back over the whole work. Follows
+    the count's check above, on the same tote."""
+    _part(page, "tote")
+    pane = page.locator("#canvas3d")
+    page.click("#fit")
+    whole = float(pane.get_attribute("data-distance") or 0)
+    above = [float(one) for one in (pane.get_attribute("data-eye") or "").split(",")]
+    assert above[2] > 0, f"the standing view is not from above: {above}"
+
+    warning = page.locator('bench-violation[severity="warning"]')
+    warning.locator(f'.place[data-ref="{SEEN_FROM_UNDER}"]').click()
+    page.wait_for_function(
+        "(ref) => document.querySelector('#canvas3d')?.dataset.framed === ref",
+        arg=SEEN_FROM_UNDER,
+        timeout=5_000,
+    )
+    assert _selected(page) == SEEN_FROM_UNDER
+    eye = [float(one) for one in (pane.get_attribute("data-eye") or "").split(",")]
+    assert eye[2] < -0.5, f"the camera is not under the socket: looking from {eye}"
+    near = float(pane.get_attribute("data-distance") or 0)
+    assert near < whole / 2, f"the camera did not come in: {near} mm against {whole} mm"
+    assert _part_crumb(page) == "tote", "framing a place left the part"
+    page.wait_for_timeout(300)
+    page.screenshot(path=str(screenshots / "task-94-place-framed-from-under.png"))
+
+    # Framed, the camera stays put across a run, as any camera a person moved does.
+    before = page.evaluate(DRAWS)
+    page.click("#tab-script")
+    page.locator(".cm-content").click()
+    page.keyboard.press("ControlOrMeta+End")
+    page.keyboard.type("\n# framed\n")
+    page.wait_for_function(f"(before) => ({DRAWS})() > before", arg=before, timeout=BOOT_MS)
+    _settled(page)
+    assert float(pane.get_attribute("data-distance") or 0) == pytest.approx(near, abs=0.5)
+
+    # The top of the hand-hold cut through the left wall faces down too, and is looked at from
+    # outside that wall - not from under the floor, through the whole tote.
+    warning.locator(f'.place[data-ref="{THROUGH_THE_WALL}"]').click()
+    page.wait_for_function(
+        "(ref) => document.querySelector('#canvas3d')?.dataset.framed === ref",
+        arg=THROUGH_THE_WALL,
+        timeout=5_000,
+    )
+    eye = [float(one) for one in (pane.get_attribute("data-eye") or "").split(",")]
+    assert eye[0] < -0.3 and eye[2] < 0, f"the grip is not seen from outside its wall: {eye}"
+    page.wait_for_timeout(300)
+    page.screenshot(path=str(screenshots / "task-94-place-framed-through-the-wall.png"))
+
+    page.click("#fit")
+    assert pane.get_attribute("data-framed") == ""
+    assert float(pane.get_attribute("data-distance") or 0) == pytest.approx(whole, abs=0.5)
+
+    # *On bed* the tote is laid where it prints, and a place is framed there, by the placement
+    # the body is drawn with: the socket is still looked at from under the bed.
+    page.locator("#view-modes [data-mode='bed']").click()
+    page.wait_for_function("() => document.querySelector('#canvas3d')?.dataset.mode === 'bed'")
+    try:
+        warning.locator(f'.place[data-ref="{SEEN_FROM_UNDER}"]').click()
+        page.wait_for_function(
+            "(ref) => document.querySelector('#canvas3d')?.dataset.framed === ref",
+            arg=SEEN_FROM_UNDER,
+            timeout=5_000,
+        )
+        eye = [float(one) for one in (pane.get_attribute("data-eye") or "").split(",")]
+        assert eye[2] < -0.5, f"on the bed the socket is looked at from {eye}"
+        page.wait_for_timeout(300)
+        page.screenshot(path=str(screenshots / "task-94-place-framed-on-bed.png"))
+    finally:
+        page.locator("#view-modes [data-mode='assembled']").click()
 
 
 @pytest.mark.e2e

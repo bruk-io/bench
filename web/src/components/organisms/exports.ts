@@ -178,7 +178,7 @@ export class BenchExports extends LitElement {
   private row(row: Row, sheet: boolean, slicer = false) {
     const opening = slicer ? this.opening[row.name] : undefined;
     return html`
-      <bench-file-row name=${row.name} meta=${row.meta}>
+      <bench-file-row name=${row.name} meta=${row.meta} ?stacked=${sheet}>
         ${sheet && row.preview !== undefined
           ? html`<button
               slot="preview"

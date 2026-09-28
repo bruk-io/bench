@@ -21,6 +21,7 @@ const part = (ref: string, fields: Partial<PartView> = {}): PartView => ({
   lettering: [],
   frames: {},
   areas: {},
+  sights: {},
   printing: null,
   ...fields,
 });
@@ -249,11 +250,12 @@ describe("bench-inspector, with nothing selected: the project", () => {
 describe("bench-inspector, a part", () => {
   const TOTE_SUBJECT: Fields = { subject: { kind: "part", ref: "tote" }, lit: "tote", insertable: true };
 
-  it("shows its findings, how it is made, its faces and its own export", async () => {
+  it("shows the knobs folded, its findings, how it is made, its faces and its own export", async () => {
     const inspector = await mounted(TOTE_SUBJECT);
-    expect(sections(inspector)).toEqual(["part-findings", "prints", "faces", "export"]);
+    expect(sections(inspector)).toEqual(["knobs", "part-findings", "prints", "faces", "export"]);
     expect(inside(inspector, "#crumb-part")?.textContent.trim()).toBe("tote");
-    expect(inside(inspector, "#export-head")?.textContent).toBe("Export this part");
+    expect(inside(inspector, "#export-head")?.textContent.trim()).toBe("Export this part");
+    expect(inside(inspector, "#knobs-fold")?.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("lists each finding's places, and asks for one to be lit rather than leaving the part", async () => {
@@ -280,9 +282,18 @@ describe("bench-inspector, a part", () => {
     expect(inside(inspector, "#crumb-part")?.getAttribute("aria-current")).toBe("page");
   });
 
-  it("says so when nothing was reported about the part", async () => {
+  it("says so in how it is made when nothing was reported about the part, with no empty findings", async () => {
     const inspector = await mounted({ subject: { kind: "part", ref: "panel" } });
-    expect(inside(inspector, "#no-problems")?.textContent).toContain("Nothing was reported");
+    expect(sections(inspector)).not.toContain("part-findings");
+    expect(inside(inspector, "#prints #no-problems")?.textContent).toContain("nothing was reported");
+    expect(inside<HTMLElement>(inspector, "#prints .badge")?.dataset["standing"]).toBe("ok");
+  });
+
+  it("draws no faces for a part with no face of its own, and no export for a part with no file", async () => {
+    const bare = part("bare", { process: "laser", stock: { thickness: 3, material: "ply", kerf: 0 } });
+    const inspector = await mounted({ subject: { kind: "part", ref: "bare" }, parts: [bare], refs: ["bare"] });
+    expect(sections(inspector)).toEqual(["knobs", "prints"]);
+    expect(inside(inspector, "#export-reach")).toBeNull();
   });
 
   it("draws its faces as a tree of its own refs and nobody else's", async () => {
@@ -355,7 +366,7 @@ describe("bench-inspector, a face", () => {
 
   it("shows its ref, its part, its normal and the findings naming it - and no export", async () => {
     const inspector = await mounted(FLOOR);
-    expect(sections(inspector)).toEqual(["face", "face-findings", "faces"]);
+    expect(sections(inspector)).toEqual(["knobs", "face", "face-findings", "faces"]);
     const said = inside(inspector, "#face dl")?.textContent ?? "";
     expect(said).toContain("tote/floor");
     expect(said).toContain("0.000, 0.000, 1.000");
@@ -363,6 +374,12 @@ describe("bench-inspector, a face", () => {
       violations: readonly ViolationView[];
     } | null;
     expect(list?.violations).toEqual([OVERHANGS]);
+  });
+
+  it("draws no findings for a face no check named", async () => {
+    const inspector = await mounted({ subject: { kind: "face", ref: "tote/wall-0" }, lit: "tote/wall-0" });
+    expect(sections(inspector)).toEqual(["knobs", "face", "faces"]);
+    expect(inside(inspector, ".body")?.textContent).not.toContain("No check named");
   });
 
   it("leaves out a normal the scene does not carry", async () => {
@@ -416,7 +433,7 @@ describe("bench-inspector, a reference mesh", () => {
       activeReference: "foot.stl",
       tools: TOOLS,
     });
-    expect(sections(inspector)).toEqual(["reference-tools"]);
+    expect(sections(inspector)).toEqual(["knobs", "reference-tools"]);
     const tools = inside(inspector, "bench-reference-tools");
     await (tools as unknown as { updateComplete: Promise<unknown> } | null)?.updateComplete;
     expect(tools?.shadowRoot?.querySelector("#reference-name")?.textContent).toBe("foot.stl · placed");
@@ -431,6 +448,81 @@ describe("bench-inspector, a reference mesh", () => {
     });
     expect(inside(inspector, "bench-reference-tools")).toBeNull();
     expect(inside(inspector, "#reference-tools")?.textContent).toContain("not on the view");
+  });
+});
+
+describe("bench-inspector, the knobs over every subject (task-94)", () => {
+  const fold = (inspector: BenchInspector): HTMLButtonElement | null =>
+    inside<HTMLButtonElement>(inspector, "#knobs-fold");
+  const open = (inspector: BenchInspector): boolean => !(inside(inspector, "bench-params")?.hidden ?? true);
+
+  it("opens on the project and folds on a part, a face and a reference, whose own sections lead", async () => {
+    const inspector = await mounted();
+    expect(open(inspector)).toBe(true);
+    expect(fold(inspector)?.getAttribute("aria-expanded")).toBe("true");
+    for (const subject of [
+      { kind: "part", ref: "tote" },
+      { kind: "face", ref: "tote/floor" },
+      { kind: "reference", file: "foot.stl" },
+    ] as const) {
+      await given(inspector, { subject });
+      expect(sections(inspector)[0]).toBe("knobs");
+      expect(open(inspector)).toBe(false);
+      expect(fold(inspector)?.getAttribute("aria-expanded")).toBe("false");
+    }
+  });
+
+  it("unfolds on a part, and stays unfolded as the selection moves to one of its faces", async () => {
+    const inspector = await mounted({ subject: { kind: "part", ref: "tote" }, lit: "tote" });
+    fold(inspector)?.click();
+    await inspector.updateComplete;
+    expect(open(inspector)).toBe(true);
+    await given(inspector, { subject: { kind: "face", ref: "tote/floor" }, lit: "tote/floor" });
+    expect(open(inspector)).toBe(true);
+    // The project keeps its own: folding it there is not folding it on a part.
+    await given(inspector, { subject: { kind: "project" }, lit: null });
+    fold(inspector)?.click();
+    await inspector.updateComplete;
+    expect(open(inspector)).toBe(false);
+    await given(inspector, { subject: { kind: "part", ref: "lid" }, lit: "lid" });
+    expect(open(inspector)).toBe(true);
+  });
+
+  it("is one element across every subject, so a knob being typed in survives the selection moving", async () => {
+    const inspector = await mounted();
+    const before = inside(inspector, "bench-params");
+    await given(inspector, { subject: { kind: "part", ref: "tote" }, lit: "tote" });
+    await given(inspector, { subject: { kind: "face", ref: "tote/floor" }, lit: "tote/floor" });
+    expect(inside(inspector, "bench-params")).toBe(before);
+  });
+
+  it("hands a turned knob up from a part, and lets it be reset there", async () => {
+    const inspector = await mounted({ subject: { kind: "part", ref: "tote" }, overrides: { wall: 3 } });
+    expect(caught(inspector, "params-reset", () => inside(inspector, "#reset")?.click())).toHaveLength(1);
+  });
+
+  it("is not drawn before a run has declared any, nor for a script that declares none", async () => {
+    const before = await mounted({ params: null });
+    expect(sections(before)).not.toContain("knobs");
+    const none = await mounted({ params: [] });
+    expect(sections(none)).not.toContain("knobs");
+  });
+});
+
+describe("bench-inspector, no section with nothing in it (task-94)", () => {
+  it("draws no parts and no export before anything has run, and says nothing has", async () => {
+    const inspector = await mounted({ parts: [], refs: [], violations: [], sheets: [], files: {}, params: null });
+    expect(sections(inspector)).toEqual([]);
+    expect(inside(inspector, "#nothing-ran")?.textContent).toContain("Nothing has run yet");
+  });
+
+  it("keeps the export's heading at the foot of the column, a click away from the export", async () => {
+    const inspector = await mounted();
+    const head = inside(inspector, ".export-head");
+    expect(head === null ? "" : getComputedStyle(head).position).toBe("sticky");
+    expect(head?.nextElementSibling?.id).toBe("export");
+    expect(inside(inspector, "#export-reach")?.closest("h2")?.id).toBe("export-head");
+    expect(inside(inspector, ".export-head .count")?.textContent).toBe("4 files");
   });
 });
 

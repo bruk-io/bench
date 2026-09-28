@@ -69,7 +69,9 @@ def _page(browser: Browser, root: Path) -> Iterator[Page]:
         page = context.new_page()
         page.goto(url)
         _drawn(page)
-        page.click("#rail-files")
+        # Beside the work at this width already: there is no rail to ask for them any more,
+        # and the header's files button would fold them (task-94).
+        page.wait_for_selector("#sidebar", state="visible")
         try:
             yield page
         finally:

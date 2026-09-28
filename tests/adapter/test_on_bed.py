@@ -10,6 +10,7 @@ the view marks is the one ``check_fits`` answers. Everything is read off the sce
 files by hand, never by re-running the code under test.
 """
 
+import math
 import struct
 from base64 import b64decode
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Any
 import pytest
 
 from bench.scene import OkScene, PartView
+from bench.views import STANDING
 from tools import stack
 
 pytestmark = pytest.mark.adapter
@@ -30,6 +32,9 @@ _CASES = Path(__file__).with_name("bed_cases.py")
 
 _TINY = 1e-3
 """Float noise on a single-precision mesh vertex, in millimetres."""
+
+_EYE = 1e-4
+"""How near a sight's eye is to exact: it is sent to four decimals."""
 
 PROGRAM = """\
 import json
@@ -221,3 +226,74 @@ def test_a_faces_area_is_what_its_triangles_cover(measured: dict[str, Any]) -> N
     assert sorted(areas.values()) == pytest.approx(
         sorted([600.0, 600.0, 150.0, 150.0, 100.0, 100.0]), abs=_TINY
     )
+
+
+# ---- where to stand to see a place (task-94) ----------------------------------------------
+
+
+def _drawn_box(part: PartView, named: str) -> list[float]:
+    """The box the drawn corners of every triangle on ``named`` or under it fill, read off the
+    mesh by hand: ``ref_index`` counts a triangle's ref from one, and nothing is zero."""
+    mesh = part["mesh"]
+    assert mesh is not None
+    p, refs = mesh["positions"], mesh["refs"]
+    corners = [
+        (p[9 * t + 3 * k], p[9 * t + 3 * k + 1], p[9 * t + 3 * k + 2])
+        for t, at in enumerate(mesh["ref_index"])
+        if at != 0 and (refs[at - 1] == named or refs[at - 1].startswith(f"{named}/"))
+        for k in range(3)
+    ]
+    assert corners, named
+    return [
+        *(min(c[i] for c in corners) for i in range(3)),
+        *(max(c[i] for c in corners) for i in range(3)),
+    ]
+
+
+def test_a_face_is_seen_from_the_way_it_faces_an_underside_from_underneath(
+    measured: dict[str, Any],
+) -> None:
+    """AC#2: the flat block's top is looked at from above and its bottom from below, each leaning
+    toward the view's standing corner rather than square on, over the box its own triangles
+    fill where the stage drew them."""
+    flat = _part(_ok(measured["laid_out"]), "flat")
+    top, bottom = flat["sights"]["flat/top"], flat["sights"]["flat/bottom"]
+    assert top["eye"][2] > 0.5
+    assert bottom["eye"][2] < -0.5
+    for sight in (top, bottom):
+        assert math.hypot(*sight["eye"]) == pytest.approx(1.0, abs=_EYE)
+        assert sight["eye"][0] > 0.0 and sight["eye"][1] < 0.0, (
+            "not leaning toward the standing view"
+        )
+    for ref in ("flat/top", "flat/bottom"):
+        assert flat["sights"][ref]["bounds"] == pytest.approx(_drawn_box(flat, ref), abs=_TINY)
+
+
+def test_a_whole_part_faces_every_way_and_is_seen_from_the_standing_view(
+    measured: dict[str, Any],
+) -> None:
+    """A closed body's facings cancel out, so it is looked at the way *Fit* looks at the work,
+    over the box every triangle of it fills."""
+    flat = _part(_ok(measured["laid_out"]), "flat")
+    whole = flat["sights"]["flat"]
+    reach = math.hypot(*STANDING)
+    assert whole["eye"] == pytest.approx([one / reach for one in STANDING], abs=_EYE)
+    assert whole["bounds"] == pytest.approx(_drawn_box(flat, "flat"), abs=_TINY)
+
+
+def test_every_named_place_has_a_sight_and_none_looks_straight_up_or_down(
+    measured: dict[str, Any],
+) -> None:
+    """Every face a mesh names, and every step of its ref, can be framed - and no eye is so
+    near vertical that a camera whose up is Z could not turn to it."""
+    for case in ("laid_out", "posed"):
+        for part in _ok(measured[case])["parts"]:
+            mesh = part["mesh"]
+            assert mesh is not None
+            for ref in mesh["refs"]:
+                steps = ref.split("/")
+                for depth in range(1, len(steps) + 1):
+                    assert "/".join(steps[:depth]) in part["sights"], ref
+            for ref, sight in part["sights"].items():
+                ex, ey, ez = sight["eye"]
+                assert math.hypot(ex, ey) >= 0.1 * math.hypot(ex, ey, ez), ref

@@ -245,7 +245,8 @@ def test_the_first_to_open_writes_and_the_second_reads_is_told_why_and_keeps_not
     with _hosted(root) as url:
         desk = _opened(browser, url)
         _writer(desk)
-        assert desk.locator("#standing").is_hidden()
+        # The lease has one home, the header's chip (task-94): the status bar says nothing of it.
+        assert desk.locator("#standing").count() == 0
         held = _lease(url)["holder"]
         assert isinstance(held, dict), "the desk opened the project and holds nothing"
 
@@ -268,7 +269,9 @@ def test_the_first_to_open_writes_and_the_second_reads_is_told_why_and_keeps_not
         assert tablet.locator("#lease-take").is_visible()
         _shot(tablet, "lease-chip-open.png")
         _untold(tablet)
-        assert tablet.locator("#standing").inner_text() == "read-only"
+        # Said once, in the header's chip - the status bar keeps no copy of it (task-94).
+        assert tablet.locator("#lease-badge").is_visible()
+        assert "read-only" not in tablet.locator("#statusbar").inner_text()
         # And nothing claims its work was saved to the host: it has none.
         assert tablet.locator("#reach").is_hidden()
         # It runs: the view is the project's own two plates.
@@ -283,7 +286,7 @@ def test_the_first_to_open_writes_and_the_second_reads_is_told_why_and_keeps_not
         assert "a reader typed this" not in str(tablet.evaluate(EDITOR_TEXT))
 
         # ... nor renamed or deleted, and it can still be exported.
-        tablet.click("#rail-files")
+        assert tablet.locator("#sidebar").is_visible()
         # Its files are listed, and no row in the tree offers an action at all (task-48 AC#6).
         rows = tablet.locator("bench-explorer .file").all_inner_texts()
         assert [row.split()[0] for row in rows] == ["bench.toml", "plates.py"]
@@ -392,7 +395,7 @@ def test_a_lease_nobody_renews_lapses_and_the_reader_becomes_the_writer_by_itsel
         # Nothing is pressed from here on.
         _writer(page, timeout=15_000)
         _rendered(page)
-        assert page.locator("#standing").is_hidden()
+        assert page.locator("#lease").is_hidden()
         page.click("#crumb-project")
         page.fill("#param-n", "3")
         assert _eventually(lambda: _values(root), {"n": 3}) == {"n": 3}

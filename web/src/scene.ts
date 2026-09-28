@@ -50,6 +50,15 @@ export interface FrameView {
   readonly x: readonly [number, number, number];
 }
 
+/** Where to stand to see one named place of a body - a face, a node and every face under it,
+ * or the part itself - as Python worked it out (task-94): `bounds` the box its triangles fill on
+ * the stage, `x0, y0, z0, x1, y1, z1`, and `eye` the unit direction from the place out to where
+ * the camera stands - underneath, for an underside. The view only applies it. */
+export interface SightView {
+  readonly bounds: readonly [number, number, number, number, number, number];
+  readonly eye: readonly [number, number, number];
+}
+
 /** The wires engraved on a plate: `segments` is six numbers per line segment, both ends
  * already placed just clear of the top, and `ref_index` one number per segment, counted as a
  * mesh's are. */
@@ -137,6 +146,9 @@ export interface PartView {
   readonly frames: Readonly<Record<string, FrameView>>;
   /** Every named face of `mesh` and its area in mm², summed in Python. */
   readonly areas: Readonly<Record<string, number>>;
+  /** Where to stand to see every named place of `mesh`, under its own ref - its faces, every
+   * node above one, and the part itself; empty without a body. */
+  readonly sights: Readonly<Record<string, SightView>>;
   /** How a printed part prints; `null` for a part that is not printed. */
   readonly printing: PrintingView | null;
 }
@@ -343,6 +355,18 @@ function areasProblem(value: unknown, where: string): string | null {
   return null;
 }
 
+/** The first thing wrong with a part's sights, or `null`. */
+function sightsProblem(value: unknown, where: string): string | null {
+  if (!isObject(value)) return `${where} is not an object`;
+  for (const [ref, sight] of Object.entries(value)) {
+    const at = `${where}[${JSON.stringify(ref)}]`;
+    if (!isObject(sight)) return `${at} is not an object`;
+    if (!isNumbers(sight["bounds"], 6)) return `${at}.bounds is not six numbers`;
+    if (!isNumbers(sight["eye"], 3)) return `${at}.eye is not three numbers`;
+  }
+  return null;
+}
+
 /** The first thing wrong with one violation, or `null`. */
 function violationProblem(value: unknown, at: number): string | null {
   if (!isObject(value)) return `violations[${at}] is not an object`;
@@ -380,6 +404,7 @@ function partProblem(value: unknown, at: number): string | null {
     listsProblem(value["marks"], `${where}.marks`, "segments") ??
     framesProblem(value["frames"], `${where}.frames`) ??
     areasProblem(value["areas"], `${where}.areas`) ??
+    sightsProblem(value["sights"], `${where}.sights`) ??
     printingProblem(value["printing"], `${where}.printing`)
   );
 }
