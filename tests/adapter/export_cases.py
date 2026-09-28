@@ -9,6 +9,7 @@ nothing: every assertion is in the test module.
 
 from bench import run
 from bench.kernel import Kernel
+from bench.library.print import PRINTER
 
 MATED_UPSIDE_DOWN = """\
 from bench import *
@@ -57,12 +58,28 @@ faces named, and the ghost of a body round it, a hull, which names nothing under
 after its ``show`` so everything above is the very script it is appended to."""
 
 
+SPILLED = """\
+from bench import *
+from bench.library.print import PLA
+
+slabs = [part(f"slab-{n}", cuboid(70, 70, 5), Printed(PLA)) for n in range(3)]
+for one in slabs:
+    check_fits(one, Volume(100, 100, 50))
+show(slabs)
+"""
+"""Three slabs, each too wide to share a 100 mm plate with another: the first volume the
+script asks ``check_fits`` about is the bed they are laid on, so they take three plates."""
+
+
 def measured(kernel: Kernel, enclosure_source: str) -> dict[str, object]:
-    """The enclosure example, the upside-down mate - on its own, twice, and with context
-    bodies beside it - and a part with (and without) a real ``bed_face`` to read - all run
-    with ``kernel``."""
+    """The enclosure example - as the command line runs it, and as the app does, handed the
+    app's printer - the upside-down mate - on its own, twice, and with
+    context bodies beside it - a part with (and without) a real ``bed_face`` to read, and
+    slabs that take more than one plate - all run with ``kernel``."""
     return {
         "enclosure": run(enclosure_source, kernel=kernel),
+        "enclosure_on_bed": run(enclosure_source, kernel=kernel, printer=PRINTER),
+        "spilled": run(SPILLED, kernel=kernel),
         "mated": run(MATED_UPSIDE_DOWN, kernel=kernel),
         "mated_again": run(MATED_UPSIDE_DOWN, kernel=kernel),
         "mated_in_context": run(MATED_UPSIDE_DOWN + CONTEXT, kernel=kernel),

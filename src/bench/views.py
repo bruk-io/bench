@@ -146,7 +146,9 @@ def scene(
     printed part is laid down by the move its STL is written with -
     :func:`bench.export.laid_on_bed`, once, for both - put beside the others by
     :func:`bench.stage.on_bed`, and asked :func:`bench.checks.fits` against the volume. No
-    printer, and no part is laid anywhere and none is asked; the files are the same either way.
+    printer, and no part is laid anywhere and none is asked. The one thing the bed changes in
+    the files is where the 3MF's objects stand: each at its place beside the others on the
+    plates, the same place *On bed* draws it (:func:`_files`).
     """
     parts = tuple(placed.part for placed in assembly.parts)
     _unclashed(context, parts)
@@ -181,9 +183,9 @@ def scene(
         for part, body, one in zip(parts, bodies, laid, strict=True)
     )
     with timed(tracer, "bench.stage.bed"):
-        placements, laid_on = _bed(parts, laid, offsets, printer, said)
+        placements, laid_on, slots = _bed(parts, laid, offsets, printer, said)
     with timed(tracer, "bench.scene.files"):
-        files = _files(nested, parts, printed, extra, str(assembly.label))
+        files = _files(nested, parts, printed, slots, extra, str(assembly.label))
     around = tuple(_timed_build_context(one, kernel, tracer) for one in context)
     if context:
         drawn = any(offset is not None for offset in offsets)
@@ -334,9 +336,11 @@ def _bed(
     offsets: Sequence[Offset | None],
     printer: Printer | Volume | None,
     said: PrinterSaid,
-) -> tuple[tuple[PrintingView | None, ...], BedView | None]:
-    """How each part prints - ``None`` for a part that is not printed - and the bed they are
-    laid on, or ``None`` with no printer to lay them on.
+) -> tuple[tuple[PrintingView | None, ...], BedView | None, tuple[Offset | None, ...]]:
+    """How each part prints - ``None`` for a part that is not printed - the bed they are laid
+    on, or ``None`` with no printer to lay them on, and where each part's laid body goes on
+    that bed (:func:`bench.stage.on_bed`'s slots, ``None`` for a part laid nowhere) - one
+    answer, which the view's placements and the 3MF's items are both made from.
 
     A part's ``placement`` takes its body from where the stage drew it to where it lies on
     the bed in three steps, composed here once so the view only applies them: back off the
@@ -350,10 +354,14 @@ def _bed(
         for part in parts
     )
     if printer is None:
-        return tuple(
-            None if orient is None else _printing_view(part, orient, asked=False)
-            for part, orient in zip(parts, printing, strict=True)
-        ), None
+        return (
+            tuple(
+                None if orient is None else _printing_view(part, orient, asked=False)
+                for part, orient in zip(parts, printing, strict=True)
+            ),
+            None,
+            (None,) * len(parts),
+        )
     volume = printer.volume if isinstance(printer, Printer) else printer
     boxes = tuple(
         None if one is None or orient is None else extent(one.mesh)
@@ -370,7 +378,7 @@ def _bed(
             move = translation(Vector(*slot)) @ one.pose @ translation(-Vector(*offset))
             placement = [value for row in move.rows for value in row]
         views.append(_printing_view(part, orient, fits(part, volume), placement=placement))
-    return tuple(views), BedView(
+    bed = BedView(
         printer=printer.name if isinstance(printer, Printer) else None,
         said=said,
         volume=[volume.w, volume.d, volume.h],
@@ -379,6 +387,7 @@ def _bed(
         floor=floor(volume, plates),
         edges=edges(volume, plates),
     )
+    return tuple(views), bed, slots
 
 
 def _printing_view(
@@ -421,6 +430,7 @@ def _files(
     nested: tuple[tuple[SheetView, Sheet], ...],
     parts: tuple[Part, ...],
     printed: tuple[Mesh | None, ...],
+    slots: tuple[Offset | None, ...],
     extra: Mapping[str, str],
     name: str,
 ) -> dict[str, str]:
@@ -433,6 +443,17 @@ def _files(
     An STL is one nameless body, which is what a slicer wants when a part is printed on its
     own; the 3MF is the whole print job with every part named inside it, and is written only
     when there is a body to put in it.
+
+    ``slots`` is where :func:`_bed` put each part's laid body on the printer's plates, so the
+    3MF opens arranged the way *On bed* draws it - every object the very mesh its STL is,
+    placed by its build item (:func:`bench.export.three_mf`'s ``at``). A 3MF's build is one
+    plate: the core format has no word for a second, and the one slicer that does (Bambu's
+    ``model_settings.config``) is exactly the slicer's own settings this package never writes.
+    So a part :func:`bench.stage.on_bed` put on a further plate stands where the view draws
+    it, that plate's width and a gap to the right of the first - off the first plate, grouped
+    with the parts it shares its plate with and overlapping nothing - for the maker to move
+    onto a plate of the slicer's own. A part laid nowhere - no printer, or no way up to read -
+    has no ``transform`` and stands centred on the origin, as its STL does.
 
     A part whose shape is a :class:`~bench.topology.Solid` gets no ``part-*.svg`` at all,
     ordinary printed part or a part :func:`bench.checks.exportable` refuses alike:
@@ -455,14 +476,18 @@ def _files(
             case _:
                 assert_never(part.shape)
     built = tuple(
-        (str(part.label), body)
-        for part, body in zip(parts, printed, strict=True)
+        (str(part.label), body, slot)
+        for part, body, slot in zip(parts, printed, slots, strict=True)
         if body is not None
     )
-    for label, body in built:
+    for label, body, _ in built:
         files[f"{label}{STL}"] = base64.b64encode(stl(body)).decode("ascii")
     if built:
-        files[f"{name}{THREE_MF}"] = base64.b64encode(three_mf(built)).decode("ascii")
+        package = three_mf(
+            [(label, body) for label, body, _ in built],
+            [None if slot is None else Vector(*slot) for _, _, slot in built],
+        )
+        files[f"{name}{THREE_MF}"] = base64.b64encode(package).decode("ascii")
     return files
 
 

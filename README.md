@@ -312,9 +312,9 @@ and says in its own text what it could not do and why.
   `part_texts` turn topology into `SvgPath` and `SvgText` records that keep their
   refs; `part_svg`, `sheet_svg` and `sheet_dxf` write the files, in millimetres
   with the workpiece reading origin bottom-left. `stl(mesh)` is a binary STL and
-  `three_mf(objects)` a 3MF package - one object per part, `unit="millimeter"`, and no
-  slicer settings of anybody's. `as_printed(mesh, up, bed_along)` is the mesh a kernel
-  built - in the assembly's pose - turned to lie on the bed the way `up` says instead:
+  `three_mf(objects, at)` a 3MF package - one object per part, `unit="millimeter"`, each
+  build item moved to its place on the bed by `at`, and no slicer settings of anybody's.
+  `as_printed(mesh, up, bed_along)` is the mesh a kernel built - in the assembly's pose - turned to lie on the bed the way `up` says instead:
   rotated so `up` is +Z with `model.laid_down`, `bed_along` (a `bed_face`'s own X, when a
   part names one) settling the turn about it that leaves free, then moved so the lowest
   point is z = 0 and the footprint centred on the origin. `laid_down` is the one rule a

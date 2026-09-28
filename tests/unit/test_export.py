@@ -411,3 +411,32 @@ def test_an_objects_name_is_escaped_rather_than_breaking_the_document() -> None:
     archive = zipfile.ZipFile(io.BytesIO(three_mf((('a "&" <name>', _tetrahedron()),))))
     root = ET.fromstring(archive.read("3D/3dmodel.model"))
     assert root.findall(f".//{{{_MODEL_NS}}}object")[0].get("name") == 'a "&" <name>'
+
+
+def test_a_3mf_places_each_object_by_its_build_item_and_leaves_the_mesh_alone() -> None:
+    """``at`` is the move each build item carries - a 3 x 4 transform that only translates -
+    and the object's own vertices are the same numbers they are without it, so an object is
+    still exactly the mesh its STL is written from (task-86)."""
+    objects = (("a", _tetrahedron()), ("b", _tetrahedron()))
+    placed = ET.fromstring(
+        zipfile.ZipFile(io.BytesIO(three_mf(objects, [Vector(25, 40.5, 0), None]))).read(
+            "3D/3dmodel.model"
+        )
+    )
+    plain = ET.fromstring(zipfile.ZipFile(io.BytesIO(three_mf(objects))).read("3D/3dmodel.model"))
+    items = placed.findall(f".//{{{_MODEL_NS}}}item")
+    assert [one.get("transform") for one in items] == ["1 0 0 0 1 0 0 0 1 25 40.5 0", None]
+    assert [ET.tostring(one) for one in placed.findall(f".//{{{_MODEL_NS}}}object")] == [
+        ET.tostring(one) for one in plain.findall(f".//{{{_MODEL_NS}}}object")
+    ]
+
+
+def test_a_3mf_placed_nowhere_is_the_same_bytes_it_always_was() -> None:
+    """Nobody's place given, and nobody's place given one by one, are the same package."""
+    objects = (("a", _tetrahedron()), ("b", _tetrahedron()))
+    assert three_mf(objects, [None, None]) == three_mf(objects)
+
+
+def test_a_3mf_refuses_places_that_do_not_pair_with_its_objects() -> None:
+    with pytest.raises(ValueError, match="1 places for 2 objects"):
+        three_mf((("a", _tetrahedron()), ("b", _tetrahedron())), [Vector(1, 2, 0)])

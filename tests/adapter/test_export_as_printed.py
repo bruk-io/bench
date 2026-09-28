@@ -331,3 +331,128 @@ def test_the_stage_makes_room_for_the_context(measured: dict[str, Any]) -> None:
     assert shown[2] == pytest.approx(-10.0, abs=_TINY)
     assert (shown[3], shown[4]) == pytest.approx((60.0, 60.0), abs=_TINY)
     assert plain[2] == pytest.approx(0.0, abs=_TINY)
+
+
+# ---- the 3MF arranged on the printer's bed (task-86) ---------------------------------------
+
+
+class _Item(NamedTuple):
+    """One object of a 3MF where its build item puts it: its own box, and the item's move."""
+
+    box: _Box
+    moved: tuple[float, float, float]
+
+    def placed(self) -> _Box:
+        """The object's box where the item puts it on the bed."""
+        dx, dy, dz = self.moved
+        b = self.box
+        return _Box(b.x0 + dx, b.x1 + dx, b.y0 + dy, b.y1 + dy, b.z0 + dz, b.z1 + dz)
+
+
+def _items(data: bytes) -> dict[str, _Item]:
+    """Every object of a 3MF by name, with the translation its build item carries - read off
+    the XML by hand, the way a slicer reads it. A transform that turns anything is a failure
+    here: the objects are already laid down, so all an item may do is move one.
+    """
+    root = ET.fromstring(zipfile.ZipFile(BytesIO(data)).read("3D/3dmodel.model"))
+    objects = {
+        one.get("id"): (
+            one.get("name"),
+            [
+                (float(v.get("x", 0)), float(v.get("y", 0)), float(v.get("z", 0)))
+                for v in one.findall(f".//{{{_MODEL_NS}}}vertex")
+            ],
+        )
+        for one in root.findall(f".//{{{_MODEL_NS}}}object")
+    }
+    out: dict[str, _Item] = {}
+    for item in root.findall(f".//{{{_MODEL_NS}}}item"):
+        found = objects.get(item.get("objectid"))
+        assert found is not None, item.attrib
+        name, vertices = found
+        said = item.get("transform") or "1 0 0 0 1 0 0 0 1 0 0 0"
+        numbers = [float(n) for n in said.split()]
+        assert numbers[:9] == [1, 0, 0, 0, 1, 0, 0, 0, 1], f"{name} is turned, not only moved"
+        out[str(name)] = _Item(_bbox(vertices), (numbers[9], numbers[10], numbers[11]))
+    return out
+
+
+def _as_the_view_lays_it(part: Any) -> _Box:
+    """The box of ``part``'s drawn body once the scene's own ``placement`` has moved it onto
+    the bed - what *On bed* shows, and so what the 3MF has to agree with."""
+    rows = part["printing"]["placement"]
+    assert rows is not None, f"{part['label']} was laid nowhere"
+    r = [rows[0:4], rows[4:8], rows[8:12]]
+    positions = part["mesh"]["positions"]
+    corners: list[tuple[float, float, float]] = [
+        (
+            r[0][0] * x + r[0][1] * y + r[0][2] * z + r[0][3],
+            r[1][0] * x + r[1][1] * y + r[1][2] * z + r[1][3],
+            r[2][0] * x + r[2][1] * y + r[2][2] * z + r[2][3],
+        )
+        for x, y, z in zip(positions[0::3], positions[1::3], positions[2::3], strict=True)
+    ]
+    return _bbox(corners)
+
+
+def _close(a: _Box, b: _Box) -> bool:
+    return all(abs(p - q) < _TINY for p, q in zip(a, b, strict=True))
+
+
+def test_the_3mf_opens_arranged_the_way_on_bed_draws_it(measured: dict[str, Any]) -> None:
+    """AC #3: run as the app runs it, on the app's printer, every object of the enclosure's
+    3MF stands where the view's *On bed* lays the same part - one rule, not a second
+    arrangement - inside the build volume, overlapping nothing, and still the very mesh its
+    STL is: the item moves it, the object is untouched."""
+    scene = _ok(measured["enclosure_on_bed"])
+    bed = scene["bed"]
+    assert bed is not None
+    assert bed["plates"] == 1
+    w, d, h = bed["volume"]
+    items = _items(b64decode(scene["files"]["enclosure.3mf"]))
+    assert sorted(items) == ["box", "lid"]
+    for part in scene["parts"]:
+        one = items[part["label"]]
+        on_bed = one.placed()
+        assert _close(on_bed, _as_the_view_lays_it(part)), part["label"]
+        assert on_bed.x0 >= 0.0 and on_bed.x1 <= w
+        assert on_bed.y0 >= 0.0 and on_bed.y1 <= d
+        assert on_bed.z0 == pytest.approx(0.0, abs=_TINY) and on_bed.z1 <= h
+        written = b64decode(scene["files"][f"{part['label']}.stl"])
+        assert _close(one.box, _bbox(_stl_corners(written)))
+    lid, box = items["lid"].placed(), items["box"].placed()
+    assert lid.x1 <= box.x0 or box.x1 <= lid.x0 or lid.y1 <= box.y0 or box.y1 <= lid.y0
+
+
+def test_the_3mf_with_no_printer_to_lay_on_places_nothing(measured: dict[str, Any]) -> None:
+    """The command line runs a script with no printer, and the upside-down mate names none
+    through a ``check_fits`` either: no bed, so no item carries a move and every object stands
+    centred on the origin, as its STL does - the package it always was."""
+    scene = _ok(measured["mated"])
+    assert scene["bed"] is None
+    for one in _items(b64decode(scene["files"]["pair.3mf"])).values():
+        assert one.moved == (0.0, 0.0, 0.0)
+
+
+def test_parts_on_further_plates_stand_beside_the_first_grouped_as_the_view_draws_them(
+    measured: dict[str, Any],
+) -> None:
+    """A 3MF's build is one plate. Slabs that take three plates of a 100 mm bed: the first on
+    the bed, and each of the others beside it where *On bed* draws its plate - off the first
+    plate, clear of every other slab, each still where the view lays it."""
+    scene = _ok(measured["spilled"])
+    bed = scene["bed"]
+    assert bed is not None
+    assert bed["plates"] == 3
+    w, d, _ = bed["volume"]
+    names = sorted(name for name in scene["files"] if name.endswith(".3mf"))
+    assert len(names) == 1
+    items = _items(b64decode(scene["files"][names[0]]))
+    placed = [items[f"slab-{n}"].placed() for n in range(3)]
+    for part in scene["parts"]:
+        assert _close(items[part["label"]].placed(), _as_the_view_lays_it(part)), part["label"]
+    first, *rest = placed
+    assert first.x0 >= 0.0 and first.x1 <= w and first.y0 >= 0.0 and first.y1 <= d
+    for earlier, later in zip(placed, rest, strict=False):
+        assert later.x0 > earlier.x1
+        assert later.x0 > w
