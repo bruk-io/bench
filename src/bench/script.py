@@ -50,7 +50,7 @@ from collections.abc import Callable, Container, Iterable, Iterator, Mapping, Se
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field, is_dataclass, replace
 from types import FrameType, ModuleType
-from typing import NamedTuple, TypeIs, assert_never
+from typing import NamedTuple, TypedDict, TypeIs, assert_never
 
 from . import views
 from .checks import (
@@ -79,6 +79,7 @@ from .model import (
     Orient,
     Part,
     Placed,
+    Printer,
     Ref,
     Volume,
     assembly,
@@ -86,7 +87,7 @@ from .model import (
 )
 from .nest import Bed
 from .params import configured, declared, values_of
-from .scene import ParamView, Scalar, Scene
+from .scene import ParamView, PrinterSaid, Scalar, Scene
 from .telemetry import CHECK, FIELDS, SILENT, Tracer, fields, timed
 from .topology import Label, Shape, Solid
 from .topology import label as _label
@@ -132,6 +133,7 @@ class _Recorder:
     findings: list[Finding] = field(default_factory=list)
     mates: list[tuple[Solid, Solid]] = field(default_factory=list)
     context: list[Context] = field(default_factory=list)
+    volume: Volume | None = None
     shown: _Show | None = None
 
 
@@ -444,6 +446,7 @@ def run(
     overrides: Mapping[str, object] = frozendict(),
     *,
     bed: Bed = _BED,
+    printer: Printer | None = None,
     extras: Mapping[str, ModuleType] = frozendict(),
     reference: Mesh | None = None,
     kernel: Kernel | None = None,
@@ -457,6 +460,12 @@ def run(
     how a panel edit re-runs a script without touching its text. ``bed`` is the stock
     everything is nested onto, margins and all. The script's ``show`` is built here, around
     this run's notebook, and injected into its namespace.
+
+    ``printer`` is the machine the host lays printed parts on for the view's *On bed* when the
+    script names none - :data:`bench.library.print.PRINTER` in the app. A script names one by
+    asking ``check_fits`` about a volume, and the first volume it asks about is the one its
+    parts are laid in, so the bed a part is drawn on and the bed its check measured it
+    against are the same. Neither, and the scene has no bed.
 
     ``kernel`` builds the bodies: with one, a part that is a :class:`~bench.topology.Solid`
     gets a ``mesh`` of triangles that each know the ref of the face they lie on, and an STL
@@ -499,7 +508,7 @@ def run(
     script, can raise out of here.
     """
     with timed(tracer, "bench.run") as attributes:
-        answer = _ran(source, overrides, bed, extras, reference, kernel, tracer, modules)
+        answer = _ran(source, overrides, bed, printer, extras, reference, kernel, tracer, modules)
         attributes["bench.run.ok"] = answer["ok"]
     if answer["ok"]:
         _log.info(
@@ -523,6 +532,7 @@ def _ran(
     source: str,
     overrides: Mapping[str, object],
     bed: Bed,
+    printer: Printer | None,
     extras: Mapping[str, ModuleType],
     reference: Mesh | None,
     kernel: Kernel | None,
@@ -564,6 +574,7 @@ def _ran(
             findings=recorder.findings,
             bed=bed,
             kernel=kernel,
+            **_machine(recorder.volume, printer),
             reference=reference,
             context=recorder.context,
             stdout=captured.getvalue(),
@@ -582,6 +593,25 @@ def _ran(
         )
     finally:
         linecache.cache.pop(_FILENAME, None)
+
+
+class _Machine(TypedDict):
+    """The printer :func:`bench.views.scene` lays the printed parts on, and who chose it."""
+
+    printer: Printer | None
+    said: PrinterSaid
+
+
+def _machine(asked: Volume | None, host: Printer | None) -> _Machine:
+    """The printer a run's printed parts are laid on: the volume the script's ``check_fits``
+    first asked about - by the host's own machine's name when it is that machine's volume, by
+    its size when it is not - or else the host's machine, or else none."""
+    if asked is None:
+        return _Machine(printer=host, said="host")
+    if host is not None and host.volume == asked:
+        return _Machine(printer=host, said="script")
+    named = f"{asked.w:g} x {asked.d:g} x {asked.h:g} mm"
+    return _Machine(printer=Printer(named, asked), said="script")
 
 
 def _namespace(
@@ -647,6 +677,8 @@ def _namespace(
         measured is the shape's own, exactly as before.
         """
         with timed(tracer, "bench.check.fits"):
+            if recorder.volume is None:
+                recorder.volume = volume
             subject = shape.shape if isinstance(shape, Part) else shape
             return _recorded(recorder, fits(shape, volume, orient), (subject,))
 

@@ -97,20 +97,56 @@ class LetteringView(TypedDict, closed=True):
     corners: list[float]
 
 
-class GridView(TypedDict, closed=True):
-    """The floor under the work: its width, how many cells across, and its middle ``x, y``."""
-
-    size: float
-    divisions: int
-    centre: list[float]
-
-
 class StageView(TypedDict, closed=True):
-    """Where a scene's bodies stand: the box they fill, ``x0, y0, z0, x1, y1, z1``, and the
-    floor under them - :mod:`bench.stage`'s answer, so the viewer works none of it out."""
+    """Where a scene's bodies stand, assembled: the box they fill, ``x0, y0, z0, x1, y1,
+    z1`` - :mod:`bench.stage`'s answer, so the viewer works none of it out. No floor: an
+    assembly has no bed, and the one floor a scene draws is :class:`BedView`'s."""
 
     bounds: list[float]
-    grid: GridView
+
+
+PrinterSaid = Literal["script", "host"]
+"""Who chose the printer a scene lays its parts on: the script, through the volume its
+``check_fits`` asked about, or the host, because the script named none."""
+
+
+class BedView(TypedDict, closed=True):
+    """The printer's bed the view's *On bed* lays the printed parts on.
+
+    ``printer`` is the machine's name - ``None`` for a volume the script's ``check_fits``
+    asked about that is not the host's own machine, which then has only its size to go by -
+    and ``said`` who chose it. ``volume`` is ``w, d, h``, standing with its corner at the
+    origin; ``bounds`` is the box the bed and every part laid on it fill, ``x0 .. z1``, which
+    is what *On bed* frames, and a part that runs off the bed takes it past the volume.
+    ``floor`` is the bed's grid, six numbers per line - both ends, on ``z = 0``."""
+
+    printer: str | None
+    said: PrinterSaid
+    volume: list[float]
+    bounds: list[float]
+    floor: list[float]
+
+
+class PrintingView(TypedDict, closed=True):
+    """How a printed part prints, computed where the part is: which way is up, the face it
+    stands on and whether it fits the scene's bed.
+
+    ``up`` is the build direction in the part's own coordinates, three numbers, and
+    ``bed_face`` the face its :class:`~bench.model.Orient` names to stand on, under the
+    part's label as its refs are, or ``None``. ``fits`` is :func:`bench.checks.fits` asked
+    about the part and the bed's volume - the rule ``check_fits`` answers with - and ``over``
+    its sentence when it does not; both ``None`` when the scene has no bed. ``placement`` is
+    the rigid move that lays the part's drawn body - its ``mesh.positions``, where the stage
+    put them - on the bed: twelve numbers, three rows of a 4x4 matrix whose fourth row is
+    ``0, 0, 0, 1``. It is the move :func:`bench.export.as_printed` makes for the part's STL,
+    then the step to its place beside the others, so the view lays the body down by applying
+    it and nothing else. ``None`` without a body or a bed."""
+
+    up: list[float]
+    bed_face: str | None
+    fits: bool | None
+    over: str | None
+    placement: list[float] | None
 
 
 class SummaryView(TypedDict, closed=True):
@@ -141,6 +177,9 @@ class PartView(TypedDict, closed=True):
     it - one entry per face :func:`~bench.solids.plane_of` can answer for, which is only a
     printed part's: a laser part's plate has none, and neither does a round face with no
     ``around=`` to take a tangent at, which is task-61's own "cannot frame" case.
+    ``areas`` is every named face of ``mesh`` with its area in square millimetres, summed
+    over the triangles that lie on it - empty without a body. ``printing`` is how a printed
+    part prints, and ``None`` for any other process.
     """
 
     ref: str
@@ -153,6 +192,8 @@ class PartView(TypedDict, closed=True):
     marks: MarksView | None
     lettering: list[LetteringView]
     frames: dict[str, FrameView]
+    areas: dict[str, float]
+    printing: PrintingView | None
 
 
 class ContextView(TypedDict, closed=True):
@@ -219,6 +260,9 @@ class OkScene(TypedDict, closed=True):
     ``context`` is every body the script showed with ``context(...)`` rather than as a part,
     in the order it said them: drawn translucent beside the parts, and - like ``reference`` -
     never a part, never nested and never in ``files``. Empty when it showed none.
+
+    ``bed`` is the printer the printed parts are laid on in the view's *On bed*, or ``None``
+    when neither the script nor the host named one.
     """
 
     ok: Literal[True]
@@ -236,6 +280,7 @@ class OkScene(TypedDict, closed=True):
     stderr: str
     reference: MeshView | None
     context: list[ContextView]
+    bed: BedView | None
 
 
 class ErrorScene(TypedDict, closed=True):

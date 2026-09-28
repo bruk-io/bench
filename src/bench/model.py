@@ -183,6 +183,16 @@ class Volume(NamedTuple):
     h: float
 
 
+class Printer(NamedTuple):
+    """A machine to lay printed parts on: what it is called, and the :class:`Volume` it builds
+    in. The view's *On bed* draws the volume and lays each printed part inside it, and says
+    whether the part fits, by name; which machine that is, is the host's to say, or the
+    script's through the volume its ``check_fits`` asked about."""
+
+    name: str
+    volume: Volume
+
+
 Stocked = Stock | Printed
 """What a part is made of. Two arms today; consumers ``match`` and end in
 ``assert_never``, so the third (a billet) cannot be added without every one of them

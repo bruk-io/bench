@@ -4,11 +4,16 @@ A part's body is built in the part's own coordinates, so left where they were ma
 of an assembly would pile up on the origin. The stage lays them out the way a maker lays parts
 on a bench: in rows along X in the order the script showed them, :data:`GAP` apart, front edges
 on the row's line and standing on ``z = 0``, a row wrapping before it runs too long. It then
-sizes the grid drawn under them.
+hands back the box they fill.
 
 That is :func:`layout`, and it is the right thing to do to a scene of unrelated bodies and
 the wrong thing to do to a mechanism: an assembly whose parts the script has already posed
-relative to each other is placed by :func:`as_given` instead, which moves nothing.
+relative to each other is placed by :func:`as_given` instead, which moves nothing. Neither
+draws a floor: an assembly has no bed.
+
+A printer's bed is the other place a body stands. :func:`on_bed` puts each printed part,
+already laid down the way it prints, side by side inside a :class:`~bench.model.Volume` with
+its corner at the origin, and :func:`floor` is the grid drawn on that bed and nowhere else.
 
 Plain arithmetic on meshes, done here rather than in the viewer, so that what a scene carries
 is ready to draw: every triangle's corners already placed and already its own, and every
@@ -20,7 +25,7 @@ from collections.abc import Sequence
 from typing import NamedTuple
 
 from .kernel import Mesh
-from .model import Ref
+from .model import Ref, Volume
 from .topology import SEP
 
 GAP = 10.0
@@ -29,14 +34,8 @@ GAP = 10.0
 _ROW_WRAP = 600.0
 """Millimetres: a row wraps once the next body would take it past this."""
 
-_GRID_STEP = 10.0
-"""The grid's cells, in millimetres."""
-
-_GRID_MARGIN = 1.25
-"""How much wider than the work the grid runs."""
-
-_GRID_LEAST = 10.0
-"""The narrowest the work is taken to be, so a pin still stands on a floor."""
+_FLOOR_STEP = 10.0
+"""The bed grid's cells, in millimetres."""
 
 Offset = tuple[float, float, float]
 
@@ -54,15 +53,6 @@ class Box(NamedTuple):
 
 EMPTY = Box(-50.0, -50.0, 0.0, 50.0, 50.0, 50.0)
 """The stage of a scene with no body on it: a small room to look into rather than nothing."""
-
-
-class Grid(NamedTuple):
-    """The floor under the work: its width, how many cells across, and where its middle is."""
-
-    size: float
-    divisions: int
-    centre_x: float
-    centre_y: float
 
 
 def extent(mesh: Mesh) -> Box | None:
@@ -185,14 +175,73 @@ def widened(box: Box | None, meshes: Sequence[Mesh]) -> Box:
     )
 
 
-def grid(box: Box) -> Grid:
-    """The floor under ``box``: a quarter wider than the work, in whole cells, centred under
-    it."""
-    span = max(box.x1 - box.x0, box.y1 - box.y0, _GRID_LEAST)
-    size = math.ceil(span * _GRID_MARGIN / _GRID_STEP) * _GRID_STEP
-    return Grid(
-        size, max(2, round(size / _GRID_STEP)), (box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2
+def on_bed(bodies: Sequence[Box | None], volume: Volume) -> tuple[tuple[Offset | None, ...], Box]:
+    """Where each body goes on a bed of ``volume`` - the offset that moves it there, or
+    ``None`` for a part with nothing to lay - and the box the bed and everything on it fill.
+
+    ``bodies`` are the boxes the parts fill already laid down the way they print - lowest
+    point on ``z = 0`` - so only X and Y are decided here. The bed's corner is the origin and
+    it runs to ``volume.w`` along X and ``volume.d`` along Y. Parts go left to right
+    :data:`GAP` in from its edges and apart, a row wrapping before the next part would cross
+    the bed's far side, the next row :data:`GAP` behind the deepest of the one before. A part
+    wider or deeper than the bed, or one more row than it holds, is laid all the same and runs
+    off it - the box grows to take it in - because what does not fit is what the view is there
+    to show, and :func:`bench.checks.fits` is what says so.
+    """
+    offsets: list[Offset | None] = []
+    placed: list[Box] = [Box(0.0, 0.0, 0.0, volume.w, volume.d, volume.h)]
+    across = GAP
+    front = GAP
+    deepest = 0.0
+    for own in bodies:
+        if own is None:
+            offsets.append(None)
+            continue
+        width = own.x1 - own.x0
+        if across > GAP and across + width > volume.w - GAP:
+            front += deepest + GAP
+            across = GAP
+            deepest = 0.0
+        offset = (across - own.x0, front - own.y0, -own.z0)
+        offsets.append(offset)
+        placed.append(
+            Box(
+                own.x0 + offset[0],
+                own.y0 + offset[1],
+                own.z0 + offset[2],
+                own.x1 + offset[0],
+                own.y1 + offset[1],
+                own.z1 + offset[2],
+            )
+        )
+        across += width + GAP
+        deepest = max(deepest, own.y1 - own.y0)
+    return tuple(offsets), Box(
+        min(one.x0 for one in placed),
+        min(one.y0 for one in placed),
+        min(one.z0 for one in placed),
+        max(one.x1 for one in placed),
+        max(one.y1 for one in placed),
+        max(one.z1 for one in placed),
     )
+
+
+def floor(volume: Volume) -> list[float]:
+    """The grid on a bed of ``volume``, as line segments on ``z = 0``: six numbers each, both
+    ends. A line every :data:`_FLOOR_STEP` across and along from the bed's corner, and one on
+    each far edge, where the bed stops whether or not a whole cell does."""
+    out: list[float] = []
+    for at in _steps(volume.w):
+        out.extend((at, 0.0, 0.0, at, volume.d, 0.0))
+    for at in _steps(volume.d):
+        out.extend((0.0, at, 0.0, volume.w, at, 0.0))
+    return out
+
+
+def _steps(length: float) -> list[float]:
+    """``0``, every :data:`_FLOOR_STEP` short of ``length``, and ``length`` itself."""
+    count = math.ceil(length / _FLOOR_STEP - 1e-9)
+    return [min(k * _FLOOR_STEP, length) for k in range(count)] + [length]
 
 
 def positions(mesh: Mesh, offset: Offset) -> list[float]:

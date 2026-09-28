@@ -569,12 +569,33 @@ def as_printed(mesh: Mesh, up: Vector, bed_along: Vector | None = None) -> Mesh:
 
     Pure: an assembly's pose never reaches this, only the direction a part prints in.
     """
-    turned = _moved_mesh(mesh, laid_down(up, bed_along))
+    return laid_on_bed(mesh, up, bed_along).mesh
+
+
+class Laid(NamedTuple):
+    """A mesh laid on the bed by :func:`laid_on_bed`: the mesh :func:`as_printed` answers, and
+    ``pose``, the one rigid move that took the posed mesh there - so the view can lay the body
+    it already drew the same way, by a transform, with no mesh of its own to carry."""
+
+    mesh: Mesh
+    pose: Transform
+
+
+def laid_on_bed(mesh: Mesh, up: Vector, bed_along: Vector | None = None) -> Laid:
+    """:func:`as_printed`'s mesh, and the move that made it.
+
+    The mesh is turned and then shifted exactly as it always was - two passes, in that order -
+    so an STL written from it is the same bytes it was before the view asked for the move as
+    well; ``pose`` is the same two composed, the turn first, for a reader that moves something
+    else by it - :mod:`bench.views`, laying a part's drawn body on the bed for the view.
+    """
+    turn = laid_down(up, bed_along)
+    turned = _moved_mesh(mesh, turn)
     if not turned.vertices:
-        return turned
+        return Laid(turned, turn)
     xs, ys, zs = turned.vertices[0::3], turned.vertices[1::3], turned.vertices[2::3]
-    shift = Vector(-(min(xs) + max(xs)) / 2.0, -(min(ys) + max(ys)) / 2.0, -min(zs))
-    return _moved_mesh(turned, translation(shift))
+    shift = translation(Vector(-(min(xs) + max(xs)) / 2.0, -(min(ys) + max(ys)) / 2.0, -min(zs)))
+    return Laid(_moved_mesh(turned, shift), shift @ turn)
 
 
 def _moved_mesh(mesh: Mesh, t: Transform) -> Mesh:

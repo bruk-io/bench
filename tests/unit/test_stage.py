@@ -1,4 +1,5 @@
-"""Unit: :mod:`bench.stage`, where a scene's bodies stand and the floor under them.
+"""Unit: :mod:`bench.stage`, where a scene's bodies stand - assembled, and on a printer's bed
+with the floor drawn on it.
 
 Every mesh here is written by hand, so every offset, box and grid below is arithmetic done in
 the reader's head rather than read off the code.
@@ -7,15 +8,16 @@ the reader's head rather than read off the code.
 import pytest
 
 from bench.kernel import Mesh
-from bench.model import Ref
+from bench.model import Ref, Volume
 from bench.stage import (
     EMPTY,
     GAP,
     Box,
     as_given,
     extent,
-    grid,
+    floor,
     layout,
+    on_bed,
     positions,
     ref_table,
     shifted,
@@ -124,15 +126,60 @@ def test_nothing_at_all_is_still_the_empty_room() -> None:
     assert widened(None, [Mesh((), (), ())]) == EMPTY
 
 
-def test_the_grid_is_a_quarter_wider_than_the_work_in_whole_cells() -> None:
-    floor = grid(Box(0, -5, 0, 33, 5, 8))
-    assert floor.size == 50  # 33 * 1.25 = 41.25, up to the next 10
-    assert floor.divisions == 5
-    assert (floor.centre_x, floor.centre_y) == (16.5, 0)
+# ---- on a printer's bed --------------------------------------------------------------------
 
 
-def test_a_tiny_part_still_stands_on_a_floor() -> None:
-    assert grid(Box(0, 0, 0, 1, 1, 1)).size == 20
+_BED = Volume(100.0, 80.0, 50.0)
+"""A small bed, so a row wraps and a part runs off it at numbers read at a glance."""
+
+
+def test_the_first_part_on_a_bed_is_a_gap_in_from_its_corner() -> None:
+    """A laid-down part is centred on the origin, footprint and all; on the bed its low corner
+    is a gap in from the bed's, and its lowest point stays on the bed."""
+    offsets, box = on_bed([Box(-10, -5, 0, 10, 5, 7)], _BED)
+    assert offsets == ((GAP + 10, GAP + 5, 0),)
+    assert box == Box(0, 0, 0, 100, 80, 50)
+
+
+def test_parts_on_a_bed_go_side_by_side_and_wrap_before_the_far_edge() -> None:
+    """Two 40 mm parts fill the 100 mm bed's first row (10 + 40 + 10 + 40 = 100 is past its
+    90 mm of room, so the second already wraps), a gap behind the first."""
+    offsets, _ = on_bed([Box(-20, -5, 0, 20, 5, 3), Box(-20, -10, 0, 20, 10, 3)], _BED)
+    assert offsets == ((GAP + 20, GAP + 5, 0), (GAP + 20, GAP + 10 + GAP + 10, 0))
+
+
+def test_parts_that_share_a_row_stand_a_gap_apart() -> None:
+    offsets, _ = on_bed([Box(-10, -5, 0, 10, 5, 3), Box(-15, -5, 0, 15, 5, 3)], _BED)
+    assert offsets == ((GAP + 10, GAP + 5, 0), (GAP + 20 + GAP + 15, GAP + 5, 0))
+
+
+def test_a_part_bigger_than_the_bed_is_laid_all_the_same_and_the_box_takes_it_in() -> None:
+    """Fitting is the check's to say; the view lays the part and shows it running off."""
+    offsets, box = on_bed([Box(-70, -5, 0, 70, 5, 60)], _BED)
+    assert offsets == ((GAP + 70, GAP + 5, 0),)
+    assert box == Box(0, 0, 0, GAP + 140, 80, 60)
+
+
+def test_a_part_with_nothing_to_lay_takes_no_place_on_the_bed() -> None:
+    offsets, box = on_bed([None, Box(-10, -5, 0, 10, 5, 7)], _BED)
+    assert offsets == (None, (GAP + 10, GAP + 5, 0))
+    assert box == Box(0, 0, 0, 100, 80, 50)
+
+
+def test_the_floor_is_a_line_every_ten_millimetres_and_one_on_each_far_edge() -> None:
+    """A 25 by 20 bed: lines across at 0, 10, 20 and its edge at 25; along at 0, 10 and 20,
+    where 20 is both a step and the edge and is drawn once."""
+    lines = floor(Volume(25.0, 20.0, 10.0))
+    segments = [tuple(lines[at : at + 6]) for at in range(0, len(lines), 6)]
+    assert segments == [
+        (0, 0, 0, 0, 20, 0),
+        (10, 0, 0, 10, 20, 0),
+        (20, 0, 0, 20, 20, 0),
+        (25, 0, 0, 25, 20, 0),
+        (0, 0, 0, 25, 0, 0),
+        (0, 10, 0, 25, 10, 0),
+        (0, 20, 0, 25, 20, 0),
+    ]
 
 
 def test_positions_are_one_triangle_at_a_time_and_moved() -> None:

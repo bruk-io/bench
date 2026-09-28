@@ -13,29 +13,44 @@ runtime and the answer it produces can each change without the other.
 """
 
 import base64
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import NamedTuple, assert_never
 
-from .checks import Severity, Violation, bed_along, exportable
-from .export import as_printed, part_svg, sheet_dxf, sheet_svg, stl, three_mf
+from .checks import Severity, Violation, bed_along, exportable, fits
+from .export import Laid, laid_on_bed, part_svg, sheet_dxf, sheet_svg, stl, three_mf
+from .geometry import Vector, translation
 from .kernel import Kernel, Mesh
-from .model import Assembly, Part, Printed, Process, Ref, Stock, Stocked, index
+from .model import (
+    Assembly,
+    Orient,
+    Part,
+    Printed,
+    Printer,
+    Process,
+    Ref,
+    Stock,
+    Stocked,
+    index,
+)
 from .nest import Bed, PartSpec, Sheet, nest, sheet_name
 from .ops import BBox, bbox
 from .plates import Lettering, Marks, Plate, plate
 from .scene import (
+    BedView,
     ContextView,
     ErrorScene,
     ErrorView,
     FrameView,
-    GridView,
     LetteringView,
     MarksView,
     MeshView,
     OkScene,
     ParamView,
     PartView,
+    PrinterSaid,
+    PrintingView,
     Scalar,
     SheetView,
     StageView,
@@ -48,8 +63,10 @@ from .stage import (
     Box,
     Offset,
     as_given,
-    grid,
+    extent,
+    floor,
     layout,
+    on_bed,
     positions,
     ref_table,
     shifted,
@@ -96,6 +113,8 @@ def scene(
     kernel: Kernel | None,
     reference: Mesh | None = None,
     context: Sequence[Context] = (),
+    printer: Printer | None = None,
+    said: PrinterSaid = "host",
     stdout: str,
     stderr: str,
     tracer: Tracer,
@@ -119,6 +138,12 @@ def scene(
     was drawn: nothing lays it out, which is why it belongs beside a posed assembly. A context
     body labelled as a part is refused where :func:`_unclashed` finds it - a ref under the one
     label would name both, and a click on one would light the other.
+
+    ``printer`` is the machine the printed parts are laid on for the view's *On bed*, and
+    ``said`` who chose it; each printed part is laid down by the move its STL is written with
+    - :func:`bench.export.laid_on_bed`, once, for both - put beside the others by
+    :func:`bench.stage.on_bed`, and asked :func:`bench.checks.fits` against the volume. No
+    printer, and no part is laid anywhere and none is asked; the files are the same either way.
     """
     parts = tuple(placed.part for placed in assembly.parts)
     _unclashed(context, parts)
@@ -142,10 +167,18 @@ def scene(
         # nothing about manufacture reads either: the parts were nested above, before this.
         staging["bench.stage.posed"] = assembly.posed
         offsets, box = as_given(bodies) if assembly.posed else layout(bodies)
-    printed = tuple(
-        _as_printed(part, body) if part.process is Process.PRINT else None
+    laid = tuple(
+        _laid(part, body) if part.process is Process.PRINT else None
         for part, body in zip(parts, bodies, strict=True)
     )
+    # What each printed part's files are written from: the body laid on the bed, or - for a
+    # printed part `_laid` has no way up to read on - the body as posed, as it always was.
+    printed = tuple(
+        None if part.process is not Process.PRINT else body if one is None else one.mesh
+        for part, body, one in zip(parts, bodies, laid, strict=True)
+    )
+    with timed(tracer, "bench.stage.bed"):
+        placements, laid_on = _bed(parts, laid, offsets, printer, said)
     with timed(tracer, "bench.scene.files"):
         files = _files(nested, parts, printed, extra, str(assembly.label))
     around = tuple(_timed_build_context(one, kernel, tracer) for one in context)
@@ -157,9 +190,9 @@ def scene(
         params=list(params),
         values=dict(values),
         parts=[
-            _part_view(part, qty, one, offset, frame, tracer)
-            for part, qty, one, offset, frame in zip(
-                parts, counts, built, offsets, boxes, strict=True
+            _part_view(part, qty, one, offset, frame, placement, tracer)
+            for part, qty, one, offset, frame, placement in zip(
+                parts, counts, built, offsets, boxes, placements, strict=True
             )
         ],
         stage=_stage_view(box),
@@ -178,6 +211,7 @@ def scene(
         # keeps a click on it from naming anything.
         reference=None if reference is None else _mesh_view(reference, "", (0.0, 0.0, 0.0)),
         context=[_context_view(one, mesh) for one, mesh in zip(context, around, strict=True)],
+        bed=laid_on,
     )
 
 
@@ -265,13 +299,14 @@ def _body(built: _Built) -> Mesh | None:
             assert_never(built)
 
 
-def _as_printed(part: Part, body: Mesh | None) -> Mesh | None:
-    """``body`` - the assembly-posed mesh the 3D view still draws - laid on the bed the way
-    ``part`` prints (:func:`bench.export.as_printed`), which is what goes in the files a run
-    offers instead. ``None`` without a kernel to have built one in the first place, and the
-    posed mesh unchanged for any stock but :class:`~bench.model.Printed`, which is the only
-    one with a way up to read - :func:`_files` only ever calls this on a printed part's body,
-    so that never actually happens, but a stray call should move nothing rather than guess.
+def _laid(part: Part, body: Mesh | None) -> Laid | None:
+    """``body`` - the assembly-posed mesh the 3D view draws - laid on the bed the way ``part``
+    prints (:func:`bench.export.laid_on_bed`), with the move that took it there: the mesh is
+    what goes in the files a run offers, and the move is how the view lays the same body down
+    for *On bed*. ``None`` without a kernel to have built one in the first place, or for any
+    stock but :class:`~bench.model.Printed`, which is the only one with a way up to read -
+    :func:`scene` only ever calls this on a printed part's body, so that never actually
+    happens, but a stray call should lay nothing rather than guess.
 
     ``bed_along`` is resolved by :func:`bench.checks.bed_along` - the same resolver
     :func:`bench.checks.fits` reads a shape's own ``bed_face`` through before a kernel ever
@@ -282,9 +317,84 @@ def _as_printed(part: Part, body: Mesh | None) -> Mesh | None:
     maker's mistake to fix, the same as a bad ref anywhere else in a script.
     """
     if body is None or not isinstance(part.stock, Printed):
-        return body
+        return None
     orient = part.stock.orient
-    return as_printed(body, orient.up, bed_along(part.shape, orient))
+    return laid_on_bed(body, orient.up, bed_along(part.shape, orient))
+
+
+# ---- the bed -------------------------------------------------------------------------------
+
+
+def _bed(
+    parts: Sequence[Part],
+    laid: Sequence[Laid | None],
+    offsets: Sequence[Offset | None],
+    printer: Printer | None,
+    said: PrinterSaid,
+) -> tuple[tuple[PrintingView | None, ...], BedView | None]:
+    """How each part prints - ``None`` for a part that is not printed - and the bed they are
+    laid on, or ``None`` with no printer to lay them on.
+
+    A part's ``placement`` takes its body from where the stage drew it to where it lies on
+    the bed in three steps, composed here once so the view only applies them: back off the
+    stage (its offset undone), laid down as its STL is (:class:`~bench.export.Laid`'s
+    ``pose``), and across to its place beside the others (:func:`bench.stage.on_bed`).
+    """
+    printing = tuple(
+        part.stock.orient
+        if part.process is Process.PRINT and isinstance(part.stock, Printed)
+        else None
+        for part in parts
+    )
+    if printer is None:
+        return tuple(
+            None if orient is None else _printing_view(part, orient, asked=False)
+            for part, orient in zip(parts, printing, strict=True)
+        ), None
+    volume = printer.volume
+    boxes = tuple(
+        None if one is None or orient is None else extent(one.mesh)
+        for one, orient in zip(laid, printing, strict=True)
+    )
+    slots, box = on_bed(boxes, volume)
+    views: list[PrintingView | None] = []
+    for part, orient, one, slot, offset in zip(parts, printing, laid, slots, offsets, strict=True):
+        if orient is None:
+            views.append(None)
+            continue
+        placement = None
+        if one is not None and slot is not None and offset is not None:
+            move = translation(Vector(*slot)) @ one.pose @ translation(-Vector(*offset))
+            placement = [value for row in move.rows for value in row]
+        views.append(_printing_view(part, orient, fits(part, volume), placement=placement))
+    return tuple(views), BedView(
+        printer=printer.name,
+        said=said,
+        volume=[volume.w, volume.d, volume.h],
+        bounds=[box.x0, box.y0, box.z0, box.x1, box.y1, box.z1],
+        floor=floor(volume),
+    )
+
+
+def _printing_view(
+    part: Part,
+    orient: Orient,
+    over: Violation | None = None,
+    *,
+    asked: bool = True,
+    placement: list[float] | None = None,
+) -> PrintingView:
+    """How ``part`` prints, as the wire carries it: ``over`` is what :func:`bench.checks.fits`
+    answered - ``None`` for a fit - and ``asked`` is ``False`` when there was no bed to ask
+    about, which is not a fit."""
+    face = orient.bed_face
+    return PrintingView(
+        up=[orient.up.x, orient.up.y, orient.up.z],
+        bed_face=None if face is None else f"{part.label}{SEP}{face}",
+        fits=(over is None) if asked else None,
+        over=None if over is None else over.message,
+        placement=placement,
+    )
 
 
 # ---- the files -----------------------------------------------------------------------------
@@ -370,18 +480,18 @@ def _sheet_view(name: str, one: Sheet) -> SheetView:
 
 
 def _stage_view(box: Box) -> StageView:
-    """Where the bodies stand and the floor under them, as the viewer reads it."""
-    floor = grid(box)
-    return StageView(
-        bounds=[box.x0, box.y0, box.z0, box.x1, box.y1, box.z1],
-        grid=GridView(
-            size=floor.size, divisions=floor.divisions, centre=[floor.centre_x, floor.centre_y]
-        ),
-    )
+    """Where the bodies stand, as the viewer reads it."""
+    return StageView(bounds=[box.x0, box.y0, box.z0, box.x1, box.y1, box.z1])
 
 
 def _part_view(
-    part: Part, qty: int, built: _Built, offset: Offset | None, box: BBox, tracer: Tracer
+    part: Part,
+    qty: int,
+    built: _Built,
+    offset: Offset | None,
+    box: BBox,
+    printing: PrintingView | None,
+    tracer: Tracer,
 ) -> PartView:
     label = str(part.label)
     body = _body(built)
@@ -402,7 +512,27 @@ def _part_view(
         marks=marks,
         lettering=lettering,
         frames=_frames_view(part.shape, body, label, here, tracer),
+        areas={} if body is None else _areas(body, label),
+        printing=printing,
     )
+
+
+def _areas(mesh: Mesh, prefix: str) -> dict[str, float]:
+    """Every named face of ``mesh`` under ``prefix``, with the area of the triangles on it in
+    square millimetres - one pass over the flat lists, no record made per triangle, because a
+    printed part is tens of thousands of them and this runs on every keystroke."""
+    vertices = mesh.vertices
+    corners = mesh.triangles
+    sums: dict[Ref, float] = {}
+    for at, ref in enumerate(mesh.refs):
+        if ref is None:
+            continue
+        a, b, c = 3 * corners[3 * at], 3 * corners[3 * at + 1], 3 * corners[3 * at + 2]
+        ux, uy, uz = (vertices[b + k] - vertices[a + k] for k in range(3))
+        vx, vy, vz = (vertices[c + k] - vertices[a + k] for k in range(3))
+        doubled = math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)
+        sums[ref] = sums.get(ref, 0.0) + doubled / 2.0
+    return {f"{prefix}{SEP}{ref}": area for ref, area in sums.items()}
 
 
 def _frames_view(
