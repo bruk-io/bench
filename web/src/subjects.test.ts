@@ -8,12 +8,17 @@ import {
   findingsOnNoPart,
   fitIdentifier,
   fitLine,
+  keptAcross,
+  linkOf,
+  linked,
+  linkedIn,
   partOf,
   partRefOf,
   standingOf,
   standingWords,
   subjectOf,
   worstPart,
+  worstPlace,
 } from "./subjects";
 
 const part = (ref: string, fields: Partial<PartView> = {}): PartView => ({
@@ -168,5 +173,132 @@ describe("fitLine", () => {
   it("turns a ref into the identifier a maker would have typed", () => {
     expect(fitIdentifier("drawer-front-1")).toBe("drawer_front_1");
     expect(fitIdentifier("3d-thing")).toBe("_3d_thing");
+  });
+});
+
+describe("worstPlace", () => {
+  it("is the worst part and the first place on it of its first error", () => {
+    const found = [
+      finding("warning", ["tote/w"]),
+      finding("error", ["lid/x", "tote/e1", "tote/e2"]),
+      finding("error", ["tote/e3"]),
+    ];
+    expect(worstPlace(PARTS, found)).toEqual({ part: "tote", place: "tote/e1" });
+  });
+
+  it("is the first warning's first place when the worst part has no error", () => {
+    expect(worstPlace(PARTS, [finding("unchecked", ["tote/u"]), finding("warning", ["tote/a", "tote/b"])])).toEqual({
+      part: "tote",
+      place: "tote/a",
+    });
+  });
+
+  it("lights the part itself when its finding names nothing on it but the part", () => {
+    expect(worstPlace(PARTS, [finding("error", ["tote"])])).toEqual({ part: "tote", place: "tote" });
+  });
+
+  it("is nowhere when no part is worse off than ok", () => {
+    expect(worstPlace(PARTS, [finding("unchecked", ["lid/a"])])).toBeNull();
+    expect(worstPlace(PARTS, [finding("error", ["gone/a"])])).toBeNull();
+  });
+});
+
+describe("keptAcross", () => {
+  const REFS = ["lid", "lid/top", "tote", "tote/wall-0", "tote/socket-1", "tote-latch"];
+
+  it("keeps a part the run still makes, and the place lit on it", () => {
+    const selection = { subject: { kind: "part", ref: "tote" }, lit: "tote/socket-1" } as const;
+    expect(keptAcross(selection, PARTS, REFS)).toEqual(selection);
+  });
+
+  it("keeps the part and lights it when only the lit place is gone", () => {
+    const selection = { subject: { kind: "part", ref: "tote" }, lit: "tote/socket-9" } as const;
+    expect(keptAcross(selection, PARTS, REFS)).toEqual({ subject: { kind: "part", ref: "tote" }, lit: "tote" });
+  });
+
+  it("goes back to the project when the part is no longer made", () => {
+    const selection = { subject: { kind: "part", ref: "drawer-6" }, lit: "drawer-6" } as const;
+    expect(keptAcross(selection, PARTS, REFS)).toEqual({ subject: PROJECT, lit: null });
+  });
+
+  it("keeps a face the run still names", () => {
+    const selection = { subject: { kind: "face", ref: "tote/wall-0" }, lit: "tote/wall-0" } as const;
+    expect(keptAcross(selection, PARTS, REFS)).toEqual(selection);
+  });
+
+  it("goes back to the project, not to the face's part, when the face is gone", () => {
+    const selection = { subject: { kind: "face", ref: "tote/wall-9" }, lit: "tote/wall-9" } as const;
+    expect(keptAcross(selection, PARTS, REFS)).toEqual({ subject: PROJECT, lit: null });
+  });
+
+  it("keeps the project, and a place lit on it only while the run names it", () => {
+    expect(keptAcross({ subject: PROJECT, lit: null }, PARTS, REFS)).toEqual({ subject: PROJECT, lit: null });
+    expect(keptAcross({ subject: PROJECT, lit: "lid/top" }, PARTS, REFS)).toEqual({ subject: PROJECT, lit: "lid/top" });
+    expect(keptAcross({ subject: PROJECT, lit: "lid/gone" }, PARTS, REFS)).toEqual({ subject: PROJECT, lit: null });
+  });
+
+  it("leaves a reference mesh alone: a run does not take it off the view", () => {
+    const selection = { subject: { kind: "reference", file: "foot.stl" }, lit: null } as const;
+    expect(keptAcross(selection, [], [])).toEqual(selection);
+  });
+
+  it("keeps a part with no ref of its own in the run's list - a part is named by being made", () => {
+    const selection = { subject: { kind: "part", ref: "tote-latch" }, lit: "tote-latch" } as const;
+    expect(keptAcross(selection, PARTS, [])).toEqual(selection);
+  });
+});
+
+describe("linkOf and linked", () => {
+  it("names a part or a face in the hash, with its slashes left as they read", () => {
+    expect(linkOf({ kind: "part", ref: "tote" })).toBe("#part=tote");
+    expect(linkOf({ kind: "face", ref: "tote/grip-left/top" })).toBe("#face=tote/grip-left/top");
+  });
+
+  it("leaves the project and a reference mesh out of the hash", () => {
+    expect(linkOf(PROJECT)).toBe("");
+    expect(linkOf({ kind: "reference", file: "foot.stl" })).toBe("");
+  });
+
+  it("round-trips a ref with characters a URL escapes", () => {
+    for (const subject of [
+      { kind: "part", ref: "drawer front #2" },
+      { kind: "face", ref: "a=b/c%d/\u00e9" },
+    ] as const) {
+      expect(linked(linkOf(subject))).toEqual(subject);
+    }
+    expect(linkOf({ kind: "part", ref: "drawer front #2" })).toBe("#part=drawer%20front%20%232");
+  });
+
+  it("reads a hash with or without its #", () => {
+    expect(linked("#part=tote")).toEqual({ kind: "part", ref: "tote" });
+    expect(linked("face=tote/top")).toEqual({ kind: "face", ref: "tote/top" });
+  });
+
+  it("asks for nothing from a hash it does not know", () => {
+    for (const hash of ["", "#", "#tote", "#view=tote", "#part=", "#part=%E0%A4%A", "#project=tote"]) {
+      expect(linked(hash)).toBeNull();
+    }
+  });
+});
+
+describe("linkedIn", () => {
+  const REFS = ["tote", "tote/grip-left/top"];
+
+  it("is the subject a link asks for, when the run has it", () => {
+    expect(linkedIn({ kind: "part", ref: "tote" }, PARTS, REFS)).toEqual({ kind: "part", ref: "tote" });
+    expect(linkedIn({ kind: "face", ref: "tote/grip-left/top" }, PARTS, REFS)).toEqual({
+      kind: "face",
+      ref: "tote/grip-left/top",
+    });
+  });
+
+  it("reads the ref as the run does, whatever the link called it", () => {
+    expect(linkedIn({ kind: "face", ref: "tote" }, PARTS, REFS)).toEqual({ kind: "part", ref: "tote" });
+  });
+
+  it("is the project, quietly, for a ref the run does not have or no ask at all", () => {
+    expect(linkedIn({ kind: "part", ref: "drawer-6" }, PARTS, REFS)).toEqual(PROJECT);
+    expect(linkedIn({ kind: "face", ref: "tote/gone" }, PARTS, REFS)).toEqual(PROJECT);
+    expect(linkedIn(null, PARTS, REFS)).toEqual(PROJECT);
   });
 });

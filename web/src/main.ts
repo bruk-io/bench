@@ -91,7 +91,19 @@ import type { OkScene, Scene, SheetView } from "./scene";
 import type { SectionAxis, ViewMode } from "./viewer3d";
 import { STALE_HINT, STALE_MESSAGE, bundleStale } from "./staleness";
 import { built, failing, found, made, noBodiesReason, onBedReason, readOnlyWords } from "./status";
-import { PROJECT, type Subject, fitLine, subjectOf, worstPart } from "./subjects";
+import {
+  type Linked,
+  PROJECT,
+  type Selection,
+  type Subject,
+  fitLine,
+  keptAcross,
+  linkOf,
+  linked,
+  linkedIn,
+  subjectOf,
+  worstPlace,
+} from "./subjects";
 // `remember`/`forget` are still here for what belongs to this browser rather than to a
 // project - the hang fingerprint, the rail's container, the panel. The projects themselves
 // go through `store` (see `store.ts` on what does not travel).
@@ -704,6 +716,9 @@ function showFailure(message: string): void {
  * the project. The editor's cursor lights up what it is pointing at. */
 const space = deferred3d(ui.canvas3d, {
   onSelect(ref) {
+    // A redraw puts down a ref the view no longer draws, and says so - but what stays selected
+    // across a run is `keptAcross`'s to decide, from everything the run named, not the view's.
+    if (redrawing) return;
     showSelection(ref);
   },
   onSelectSecond(ref) {
@@ -1119,7 +1134,15 @@ function received(next: Scene): void {
   code.knowRefs(next.refs);
   ui.inspector.error = "";
 
-  timed("bench.view.geometry", () => showGeometry(next), { "bench.parts": next.summary.parts });
+  // What stays selected is worked out from the run before the view is redrawn, since the redraw
+  // drops a lit ref the view no longer draws and would otherwise put the part down with it.
+  const kept = keptAcross({ subject, lit: picked }, next.parts, next.refs);
+  redrawing = true;
+  try {
+    timed("bench.view.geometry", () => showGeometry(next), { "bench.parts": next.summary.parts });
+  } finally {
+    redrawing = false;
+  }
   // Forget a hidden row the newest run no longer names, so "show all" is never left disabled
   // over a ref that could not come back anyway, and the eye state never grows across runs
   // beyond what the tree can actually show.
@@ -1138,11 +1161,11 @@ function received(next: Scene): void {
   inspector.warnings = next.warnings;
   inspector.sheets = next.sheets;
   inspector.files = next.files;
-  // A part the newest run no longer makes is no subject; its faces are, until the view says
-  // it has let go of them.
-  const was = subject;
-  if (was.kind === "part" && !next.parts.some((part) => part.ref === was.ref)) showSelection(null);
-  else showSelected();
+  // A part or face the newest run still names stays the subject; one it does not is the
+  // project (task-92). A link the page was opened on is followed once there is a run to find it
+  // in, and wins over whatever was selected before it arrived.
+  if (linking) followLink(next);
+  else keepSelection(kept);
   showStreams(next);
   showFindings(next);
   keepSheetTabs(next.sheets);
@@ -1160,12 +1183,17 @@ function showFindings(ok: OkScene | null): void {
   ui.findings.dataset["state"] = ok !== null && failing(ok.summary) ? "error" : "warn";
 }
 
-// The count goes to the part that is worst off - or, when what was found is on no one part,
-// to the project, which lists it.
+// The count goes to the part that is worst off, with the first place of its worst finding lit -
+// or, when what was found is on no one part, to the project, which lists it.
 ui.findings.addEventListener("click", () => {
-  const worst = scene === null ? null : worstPart(scene.parts, scene.violations);
-  space.select(worst);
-  showSelection(worst);
+  const worst = scene === null ? null : worstPlace(scene.parts, scene.violations);
+  if (worst === null) {
+    space.select(null);
+    showSelection(null);
+    return;
+  }
+  showSelection(worst.part);
+  showPlace(worst.place);
 });
 
 /** Draw the scene: every part with a body, standing where the stage put it, and why the view
@@ -1462,6 +1490,17 @@ let pickedSecond: string | null = null;
  * once - selecting either clears the other. */
 let subject: Subject = PROJECT;
 
+/** Set while a run's scene is being drawn, when the view's own "that ref is gone" is not the
+ * last word on the selection (`keptAcross` is). */
+let redrawing = false;
+
+/** Whether the page is still to follow the link it was opened on - or a hash changed since - and
+ * what that link asks for. The hash is not written while one is waiting, so the page's own
+ * start-up, which selects nothing, does not wipe the link before a run has had a chance to
+ * find what it names. */
+let linking = true;
+let linkAsked: Linked | null = linked(location.hash);
+
 /** Hand the inspector the selection as it stands: the subject, what is lit, and what *Insert
  * ref* and *Insert fit* can write. */
 function showSelected(): void {
@@ -1472,7 +1511,49 @@ function showSelected(): void {
   inspector.insertable = picked !== null && !hostless && writable();
   inspector.second = pickedSecond;
   inspector.fit = pickedSecond === null ? null : fitLine(picked, pickedSecond, scene?.parts ?? []);
+  if (!linking) showLink();
 }
+
+/** Say the subject in the URL hash - `#part=tote`, `#face=tote/grip-left/top`, nothing for the
+ * project - so a reload or a copied link opens on it. Replaced rather than pushed: a selection
+ * is not a page a person goes back to, and Back should leave the app, not walk every click. */
+function showLink(): void {
+  const hash = linkOf(subject);
+  if (hash === location.hash) return;
+  history.replaceState(history.state, "", hash === "" ? `${location.pathname}${location.search}` : hash);
+}
+
+/** Select what the link asks for, in the run that has just arrived - or the project, quietly,
+ * when the run has nothing by that name. */
+function followLink(ok: OkScene): void {
+  const found = linkedIn(linkAsked, ok.parts, ok.refs);
+  linking = false;
+  linkAsked = null;
+  const ref = found.kind === "part" || found.kind === "face" ? found.ref : null;
+  space.select(ref);
+  showSelection(ref);
+}
+
+/** Put the selection `keptAcross` settled back on the page after a run: the subject, and the
+ * lit ref on the view - only asked of the view when it differs, since selecting there starts a
+ * shift-click pair over. */
+function keepSelection(kept: Selection): void {
+  subject = kept.subject;
+  if (kept.lit !== picked) {
+    picked = kept.lit;
+    pickedSecond = null;
+  }
+  if (subject.kind !== "reference" && space.selected() !== picked) space.select(picked);
+  showSelected();
+}
+
+// A link pasted into this tab's address bar, or Back to one: followed now when there is a scene
+// to find it in, and when the next one arrives otherwise.
+window.addEventListener("hashchange", () => {
+  linking = true;
+  linkAsked = linked(location.hash);
+  if (scene !== null) followLink(scene);
+});
 
 /** Select `ref` - or nothing, which is the project: the inspector shows its subject, lit in
  * the view, its row revealed in the tree. Every way into a selection that is a ref comes

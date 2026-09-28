@@ -460,8 +460,8 @@ def test_a_ref_the_newest_run_no_longer_names_stops_being_selected(
     the run still makes the thing. Pick a part, then change a number so that part is not made
     at all, and the selection has to be put down rather than left naming something gone.
 
-    The view is what notices: it is handed the new scene, finds the chosen ref is in none of
-    it, and tells the page, which puts the inspector back on the project.
+    The page is what notices (task-92's ``keptAcross``): the new scene makes no part by that
+    ref, so the inspector goes back to the project and the view is told to put it down.
 
     The knobs are the project's (decision-12), so turning one is itself a way back to the
     project and would put the part down before any run did. The number is changed where the
@@ -1784,14 +1784,22 @@ def test_a_warning_the_status_bar_counts_goes_to_its_part(
         ".where"
     ).inner_text()
 
-    # A place is lit where it is, and the inspector stays on the part for the next one.
-    unlit = _lit(page)
-    found.locator('.place[data-ref="tote/socket-1"]').click()
+    # The count has already lit the finding's first place (task-92). Another place is lit where
+    # it is, and the inspector stays on the part for the next one.
+    first = str(places.first.get_attribute("data-ref"))
+    other = (
+        "tote/socket-1"
+        if first != "tote/socket-1"
+        else str(places.nth(1).get_attribute("data-ref"))
+    )
+    assert page.locator("#canvas3d").get_attribute("data-selected") == first
+    was = _lit(page)
+    found.locator(f'.place[data-ref="{other}"]').click()
     page.wait_for_timeout(150)
-    assert page.locator("#canvas3d").get_attribute("data-selected") == "tote/socket-1"
-    assert _lit(page) != unlit, "lighting a place changed nothing on the view"
+    assert page.locator("#canvas3d").get_attribute("data-selected") == other
+    assert _lit(page) != was, "lighting a place changed nothing on the view"
     assert page.locator("#crumb-part").get_attribute("aria-current") == "page", "the part was left"
-    assert found.locator('.place[aria-current="true"]').inner_text().strip() == "tote/socket-1"
+    assert found.locator('.place[aria-current="true"]').inner_text().strip() == other
     page.screenshot(path=str(screenshots / "14-place-lit.png"))
 
 

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { BedView, FrameView, ParamView, PartView, SheetView, ViolationView } from "../../scene";
-import type { Subject } from "../../subjects";
+import { type Subject, keptAcross, worstPlace } from "../../subjects";
 import type { BenchViolation } from "../molecules/violation";
 import "./inspector";
 import type { BenchInspector } from "./inspector";
@@ -456,5 +456,53 @@ describe("bench-inspector, hidden parts", () => {
     const hidden = await mounted({ hiddenRefs: ["lid"] });
     expect(inside(hidden, '.part[data-part="lid"]')?.dataset["hidden"]).toBe("true");
     expect(caught(hidden, "refs-show-all", () => inside(hidden, "#refs-show-all")?.click())).toHaveLength(1);
+  });
+});
+
+describe("bench-inspector, a selection by ref (task-92)", () => {
+  /** The place row a list marks as lit, across both shadow roots. */
+  async function markedPlace(inspector: BenchInspector): Promise<string | undefined> {
+    const list = inside(inspector, "#part-findings bench-violation-list");
+    await (list as unknown as { updateComplete: Promise<unknown> } | null)?.updateComplete;
+    const rows = Array.from(list?.shadowRoot?.querySelectorAll<BenchViolation>("bench-violation") ?? []);
+    for (const row of rows) await row.updateComplete;
+    return rows
+      .map((row) => row.shadowRoot?.querySelector('.place[aria-current="true"]')?.textContent.trim())
+      .find((one) => one !== undefined);
+  }
+
+  it("shows the part the status bar's count goes to, with the first place of its worst finding marked", async () => {
+    // The lid has the error; the tote only a warning.
+    const worst = worstPlace(RUN.parts ?? [], RUN.violations ?? []);
+    expect(worst).toEqual({ part: "lid", place: "lid/rim" });
+    const inspector = await mounted({ subject: { kind: "part", ref: "lid" }, lit: worst?.place ?? null });
+    expect(inside(inspector, "#crumb-part")?.textContent.trim()).toBe("lid");
+    expect(inside(inspector, "#crumb-part")?.getAttribute("aria-current")).toBe("page");
+    expect(await markedPlace(inspector)).toBe("lid/rim");
+    expect(inside(inspector, "#selection")?.textContent).toBe("lid/rim");
+  });
+
+  it("stays on the part across a run that took its lit place away, the part itself lit", async () => {
+    const inspector = await mounted({ subject: { kind: "part", ref: "tote" }, lit: "tote/lug-1" });
+    expect(await markedPlace(inspector)).toBe("tote/lug-1");
+    const refs = REFS.filter((ref) => ref !== "tote/lug-1");
+    const overhangs = { ...OVERHANGS, refs: ["tote/floor"] };
+    const kept = keptAcross({ subject: inspector.subject, lit: inspector.lit }, RUN.parts ?? [], refs);
+    await given(inspector, { refs, violations: [overhangs, WALL], ...kept });
+    expect(inside(inspector, "#crumb-part")?.getAttribute("aria-current")).toBe("page");
+    expect(inside(inspector, "#crumb-part")?.textContent.trim()).toBe("tote");
+    expect(inside(inspector, "#selection")?.textContent).toBe("tote");
+    expect(await markedPlace(inspector)).toBeUndefined();
+  });
+
+  it("goes back to the project across a run that no longer makes the part", async () => {
+    const inspector = await mounted({ subject: { kind: "part", ref: "tote" }, lit: "tote" });
+    const parts = [LID, PANEL];
+    const refs = REFS.filter((ref) => !ref.startsWith("tote"));
+    const kept = keptAcross({ subject: inspector.subject, lit: inspector.lit }, parts, refs);
+    await given(inspector, { parts, refs, violations: [WALL], ...kept });
+    expect(inside(inspector, "#crumb-project")?.getAttribute("aria-current")).toBe("page");
+    expect(sections(inspector)).not.toContain("part-findings");
+    expect(inside(inspector, '.part[data-part="tote"]')).toBeNull();
   });
 });
