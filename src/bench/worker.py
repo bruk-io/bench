@@ -46,7 +46,7 @@ from array import array
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 from . import script, transport
 from .adapters.browser import JsKernel, Modeller
@@ -119,11 +119,17 @@ class Runner(Protocol):
     ``None``s to satisfy a type rather than a runtime.
 
     The reference crosses as text rather than as bytes because a string is the one thing both
-    runtimes agree about without a proxy in the middle - and a body dropped on the view is
-    read once per run, not per frame, so the copy costs nothing anybody can feel. ``table`` is
+    runtimes agree about without a proxy in the middle - and it crosses twice a run, to
+    ``hold`` and then to the run, not once a frame: for tower's ten-megabyte fixture the second
+    crossing, and the comparison that finds it is the body already held, measured 66 ms in
+    Pyodide (task-96), against the half a second reading it again would take. ``table`` is
     ``None`` without a ``stl``, or with one that has nothing said about it - decision-4's
     "no table, no move". ``modules`` is ``None`` for a project of one script, exactly as
     ``tools.build``'s import path holds one entry alone when there is nothing beside it.
+
+    The body is read once, not once per run: the runner keeps the last one it read, and a run
+    handed the very same ``stl`` and ``table`` again measures that rather than reading the
+    text afresh (task-96). ``hold`` is how the worker has it read before a run's clock starts.
     """
 
     def __call__(
@@ -136,6 +142,17 @@ class Runner(Protocol):
         modules: str | None = None,
         /,
     ) -> Wire: ...
+
+    def hold(self, stl: str | None, table: str | None = None, /) -> None:
+        """Read ``stl`` and place it by ``table`` now, ahead of the run that will be handed
+        the same two, so the run finds the body already read (task-96) - or, for ``None``,
+        let go of the body read last.
+
+        What the worker calls before it starts a run's clock: reading and placing a body of
+        a couple of hundred thousand triangles is half a second of work that is the body's,
+        not the script's, and is done once per body rather than once per run. A ``stl`` or a
+        ``table`` this cannot read fails the way the run itself would.
+        """
 
 
 class Telemetry(Protocol):
@@ -210,16 +227,73 @@ def _placed(mesh: Mesh, table: str | None) -> Mesh:
     return placed(mesh, placement(json.loads(table), mesh))
 
 
-def _reference(stl: str | None, table: str | None) -> Mesh | None:
-    """The mesh a run binds as ``reference``: the dropped body, placed by ``table`` when
-    there is one to place it with - or ``None`` when nothing was dropped.
+class _Held(NamedTuple):
+    """The body a runner read last: the text and the table it was handed, and the placed
+    mesh they made."""
 
-    A ``stl`` that is not a binary STL, or a ``table`` :func:`_placed` cannot read, fails the
-    same way: the reader's own ``ValueError`` reaches the caller unchanged.
+    stl: str
+    table: str | None
+    mesh: Mesh
+
+
+@dataclass(frozen=True, slots=True)
+class _Runner:
+    """:class:`Runner` itself: what a run needs that does not change from one to the next,
+    and the one body it read last.
+
+    A dataclass rather than the closure it used to be because the worker calls it two ways -
+    as the run, and as :meth:`hold` ahead of one - and both have to reach the same slot.
     """
-    if stl is None:
-        return None
-    return _placed(mesh_from_stl(base64.b64decode(stl)), table)
+
+    refused: type[Exception]
+    tracer: _Spans
+    held: list[_Held]
+    """Empty, or the one body read last: a slot, not a cache - a body replaced on the view is
+    not coming back, and one of these can be tens of megabytes of floats."""
+
+    def hold(self, stl: str | None, table: str | None = None, /) -> None:
+        self._read(stl, table)
+
+    def _read(self, stl: str | None, table: str | None) -> Mesh | None:
+        """The body ``stl`` placed by ``table`` - the one read last when it is the same two
+        again, and read now and kept in its place when it is not. ``None`` lets go of it.
+
+        A ``stl`` that is not a binary STL, or a ``table`` :func:`_placed` cannot read, fails
+        the same way - the reader's own ``ValueError`` reaches the caller unchanged - and
+        leaves the slot as it was.
+        """
+        if stl is None:
+            self.held.clear()
+            return None
+        for one in self.held:
+            if one.stl == stl and one.table == table:
+                return one.mesh
+        mesh = _placed(mesh_from_stl(base64.b64decode(stl)), table)
+        self.held[:] = [_Held(stl, table, mesh)]
+        return mesh
+
+    def __call__(
+        self,
+        source: str,
+        overrides: str,
+        modeller: Modeller | None = None,
+        stl: str | None = None,
+        table: str | None = None,
+        modules: str | None = None,
+    ) -> Wire:
+        names = _mounted(modules)
+        scene = script.run(
+            source,
+            json.loads(overrides),
+            printer=PRINTER,
+            extras={"gridfinity": gridfinity},
+            reference=self._read(stl, table),
+            kernel=None if modeller is None else JsKernel(modeller, self.refused, self.tracer),
+            tracer=self.tracer,
+            modules=names,
+        )
+        with timed(self.tracer, "bench.scene.wire"):
+            return transport.scene_wire(scene)
 
 
 def start(telemetry: Telemetry, refused: type[Exception]) -> Runner:
@@ -242,34 +316,10 @@ def start(telemetry: Telemetry, refused: type[Exception]) -> Runner:
         logger.removeHandler(old)
     logger.addHandler(_Records(telemetry))
     logger.setLevel(logging.DEBUG)
-    tracer = _Spans(telemetry)
     sys.dont_write_bytecode = True
     if str(_PROJECT_DIR) not in sys.path:
         sys.path.insert(1, str(_PROJECT_DIR))  # after /lib, so bench is always found first
-
-    def run(
-        source: str,
-        overrides: str,
-        modeller: Modeller | None = None,
-        stl: str | None = None,
-        table: str | None = None,
-        modules: str | None = None,
-    ) -> Wire:
-        names = _mounted(modules)
-        scene = script.run(
-            source,
-            json.loads(overrides),
-            printer=PRINTER,
-            extras={"gridfinity": gridfinity},
-            reference=_reference(stl, table),
-            kernel=None if modeller is None else JsKernel(modeller, refused, tracer),
-            tracer=tracer,
-            modules=names,
-        )
-        with timed(tracer, "bench.scene.wire"):
-            return transport.scene_wire(scene)
-
-    return run
+    return _Runner(refused, _Spans(telemetry), [])
 
 
 def surveyed(stl: str, table: str | None = None) -> str:
@@ -281,7 +331,7 @@ def surveyed(stl: str, table: str | None = None) -> str:
     calls, in place of composing :func:`~bench.survey.mesh_from_stl`,
     :func:`~bench.survey.survey` and :func:`~bench.report.report` itself, now that there is a
     branch here worth testing rather than three calls that already are. A ``stl`` or a
-    ``table`` this cannot read fails the way :func:`_reference` does.
+    ``table`` this cannot read fails the way a run handed it does.
     """
     mesh = _placed(mesh_from_stl(base64.b64decode(stl)), table)
     return report(survey(mesh))
@@ -306,7 +356,7 @@ def detected(stl: str, table: str | None = None) -> str:
     happens in the same mode a detection does, on the same body, and a second reader of the
     same mesh could only disagree with this one.
 
-    A ``stl`` or a ``table`` this cannot read fails the way :func:`_reference` does.
+    A ``stl`` or a ``table`` this cannot read fails the way a run handed it does.
     """
     mesh = _placed(mesh_from_stl(base64.b64decode(stl)), table)
     faces = flat_faces(mesh)

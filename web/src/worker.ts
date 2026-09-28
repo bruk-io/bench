@@ -206,14 +206,18 @@ function copied(list: PyList): (Float32Array | Uint32Array)[] {
  * sentinel, which is not `None` and would sail straight past `if modeller is None` into a
  * kernel wrapped round nothing. `undefined` - which is what leaving the argument off gives
  * - is the one that arrives as `None`. */
-type Runner = (
+type Runner = ((
   source: string,
   overrides: string,
   modeller?: Modeller,
   stl?: string,
   table?: string,
   modules?: string,
-) => PyAnswer;
+) => PyAnswer) & {
+  /** Read `stl` and place it by `table` ahead of the run handed the same two - or, left off,
+   * let go of the body read last (task-96). */
+  hold(stl?: string, table?: string): void;
+};
 
 /** `SURVEY`, seen from here: a base64 STL and, when there is one, its `[reference]` table as
  * JSON, in - the report's text out. */
@@ -358,9 +362,21 @@ function boot(): Promise<Entry> {
   return booting;
 }
 
-/** One run, answered as the scene on the wire. */
+/** Tell the page `job` has begun: what its watchdog is timed from, so nothing that ran
+ * before it - a boot, a run it superseded, a survey ahead of it - is counted as its own. */
+function started(job: RunRequest | SurveyRequest | DetectRequest): void {
+  scope.postMessage({ type: "started", id: job.id, job: job.type });
+}
+
+/** One run, answered as the scene on the wire.
+ *
+ * The body it measures is read and placed first, before `started`: that is the body's work,
+ * not the script's, and done once per body (`bench.worker.Runner.hold`), so a run is timed
+ * from the moment its script is all that is left to do (task-96). */
 function ran(entry: Entry, job: RunRequest): void {
   const attributes = { "bench.run.id": job.id };
+  timed("bench.worker.reference", () => entry.run.hold(job.stl, job.table), attributes);
+  started(job);
   const answer = timed(
     "bench.worker.run",
     () =>
@@ -386,6 +402,7 @@ function ran(entry: Entry, job: RunRequest): void {
 
 /** One survey, answered as the report's text. */
 function surveyed(entry: Entry, job: SurveyRequest): void {
+  started(job);
   const report = timed("bench.worker.survey", () => entry.survey(job.stl, job.table), {
     "bench.run.id": job.id,
   });
@@ -394,6 +411,7 @@ function surveyed(entry: Entry, job: SurveyRequest): void {
 
 /** One detection, answered as the detected faces' JSON. */
 function detected(entry: Entry, job: DetectRequest): void {
+  started(job);
   const result = timed("bench.worker.detect", () => entry.detect(job.stl, job.table), {
     "bench.run.id": job.id,
   });
