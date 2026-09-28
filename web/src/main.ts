@@ -820,8 +820,8 @@ async function chooseReference(file: string, quietly: boolean): Promise<void> {
 /** Make `bytes`, called `name`, the body on the view (`reference-body.ts`). A drop replaces what
  * was there, so a selection on the body that has just gone would name a row nothing holds: it is
  * cleared before the new rows go down, not after. */
-function hold(name: string, bytes: Uint8Array, quietly: boolean): void {
-  body.hold(name, bytes, quietly);
+function hold(name: string, bytes: Uint8Array, quietly: boolean, run = true): void {
+  body.hold(name, bytes, quietly, run);
   if (subject.kind === "reference") showSelection(null);
   showReferenceRows();
 }
@@ -910,7 +910,12 @@ async function keepBody(project: string, name: string, bytes: Uint8Array): Promi
  * together, which is what writing the drop into the project was for. Nothing when the table
  * names nothing, names the body already on the view, or names a file the directory does not
  * hold (decision-4's rule still stands: nothing is placed that is not there). Quietly: the
- * inspector stays on what it was showing, and the body is a row of the project's references. */
+ * inspector stays on what it was showing, and the body is a row of the project's references.
+ *
+ * Put back whether or not the script is being held back after a runaway, but without a run
+ * while it is: the body is the project's, not the run's, and a page opened after a runaway -
+ * in any tab, since the runaway is remembered for the browser - used to leave it off the view,
+ * so the first Run anybody pressed there told the script there was no reference (task-96). */
 async function heldBody(): Promise<void> {
   const one = opened(workspace);
   const file = one.reference?.["file"];
@@ -918,7 +923,7 @@ async function heldBody(): Promise<void> {
   const got = await client.read(one.name, file).catch(() => null);
   if (got === null || !got.ok) return;
   if (workspace.current !== one.name) return; // the person has opened something else since
-  hold(file, got.value.bytes, true);
+  hold(file, got.value.bytes, true, !held);
 }
 
 ui.canvas3d.addEventListener("drop", (event: DragEvent) => {
@@ -2268,6 +2273,7 @@ async function boot(): Promise<void> {
       "This script did not finish the last time it ran, so it was stopped and has not been" +
         " run again. Press Run to try it anyway, or edit it first.",
     );
+    void heldBody();
     return;
   }
   runNow();

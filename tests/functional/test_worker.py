@@ -190,6 +190,56 @@ def test_a_run_with_a_stl_and_no_table_leaves_the_reference_as_exported() -> Non
     assert (round(x, 3), round(y, 3), round(z, 3)) == (606.795, -116.868, 0.0)
 
 
+_SAME = (
+    "from bench import *\n\n"
+    "print(id(reference), tuple(reference.vertices[:3]))\n"
+    "show(part('plate', fill(rect(4, 4)), Stock(3, 'ply')))\n"
+)
+"""A script that says which mesh it was handed - by identity, which two runs of one runner can
+compare because the runner keeps the body it read alive between them - and where the body's
+first corner is."""
+
+
+def _said(text: str) -> tuple[str, tuple[float, ...]]:
+    """What ``_SAME`` printed: the mesh's identity, and its first corner rounded to the
+    micrometre."""
+    identity, corner = json.loads(text)["stdout"].split(" ", 1)
+    return identity, tuple(round(one, 3) for one in ast.literal_eval(corner))
+
+
+def test_a_held_body_is_the_one_every_run_handed_the_same_text_measures() -> None:
+    """task-96: the body is read once - by ``hold``, before the worker starts a run's clock -
+    and a run handed the same two texts measures that, placed, rather than reading afresh."""
+    runner = start(_Telemetry(), _Refused)
+    stl = base64.b64encode(bench.stl(_BOX)).decode()
+    runner.hold(stl, _TABLE)
+
+    first, _ = runner(_SAME, "{}", None, stl, _TABLE)
+    again, _ = runner(_SAME, "{}", None, stl, _TABLE)
+
+    assert _said(first) == _said(again)
+    assert _said(first)[1] == (0.0, 0.0, 0.0)
+
+
+def test_a_body_placed_differently_is_read_again_not_reused() -> None:
+    runner = start(_Telemetry(), _Refused)
+    stl = base64.b64encode(bench.stl(_BOX)).decode()
+    runner.hold(stl, _TABLE)
+    placed, _ = runner(_SAME, "{}", None, stl, _TABLE)
+
+    exported, _ = runner(_SAME, "{}", None, stl)
+
+    assert _said(exported)[0] != _said(placed)[0]
+    assert _said(exported)[1] == (606.795, -116.868, 0.0)
+
+
+def test_holding_something_that_is_not_a_binary_stl_fails_as_the_run_would() -> None:
+    ascii_stl = base64.b64encode(b"solid box\n facet normal 0 0 1\n endsolid box\n").decode()
+
+    with pytest.raises(ValueError, match="ASCII"):
+        start(_Telemetry(), _Refused).hold(ascii_stl)
+
+
 def test_a_bad_table_fails_a_run_the_way_a_bad_value_does() -> None:
     source = "from bench import *\n\nshow(part('p', fill(rect(4, 4)), Stock(3, 'ply')))\n"
     stl = base64.b64encode(bench.stl(_BOX)).decode()

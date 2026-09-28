@@ -221,8 +221,11 @@ export function referenceBody(host: BodyHost) {
 
     /** Make `bytes`, called `file`, the body on the view: measured, run against, surveyed.
      * `quiet` for a body the app put back by itself rather than one a person dropped: the run
-     * and the survey are the same, but the report waits behind its button instead of opening. */
-    hold(file: string, bytes: Uint8Array, quiet: boolean): void {
+     * and the survey are the same, but the report waits behind its button instead of opening.
+     * `run` false holds it for the next run without starting one - for a page that is holding
+     * a script back because it ran away last time (task-96), which still has to be handed the
+     * body its project names when somebody does press Run. */
+    hold(file: string, bytes: Uint8Array, quiet: boolean, run = true): void {
       reference = encoded(bytes);
       name = file;
       problem = null;
@@ -241,7 +244,7 @@ export function referenceBody(host: BodyHost) {
       // The run first, so the view shows the body at once; the survey follows it in the worker
       // and its report opens when it lands. A drop is the maker asking what the body measures,
       // so it is not made to ask twice.
-      host.runNow();
+      if (run) host.runNow();
       quietly = quiet;
       host.survey(reference, tableJson());
       refresh();
