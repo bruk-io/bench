@@ -149,10 +149,16 @@ def _said(page: Page) -> str:
 
 
 def _ran(page: Page) -> None:
-    """Wait for a run to come back, whichever way it ends."""
+    """Wait for a run to come back, whichever way it ends - a watchdog's stop, which times
+    nothing, included."""
     page.wait_for_function(
-        "() => (document.querySelector('#timing')?.textContent ?? '') !== ''"
-        " && !['running', 'boot'].includes(document.querySelector('#state')?.dataset.state)",
+        """() => {
+            const state = document.querySelector('#state')?.dataset.state;
+            const timed = (document.querySelector('#timing')?.textContent ?? '') !== '';
+            const error = document.querySelector('#inspector')?.error ?? '';
+            const stopped = error.includes('did not finish in');
+            return !['running', 'boot'].includes(state) && (timed || stopped);
+        }""",
         timeout=RUN_MS,
     )
 
