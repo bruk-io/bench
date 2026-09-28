@@ -128,7 +128,7 @@ def test_colour_faces_survives_a_parameter_edit(page: Page, settle: Callable[[Pa
     _toggle_on(page)
     try:
         before_triangles = page.locator("#canvas3d").get_attribute("data-triangles")
-        page.click("#rail-parameters")
+        page.click("#crumb-project")
         page.fill("#param-units_x", "3")
         page.wait_for_function(
             "(before) => document.querySelector('#canvas3d')?.dataset.triangles !== before",
@@ -140,6 +140,6 @@ def test_colour_faces_survives_a_parameter_edit(page: Page, settle: Callable[[Pa
         assert page.locator("#colour-faces-toggle").get_attribute("aria-pressed") == "true"
     finally:
         _toggle_off(page)
-        page.click("#rail-parameters")
+        page.click("#crumb-project")
         page.fill("#param-units_x", "4")
         settle(page)

@@ -200,7 +200,7 @@ def test_a_first_visit_writes_nothing_and_a_panel_edit_writes_one_directory(
         page.wait_for_timeout(1500)
         assert _files(root) == set(), "a first visit wrote something"
 
-        page.click("#rail-parameters")
+        page.click("#crumb-project")
         page.fill("#param-units_x", "5")
         _ran(page)
         _saved(page)
@@ -315,7 +315,7 @@ def test_a_directory_from_before_bench_toml_opens_on_its_own_values(
     project = _seed(root, "plate", {"plate.py": TEMPLATE, "plate.toml": legacy})
     with _hosted(root) as url:
         page = _opened(browser, url)
-        page.click("#rail-parameters")
+        page.click("#crumb-project")
         assert page.locator("#param-w").input_value() == "140"
         page.fill("#param-w", "150")
         _ran(page)
@@ -348,7 +348,7 @@ def test_a_bench_toml_this_version_cannot_read_opens_and_is_never_written_over(
         page.click("#tab-script")
         assert page.locator("#tab-values").get_attribute("data-flag") == "error"
 
-        page.click("#rail-parameters")
+        page.click("#crumb-project")
         page.fill("#param-w", "120")
         _ran(page)
         page.wait_for_timeout(1500)
@@ -385,7 +385,7 @@ def test_a_bench_toml_with_tables_this_version_does_not_know_opens_and_keeps_the
     project = _seed(root, "plate", {"plate.py": TEMPLATE, "bench.toml": newer})
     with _hosted(root) as url:
         page = _opened(browser, url)
-        page.click("#rail-parameters")
+        page.click("#crumb-project")
         assert page.locator("#param-w").input_value() == "140"
         page.fill("#param-w", "150")
         _ran(page)
@@ -554,7 +554,7 @@ def test_a_browser_that_has_used_the_host_is_told_there_is_none_rather_than_left
     _seed(root, "plate", {"plate.py": TEMPLATE})
     with _hosted(root) as url:
         page = _opened(browser, url)
-        page.click("#rail-parameters")
+        page.click("#crumb-project")
         page.fill("#param-w", "150")
         _ran(page)
         _saved(page)
@@ -608,7 +608,8 @@ def test_a_dropped_mesh_is_written_into_the_projects_own_directory(
     with _hosted(root) as url:
         page = _opened(browser, url)
         _drop(page, "bracket.stl", body)
-        page.wait_for_selector("#reference:not([hidden])", timeout=BOOT_MS)
+        # A drop makes the body the inspector's subject, so its name is there to read.
+        page.locator("#reference-name").wait_for(timeout=BOOT_MS)
         landed = project / "bracket.stl"
         assert _eventually(lambda: landed.is_file() and landed.read_bytes() == body, True) is True
 
@@ -620,10 +621,7 @@ def test_a_dropped_mesh_is_written_into_the_projects_own_directory(
         # A different body under the same name is not written over the one the project holds.
         other = body[:80] + (0).to_bytes(4, "little")
         _drop(page, "bracket.stl", other)
-        page.wait_for_function(
-            "() => document.querySelector('#reference-name')?.textContent.includes('not kept')",
-            timeout=20_000,
-        )
+        page.locator("#reference-name", has_text="not kept").wait_for(timeout=20_000)
         assert landed.read_bytes() == body, "a drop wrote over the project's own mesh"
         page.context.close()
 
@@ -647,16 +645,16 @@ def test_a_placement_brings_back_the_mesh_it_names_from_the_project(
     )
     with _hosted(root) as url:
         page = _opened(browser, url)
-        page.wait_for_selector("#reference:not([hidden])", timeout=BOOT_MS)
-        page.wait_for_function(
-            "() => document.querySelector('#reference-name')?.textContent.includes('placed')",
-            timeout=BOOT_MS,
+        # Put back quietly: the inspector stays on the project, where the body is the active
+        # row of its references, and choosing that row brings up its tools.
+        row = page.locator(
+            'bench-reference-list [data-reference="bracket.stl"][data-active="true"]'
         )
+        row.wait_for(timeout=BOOT_MS)
+        row.click()
+        page.locator("#reference-name", has_text="placed").wait_for(timeout=BOOT_MS)
         assert page.locator("#reference-name").inner_text().strip() == "bracket.stl · placed"
-        # Put back quietly: its survey waits behind the chip rather than covering the script.
-        page.wait_for_function(
-            "() => document.querySelector('#reference-report')?.textContent.trim() === 'survey'",
-            timeout=BOOT_MS,
-        )
+        # And its survey waits behind its button rather than covering the script.
+        page.locator("#reference-report", has_text="survey").wait_for(timeout=BOOT_MS)
         assert page.locator("#tab-report").count() == 0
         page.context.close()

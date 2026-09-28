@@ -101,7 +101,7 @@ def _chip(page: Page) -> str:
 def _active(page: Page) -> list[str]:
     return [
         str(one.get_attribute("data-reference"))
-        for one in page.locator("bench-refs-tree .row.reference[data-active='true']").all()
+        for one in page.locator("bench-reference-list .row.reference[data-active='true']").all()
     ]
 
 
@@ -125,9 +125,9 @@ def _eventually(read: Callable[[], object], want: object, timeout: float = 15.0)
 def _rows_are(page: Page, rows: list[str], active: str) -> None:
     page.wait_for_function(
         """([rows, active]) => {
-            const tree = document.querySelector('bench-refs-tree');
-            return JSON.stringify(tree?.references) === JSON.stringify(rows)
-                && tree?.activeReference === active;
+            const inspector = document.querySelector('#inspector');
+            return JSON.stringify(inspector?.references) === JSON.stringify(rows)
+                && inspector?.activeReference === active;
         }""",
         arg=[rows, active],
         timeout=20_000,
@@ -151,7 +151,6 @@ def test_two_drops_are_two_references_one_active_chosen_by_its_row_and_kept_over
     first, second = _mesh(60, 40), _mesh(30, 20)
     with _hosted(root) as url:
         page = _opened(browser, url)
-        page.click("#rail-refs")
         bracket, foot = root / "plates" / "bracket.stl", root / "plates" / "foot.stl"
         _drop(page, "bracket.stl", first)
         _rows_are(page, ["bracket.stl"], "bracket.stl")
@@ -165,10 +164,11 @@ def test_two_drops_are_two_references_one_active_chosen_by_its_row_and_kept_over
         assert _eventually(lambda: _reference(root), {"file": "foot.stl"}) == {"file": "foot.stl"}
         assert _chip(page).startswith("foot.stl")
 
-        # AC#3: a row chooses the active one; AC#4: [reference] names it.
-        page.locator("bench-refs-tree [data-reference='bracket.stl']").click()
+        # AC#3: a row of the project's references chooses the active one; AC#4: [reference]
+        # names it.
+        page.click("#crumb-project")
+        page.locator("bench-reference-list [data-reference='bracket.stl']").click()
         _rows_are(page, ["bracket.stl", "foot.stl"], "bracket.stl")
-        assert _active(page) == ["bracket.stl"]
         assert _chip(page).startswith("bracket.stl")
         assert _eventually(lambda: _reference(root), {"file": "bracket.stl"}) == {
             "file": "bracket.stl"
@@ -181,18 +181,15 @@ def test_two_drops_are_two_references_one_active_chosen_by_its_row_and_kept_over
         assert "60.000 x 40.000" in page.locator("#report-text").inner_text()
         page.click("#reference-detect")
         page.wait_for_selector("#pick:not([hidden])", timeout=BOOT_MS)
-        page.wait_for_function(
-            "() => document.querySelector('#reference-detect')?.textContent.trim()"
-            " === 'detect faces'",
-            timeout=BOOT_MS,
-        )
+        page.locator("#reference-detect", has_text="detect faces").wait_for(timeout=BOOT_MS)
         page.screenshot(path=str(OUT / "references-two-one-active.png"))
 
         # AC#1: a reload keeps both, and puts back the one [reference] names.
         page.reload()
         page.wait_for_selector("#canvas3d[data-bodies]:not([data-bodies='0'])", timeout=BOOT_MS)
-        page.click("#rail-refs")
         _rows_are(page, ["bracket.stl", "foot.stl"], "bracket.stl")
+        assert _active(page) == ["bracket.stl"]
+        page.locator("bench-reference-list [data-reference='bracket.stl']").click()
         assert _chip(page).startswith("bracket.stl")
         page.context.close()
 
@@ -209,9 +206,7 @@ def test_removing_the_active_reference_says_where_it_goes_and_that_reference_is_
     (root / "plates" / "bench.toml").write_text('[reference]\nfile = "foot.stl"\n')
     with _hosted(root) as url:
         page = _opened(browser, url)
-        page.click("#rail-refs")
         _rows_are(page, ["bracket.stl", "foot.stl"], "foot.stl")
-        page.click("#rail-files")
         page.locator('bench-explorer [aria-label="Actions for foot.stl"]').click()
         page.locator("bench-explorer .acts button", has_text="Delete…").click()
         said = " ".join(page.locator("bench-explorer #file-delete-what").inner_text().split())
@@ -223,13 +218,12 @@ def test_removing_the_active_reference_says_where_it_goes_and_that_reference_is_
         assert _eventually(lambda: (root / "plates" / "foot.stl").exists(), False) is False
         assert list((root / ".trash").glob("*-plates/foot.stl")), "not in the trash"
         assert _eventually(lambda: _reference(root), None) is None
-        page.click("#rail-refs")
         page.wait_for_function(
-            "() => JSON.stringify(document.querySelector('bench-refs-tree')?.references)"
+            "() => JSON.stringify(document.querySelector('#inspector')?.references)"
             " === JSON.stringify(['bracket.stl'])",
             timeout=20_000,
         )
-        assert page.locator("#reference").is_hidden()
+        assert page.locator("bench-reference-tools").count() == 0, "the body outlived its file"
         page.context.close()
 
 
@@ -257,9 +251,9 @@ def test_a_reader_chooses_and_surveys_a_reference_without_writing_anything(
                 else None
             ),
         )
-        tablet.click("#rail-refs")
         _rows_are(tablet, ["bracket.stl", "foot.stl"], "foot.stl")
-        tablet.locator("bench-refs-tree [data-reference='bracket.stl']").click()
+        tablet.click("#crumb-project")
+        tablet.locator("bench-reference-list [data-reference='bracket.stl']").click()
         _rows_are(tablet, ["bracket.stl", "foot.stl"], "bracket.stl")
         tablet.wait_for_selector("#reference-report:not([disabled])", timeout=BOOT_MS)
         tablet.click("#reference-report")
@@ -268,7 +262,11 @@ def test_a_reader_chooses_and_surveys_a_reference_without_writing_anything(
         tablet.wait_for_timeout(1500)
         assert sent == [], f"a reader wrote: {sent}"
         assert {one.name: one.read_bytes() for one in (root / "plates").iterdir()} == before
-        # The writer's own view is its own: it still has the one [reference] names.
+        # The writer's own view is its own: it still has the one [reference] names, as the
+        # active row of its references - and as the body its tools are about.
+        _rows_are(desk, ["bracket.stl", "foot.stl"], "foot.stl")
+        desk.click("#crumb-project")
+        desk.locator("bench-reference-list [data-reference='foot.stl']").click()
         assert _chip(desk).startswith("foot.stl")
         desk.context.close()
         tablet.context.close()

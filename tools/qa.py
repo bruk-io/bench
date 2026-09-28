@@ -6,8 +6,10 @@ app - :mod:`tools.preview`, the same build and the same server - and asserts not
 walks the examples given (or :data:`STOPS` when none are), shoots each one, and writes down
 everything the app said on the way: the browser's console, anything the page threw, any
 request that failed, and what a person reads - what was built, what the script printed on
-either stream, what was violated and what went wrong. Where a run made files, the Export
-menu is shot open as well.
+either stream, what was violated and what went wrong. Each stop is shot in every state the
+inspector has (decision-12): the project with its knobs, the part the status bar's count
+goes to, a face of that part, the project's export, and - when the project holds one - its
+reference mesh.
 
 That last part is the whole reason this is not a test. A check knows in advance what it
 wants to be true; a look round does not, which is why nothing here fails - it collects, and
@@ -30,9 +32,10 @@ own root and the app served over that, so the project is opened the way a maker 
 own ``bench.toml``, its sibling modules, its meshes) and nothing the app does on the way can
 touch the original. Each script named - the project's entry, by the app's own rule, when none
 is - is opened as the app reopens a project, through the ``{project, script}`` the browser
-remembers, and shot as an example is: the view with the Problems panel in front, the Problems
-panel on its own, the parameters and the Files tab. The browser's modeller builds every body,
-so a kernel check reports what it measured rather than reading ``unchecked``.
+remembers, and shot as an example is: the view with the project in the inspector, the part the
+findings go to, the knobs, the export, a face and the reference mesh when there is one. The
+browser's modeller builds every body, so a kernel check reports what it measured rather than
+reading ``unchecked``.
 """
 
 import json
@@ -69,34 +72,34 @@ SETTLE_MS = 1500
 the first frame is, and a shot taken between the two is of an empty pane."""
 
 TAB_MS = 250
-"""How long a tab's underline and colour take to move - a 0.12 s transition - before a shot,
-which would otherwise catch both tabs half-selected."""
-
-HOME = "refs"
-"""The sidebar container a look round leaves open: the refs tree, which is the one surface
-that is about the thing on screen rather than about the file."""
+"""How long a selection takes to settle - the inspector redrawing, a 0.12 s transition on a
+row - before a shot, which would otherwise catch it half-drawn."""
 
 REPORT = """() => {
-    const report = document.querySelector('#run-panel');
-    if (report === null) return [];
+    const panel = document.querySelector('#run-panel');
+    const inspector = document.querySelector('#inspector');
+    if (panel === null || inspector === null) return [];
     const where = (one) => [...one.refs, ...(one.line === null ? [] : [`line ${one.line}`])];
-    const found = report.violations.map(
+    const found = inspector.violations.map(
         (one) => `${one.severity} ${one.check}: ${one.message} (${where(one).join(', ')})`
     );
     return [
-        ['script stdout', report.stdout],
-        ['script stderr', report.stderr],
+        ['script stdout', panel.stdout],
+        ['script stderr', panel.stderr],
         ['violations', found.join(' | ')],
-        ['warnings', report.warnings.join(' | ')],
-        ['error', report.error],
+        ['warnings', inspector.warnings.join(' | ')],
+        ['error', inspector.error],
     ];
 }"""
-"""What a person reads off the report after a run, in the order they read it, as ``[name,
-text]`` pairs.
+"""What a person reads off the app after a run, in the order they read it, as ``[name, text]``
+pairs.
 
-Read off ``<bench-panel>``'s own properties rather than off the page. The panel draws one tab
-at a time - a clean run's stdout is behind the Output tab, not drawn at all - and what it does
-draw is in a shadow root; the properties are the whole of what it was given, either way."""
+Read off the components' own properties rather than off the page: the Output panel starts
+folded, the inspector draws only what its subject is about, and what either does draw is in a
+shadow root; the properties are the whole of what they were given, either way."""
+
+FACE = "bench-refs-tree .row[data-ref*='/']"
+"""A face's row in the inspector's faces tree - any row whose ref is a path under a part."""
 
 
 OPEN = "bench.open"
@@ -195,34 +198,62 @@ def _visited(page: Page, stop: str, log: _Log, number: int) -> None:
     page.locator("#examples").get_by_role("button", name=stop, exact=True).click()
     _settled(page)
     page.wait_for_timeout(SETTLE_MS)
-    shot = log.out / f"qa-{number:02d}-{stop.removesuffix('.py')}.png"
-    page.screenshot(path=str(shot))
+    _toured_inspector(page, stop, log, number)
+
+
+def _shot(
+    page: Page, stop: str, log: _Log, number: int, suffix: str, *, whole: bool = True
+) -> None:
+    """Shoot the page - or, with ``whole`` false, the inspector alone - as ``suffix``."""
+    page.wait_for_timeout(TAB_MS)
+    shot = log.out / f"qa-{number:02d}-{stop.removesuffix('.py')}{suffix}.png"
+    if whole:
+        page.screenshot(path=str(shot))
+    else:
+        page.locator("#inspector-pane").screenshot(path=str(shot))
     _said(log, "screenshot", shot.name)
+
+
+def _project(page: Page) -> None:
+    """Nothing selected: the inspector back on the project."""
+    page.locator("#crumb-project").click()
+
+
+def _toured_inspector(page: Page, stop: str, log: _Log, number: int) -> None:
+    """Shoot one stop in every state the inspector has, and read it.
+
+    The project as it opens; the part the status bar's count goes to - or, with nothing found,
+    the first part - with the place it was found lit when there is one; one face of that part;
+    the knobs and the export, the project's own; and the reference mesh when the project holds
+    one. The inspector is left on the project."""
+    _project(page)
+    _shot(page, stop, log, number, "")
     _read(page, log)
-    _parameters(page, stop, log, number)
-    _exported(page, stop, log, number)
-
-
-def _parameters(page: Page, stop: str, log: _Log, number: int) -> None:
-    """Shoot the parameters container - the panel generated from what the script declares -
-    and put the refs back in the sidebar."""
-    page.click("#rail-parameters")
-    page.wait_for_timeout(TAB_MS)
-    shot = log.out / f"qa-{number:02d}-{stop.removesuffix('.py')}-parameters.png"
-    page.screenshot(path=str(shot))
-    _said(log, "screenshot", shot.name)
-    page.click(f"#rail-{HOME}")
-
-
-def _exported(page: Page, stop: str, log: _Log, number: int) -> None:
-    """Shoot the panel's Files tab - what a run made, as a person picks from it - and leave
-    Problems in front again."""
-    page.click("#panel-tab-files")
-    page.wait_for_timeout(TAB_MS)
-    shot = log.out / f"qa-{number:02d}-{stop.removesuffix('.py')}-export.png"
-    page.screenshot(path=str(shot))
-    _said(log, "screenshot", shot.name)
-    page.click("#panel-tab-problems")
+    findings = page.locator("#findings")
+    if findings.is_visible():
+        findings.click()
+        place = page.locator("#part-findings .place").first
+        if place.count() > 0:
+            place.click()
+    else:
+        page.locator("#parts .part").first.click()
+    _shot(page, stop, log, number, "-problems")
+    tree = page.locator("bench-refs-tree .row[aria-expanded='false'] .twist").first
+    if tree.count() > 0:
+        tree.click()
+    face = page.locator(FACE).first
+    if face.count() > 0:
+        face.click()
+        _shot(page, stop, log, number, "-face")
+    _project(page)
+    _shot(page, stop, log, number, "-parameters", whole=False)
+    page.locator("#export").scroll_into_view_if_needed()
+    _shot(page, stop, log, number, "-export", whole=False)
+    reference = page.locator("bench-reference-list .row").first
+    if reference.count() > 0:
+        reference.click()
+        _shot(page, stop, log, number, "-reference")
+        _project(page)
 
 
 def _walk(url: str, stops: tuple[str, ...], log: _Log) -> None:
@@ -274,29 +305,12 @@ def _opened(page: Page, url: str, project: str, script: str) -> None:
     page.wait_for_function(RAN, timeout=BOOT_MS)
 
 
-def _problems(page: Page, stop: str, log: _Log, number: int) -> None:
-    """Shoot the Problems panel on its own - what the checks found, readable at full size
-    rather than as a strip under the view."""
-    shot = log.out / f"qa-{number:02d}-{stop.removesuffix('.py')}-problems.png"
-    page.locator("#run-panel").screenshot(path=str(shot))
-    _said(log, "screenshot", shot.name)
-
-
 def _looked(page: Page, url: str, project: str, stop: str, log: _Log, number: int) -> None:
     """Open one script of a project, wait for it, and shoot and read it as :func:`_visited`
-    does an example - with the Problems panel in front, and on its own as well."""
+    does an example."""
     _opened(page, url, project, stop)
-    # The panel's own `show`, as the rail's Problems button calls it, rather than a click on
-    # the tab: a click on the tab already in front puts the panel away.
-    page.evaluate("() => document.querySelector('#run-panel').show('problems')")
     page.wait_for_timeout(SETTLE_MS)
-    shot = log.out / f"qa-{number:02d}-{stop.removesuffix('.py')}.png"
-    page.screenshot(path=str(shot))
-    _said(log, "screenshot", shot.name)
-    _read(page, log)
-    _problems(page, stop, log, number)
-    _parameters(page, stop, log, number)
-    _exported(page, stop, log, number)
+    _toured_inspector(page, stop, log, number)
 
 
 def _toured(url: str, project: str, stops: tuple[str, ...], log: _Log) -> None:

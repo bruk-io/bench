@@ -972,15 +972,19 @@ Manifold 3.5.3 from npm, self-hosted the same way: `scripts/copy-manifold.mjs` c
 `manifold.js` and `manifold.wasm` into `public/manifold/`, and the worker loads it beside
 Pyodide and hands it to `run` as the kernel.
 
-Layout: left, a CodeMirror 6 editor (`@codemirror/lang-python`) with the
-script; right, the viewer and below it a parameters panel generated from `scene.params`. A
-status bar shows run state and errors (with line highlighted in the editor).
+Layout (decision-12): on the left the project - its switcher and its files; in the centre a
+CodeMirror 6 editor (`@codemirror/lang-python`) with the script beside the viewer, and the
+script's Output folded under them; on the right the inspector, which shows whatever is
+selected - the project (the knobs generated from `scene.params`, the parts with their standing,
+Export all), a part (its findings as places, its faces tree, its files), a face, or a reference
+mesh (survey, detect faces, placement). A status bar shows run state and errors (with line
+highlighted in the editor), and its count of findings selects the part worst off.
 
 The viewer is **one view of every part** (three.js). A laser part is drawn as the plate it
 is cut from, swept in Python (`bench.plates`) to its stock's thickness with its engravings
 on top, and a printed part as the body the kernel built; they lie in wrapping rows on one
 stage. The flat drawing is an export, not a view: what a cutter reads is the sheet SVG and
-DXF, and the Export menu shows each sheet as a thumbnail of that same file. A plate is swept
+DXF, and the inspector's export shows each sheet as a thumbnail of that same file. A plate is swept
 here rather than by the kernel because its names are settled already - a kernel calls a
 wall `side-3`, and a plate's wall answers to the ref its cut path carries - and because a
 laser part then needs no modeller to be drawn.
@@ -1028,7 +1032,7 @@ Interactions that define the product:
   delete on the row they act on. A delete moves a file or a whole directory into `.trash/`
   under the root and says so first; a browser holding projects from before is asked, once,
   whether to write them to the host. Every mesh dropped on the view is kept in the project's
-  directory, and one of them is active (task-49): the References rows in the refs container
+  directory, and one of them is active (task-49): the References rows in the project's inspector
   choose it, `[reference]` names it - `file` alone until a pick places it - and the survey,
   *detect faces* and the pick panel are about it. `tools.build` hands a mesh that is only named
   over as exported.

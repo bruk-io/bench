@@ -1,15 +1,17 @@
-"""End to end: task-67 - hide and show parts and faces from the refs tree.
+"""End to end: task-67 - hide and show parts and faces from the inspector's faces tree.
 
 Asked for while modelling the wall vent (2026-09-23): an assembly of two parts here - the
 frame and the attachment that fits over its collar - hides most of itself, and there was no
 way to take the attachment off the view to look at the frame's flange behind it. Every part
-and named face row in the refs container gets an eye; hiding one hides everything under it -
+and named face row in a part's faces tree - in the inspector, since decision-12 - gets an
+eye; hiding one hides everything under it -
 the viewer filters triangles by the ref membership the scene already carries, nothing
 computed here that Python did not already name - and a hidden triangle is not pickable: a
 click through it answers with whatever is drawn behind it instead (AC#1, AC#2). The state is
 per tab, keyed by ref name, surviving a re-run and a knob change without ever reaching the
 script or the host (AC#3). Isolate and show all are one click each (AC#4). A hidden row says
-so, and a finding on a hidden part still lists in Problems (AC#5) - checked here against
+so, in the tree and in the project's list of parts, and a finding on a hidden part still
+lists with that part (AC#5) - checked here against
 `enclosure_lid.py`'s own proven thin-wall violation (`test_app.py`'s `CHECKED`/`THIN_WALL`),
 since the vent builds no violation of its own at any knob this file drives.
 
@@ -86,18 +88,31 @@ def _click_at(page: Page, spots: tuple[tuple[float, float], ...]) -> str:
     return said
 
 
-def _container(page: Page, name: str) -> None:
-    page.click(f"#rail-{name}")
+def _project(page: Page) -> None:
+    """The inspector back on the project - its knobs, and its list of parts."""
+    page.click("#crumb-project")
 
 
-def _panel(page: Page, tab: str) -> None:
-    button = page.locator(f"#panel-tab-{tab}")
-    if button.get_attribute("aria-selected") != "true":
-        button.click()
+def _part(page: Page, ref: str) -> None:
+    """Make ``ref`` - a part - the inspector's subject, which puts its faces tree up."""
+    _project(page)
+    page.locator(f'#parts .part[data-part="{ref}"]').click()
 
 
 def _row(page: Page, ref: str) -> Locator:
+    """``ref``'s row in its part's faces tree - making that part the subject first when the
+    inspector is on anything else, since a tree holds one part's rows."""
+    part = ref.split("/")[0]
+    crumb = page.locator("#crumb-part")
+    if crumb.count() == 0 or crumb.inner_text().strip() != part:
+        _part(page, part)
     return page.locator(f'bench-refs-tree [data-ref="{ref}"]')
+
+
+def _listed_hidden(page: Page, part: str) -> str | None:
+    """Whether the project's list of parts says ``part`` is hidden."""
+    _project(page)
+    return page.locator(f'#parts .part[data-part="{part}"]').get_attribute("data-hidden")
 
 
 def _eye(page: Page, ref: str) -> Locator:
@@ -119,10 +134,8 @@ def _hidden_triangles(page: Page) -> int:
 def _hide(page: Page, ref: str) -> None:
     """Click `ref`'s eye and wait for its row to say it is hidden.
 
-    `wait_for_function` runs `document.querySelector` in the page, which does not reach into
-    a shadow root the way Playwright's own locator CSS engine does (`ERROR_ROW` above notes
-    the same thing) - so this goes through `bench-refs-tree`'s own `shadowRoot` by hand rather
-    than a plain selector that would never find the row and time out every time.
+    The row is waited for through a locator, whose CSS reaches into the inspector's and the
+    tree's shadow roots, where `document.querySelector` would not.
 
     The eye only reads at full opacity on `.row:hover` - the tree's own answer to a hundred
     rows each wearing one, from `refs-tree.ts`'s own scale check - so this hovers the row
@@ -131,15 +144,12 @@ def _hide(page: Page, ref: str) -> None:
     """
     _row(page, ref).hover()
     _eye(page, ref).click()
-    page.wait_for_function(
-        "(ref) => document.querySelector('bench-refs-tree')?.shadowRoot"
-        "?.querySelector('[data-ref=\"' + ref + '\"]')?.dataset.hidden === 'true'",
-        arg=ref,
-        timeout=10_000,
-    )
+    page.locator(f'bench-refs-tree [data-ref="{ref}"][data-hidden="true"]').wait_for(timeout=10_000)
 
 
 def _show_all(page: Page) -> None:
+    """Show everything again, from the project - a face's inspector has no show all."""
+    _project(page)
     page.click("#refs-show-all")
     page.wait_for_function(
         "() => (document.querySelector('#canvas3d')?.dataset.hidden ?? '0') === '0'",
@@ -160,7 +170,6 @@ def vent_page(printed_page: Page, example: Callable[[Page, str], None]) -> Page:
     """
     example(printed_page, VENT)
     printed_page.wait_for_function(f"() => ({BODIES})() === 2", timeout=BOOT_MS)
-    _container(printed_page, "refs")
     return printed_page
 
 
@@ -207,7 +216,7 @@ def test_hiding_survives_a_parameter_edit(vent_page: Page, settle: Callable[[Pag
     _hide(page, "attachment")
     try:
         before_triangles = page.locator("#canvas3d").get_attribute("data-triangles")
-        _container(page, "parameters")
+        _project(page)
         page.fill("#param-duct", "60")
         page.wait_for_function(
             "(before) => document.querySelector('#canvas3d')?.dataset.triangles !== before",
@@ -215,17 +224,15 @@ def test_hiding_survives_a_parameter_edit(vent_page: Page, settle: Callable[[Pag
             timeout=BOOT_MS,
         )
         settle(page)
-        _container(page, "refs")
 
         assert _eye(page, "attachment").get_attribute("aria-pressed") == "true"
         assert _row(page, "attachment").get_attribute("data-hidden") == "true"
         assert _hidden_triangles(page) > 0
     finally:
         _show_all(page)
-        _container(page, "parameters")
+        _project(page)
         page.fill("#param-duct", "50")
         settle(page)
-        _container(page, "refs")
 
 
 @pytest.mark.e2e
@@ -237,15 +244,14 @@ def test_isolate_the_frame_hides_everything_else_and_show_all_restores_it(
     assert page.locator("#refs-show-all").is_disabled()
 
     _isolate(page, "frame").click()
-    page.wait_for_function(
-        "() => document.querySelector('bench-refs-tree')?.shadowRoot"
-        "?.querySelector('[data-ref=\"attachment\"]')?.dataset.hidden === 'true'",
-        timeout=10_000,
-    )
+    page.locator('#canvas3d[data-hidden]:not([data-hidden="0"])').wait_for(timeout=10_000)
     try:
         assert _row(page, "frame").get_attribute("data-hidden") == "false"
-        assert _row(page, "attachment").get_attribute("data-hidden") == "true"
         assert not page.locator("#refs-show-all").is_disabled()
+        # The attachment's own row is in its own tree: the project's list says it too.
+        assert _listed_hidden(page, "attachment") == "true"
+        assert _listed_hidden(page, "frame") == "false"
+        assert _row(page, "attachment").get_attribute("data-hidden") == "true"
         page.screenshot(path=str(screenshots / "task-67-frame-isolated.png"))
     finally:
         _show_all(page)
@@ -255,33 +261,33 @@ def test_isolate_the_frame_hides_everything_else_and_show_all_restores_it(
 
 
 @pytest.mark.e2e
-def test_a_finding_on_a_hidden_part_still_lists_in_problems(
+def test_a_finding_on_a_hidden_part_still_lists_with_it(
     printed_page: Page, example: Callable[[Page, str], None], settle: Callable[[Page], None]
 ) -> None:
-    """AC#5: hiding a part is a viewer thing, and Problems is not the viewer - a check that
-    found something on a part nobody can currently see must still say so."""
+    """AC#5: hiding a part is a viewer thing, and the inspector is not the viewer - a check
+    that found something on a part nobody can currently see must still say so, on that part,
+    and the project's list must still badge it."""
     page = printed_page
     example(page, CHECKED)
-    _container(page, "parameters")
+    _project(page)
     page.fill("#param-wall", THIN_WALL)
-    _panel(page, "problems")
+    page.locator("#findings", has_text="error").click(timeout=BOOT_MS)
     found = page.locator(ERROR_ROW, has_text="thinnest wall").first
     found.wait_for(timeout=BOOT_MS)
     settle(page)
 
-    _container(page, "refs")
     _hide(page, CHECKED_PART)
     try:
         assert _row(page, CHECKED_PART).get_attribute("data-hidden") == "true"
         assert _row(page, CHECKED_PART).locator(".flag").count() == 1, (
             "a hidden part's finding mark is gone"
         )
-
-        _panel(page, "problems")
-        assert found.is_visible(), "a hidden part's finding no longer lists in Problems"
+        assert found.is_visible(), "a hidden part's finding no longer lists with it"
+        _project(page)
+        badge = page.locator(f'#parts .part[data-part="{CHECKED_PART}"] .badge')
+        assert badge.get_attribute("data-standing") == "error", "a hidden part lost its badge"
     finally:
-        _container(page, "refs")
         _show_all(page)
-        _container(page, "parameters")
+        _project(page)
         page.fill("#param-wall", "3")
         settle(page)
