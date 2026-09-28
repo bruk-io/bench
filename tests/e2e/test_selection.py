@@ -460,6 +460,24 @@ def test_a_place_is_framed_an_underside_seen_from_underneath(page: Page, screens
     assert pane.get_attribute("data-framed") == ""
     assert float(pane.get_attribute("data-distance") or 0) == pytest.approx(whole, abs=0.5)
 
+    # *On bed* the tote is laid where it prints, and a place is framed there, by the placement
+    # the body is drawn with: the socket is still looked at from under the bed.
+    page.locator("#view-modes [data-mode='bed']").click()
+    page.wait_for_function("() => document.querySelector('#canvas3d')?.dataset.mode === 'bed'")
+    try:
+        warning.locator(f'.place[data-ref="{SEEN_FROM_UNDER}"]').click()
+        page.wait_for_function(
+            "(ref) => document.querySelector('#canvas3d')?.dataset.framed === ref",
+            arg=SEEN_FROM_UNDER,
+            timeout=5_000,
+        )
+        eye = [float(one) for one in (pane.get_attribute("data-eye") or "").split(",")]
+        assert eye[2] < -0.5, f"on the bed the socket is looked at from {eye}"
+        page.wait_for_timeout(300)
+        page.screenshot(path=str(screenshots / "task-94-place-framed-on-bed.png"))
+    finally:
+        page.locator("#view-modes [data-mode='assembled']").click()
+
 
 @pytest.mark.e2e
 def test_a_lit_place_a_run_takes_away_leaves_its_part_selected(page: Page) -> None:

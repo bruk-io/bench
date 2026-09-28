@@ -1017,4 +1017,20 @@ kbd {
   kbd {
     display: none;
   }
+
+  /* The files button is the one way to the files here, and it and Run have to stay on
+     screen: the name goes before either, then the mark (task-94). */
+  #titlebar {
+    gap: 6px;
+  }
+
+  .brand-name {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .brand {
+    display: none;
+  }
 }

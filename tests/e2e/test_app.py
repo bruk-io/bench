@@ -1377,6 +1377,10 @@ def test_a_narrow_window_stacks_the_layout(dark_page: Page, screenshots: Path) -
     assert dark_page.locator("#sidebar").is_hidden(), "the sidebar is still taking room"
     assert dark_page.locator("#canvas3d").is_visible(), "the view went away"
     assert dark_page.locator("#inspector-pane").is_visible(), "the inspector went away"
+    # The header keeps the files button - the one way to the files here - and Run on screen.
+    for keep in ("#files-toggle", "#run"):
+        box = dark_page.locator(keep).bounding_box()
+        assert box is not None and box["x"] >= 0 and box["x"] + box["width"] <= 420, keep
 
 
 # ---- a printed part: the 3D pane, its refs, and what a printer reads --------------------

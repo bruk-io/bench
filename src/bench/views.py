@@ -622,6 +622,14 @@ _STEEP = 0.1
 up is Z has no way to turn when it looks straight along it."""
 
 
+_MM = 3
+"""The decimals a sight's box is sent with: a micron, where a float's own seventeen digits
+were a sixth of the cabinet's whole scene on every run."""
+
+_TURN = 4
+"""The decimals a sight's eye is sent with - far finer than a camera can be seen to turn."""
+
+
 def _unit(x: float, y: float, z: float) -> tuple[float, float, float]:
     reach = math.hypot(x, y, z)
     return (0.0, 0.0, 0.0) if reach <= 0.0 else (x / reach, y / reach, z / reach)
@@ -670,7 +678,10 @@ def _sights(faces: Mapping[str, _Faced]) -> dict[str, SightView]:
             seen = places.get(key)
             places[key] = one if seen is None else _merged(seen, one)
     return {
-        ref: SightView(bounds=[*one.low, *one.high], eye=_eye(one, places[ref.split(SEP, 1)[0]]))
+        ref: SightView(
+            bounds=[round(at, _MM) for at in (*one.low, *one.high)],
+            eye=[round(at, _TURN) for at in _eye(one, places[ref.split(SEP, 1)[0]])],
+        )
         for ref, one in places.items()
     }
 

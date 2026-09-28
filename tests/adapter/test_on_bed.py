@@ -33,6 +33,9 @@ _CASES = Path(__file__).with_name("bed_cases.py")
 _TINY = 1e-3
 """Float noise on a single-precision mesh vertex, in millimetres."""
 
+_EYE = 1e-4
+"""How near a sight's eye is to exact: it is sent to four decimals."""
+
 PROGRAM = """\
 import json
 
@@ -258,7 +261,7 @@ def test_a_face_is_seen_from_the_way_it_faces_an_underside_from_underneath(
     assert top["eye"][2] > 0.5
     assert bottom["eye"][2] < -0.5
     for sight in (top, bottom):
-        assert math.hypot(*sight["eye"]) == pytest.approx(1.0)
+        assert math.hypot(*sight["eye"]) == pytest.approx(1.0, abs=_EYE)
         assert sight["eye"][0] > 0.0 and sight["eye"][1] < 0.0, (
             "not leaning toward the standing view"
         )
@@ -274,7 +277,7 @@ def test_a_whole_part_faces_every_way_and_is_seen_from_the_standing_view(
     flat = _part(_ok(measured["laid_out"]), "flat")
     whole = flat["sights"]["flat"]
     reach = math.hypot(*STANDING)
-    assert whole["eye"] == pytest.approx([one / reach for one in STANDING])
+    assert whole["eye"] == pytest.approx([one / reach for one in STANDING], abs=_EYE)
     assert whole["bounds"] == pytest.approx(_drawn_box(flat, "flat"), abs=_TINY)
 
 
