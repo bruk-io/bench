@@ -190,10 +190,13 @@ def _shaped(scene: dict[str, Any]) -> dict[str, Any]:
 
 
 def _shaped_part(part: dict[str, Any]) -> dict[str, Any]:
-    """A part with its mesh's and its marks' number lists written as their lengths."""
+    """A part with its mesh's and its marks' number lists written as their lengths, and its
+    sights as how many there are: one per face and per node above one, nine numbers each, is
+    the cabinet's whole stage again, and every one is read against :class:`~bench.scene.SightView` live."""
     mesh, marks = part["mesh"], part["marks"]
     return dict(
         part,
+        sights=len(part["sights"]),
         mesh=None
         if mesh is None
         else dict(mesh, positions=len(mesh["positions"]), ref_index=len(mesh["ref_index"])),

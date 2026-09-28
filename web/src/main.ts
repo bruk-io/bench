@@ -1630,9 +1630,11 @@ ui.inspector.addEventListener("subject-pick", (event) => {
   showSelection(ref);
 });
 
-// A place a finding names, lit where it is.
+// A place a finding names, lit where it is - and turned to, from where Python said to stand,
+// since a place is as often an underside the standing view cannot see (task-94).
 ui.inspector.addEventListener("place-pick", (event) => {
   showPlace(event.detail.ref);
+  space.frame(event.detail.ref);
 });
 
 ui.inspector.addEventListener("insert-ref", insertSelected);

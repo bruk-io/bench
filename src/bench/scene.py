@@ -76,6 +76,21 @@ class FrameView(TypedDict, closed=True):
     x: list[float]
 
 
+class SightView(TypedDict, closed=True):
+    """Where to stand to see one named place of a body - a face, or a node and every face under
+    it - so a finding's place can be framed rather than lit out of sight (task-94).
+
+    ``bounds`` is the box its triangles fill, where the stage put the body: ``x0, y0, z0, x1,
+    y1, z1``. ``eye`` is the unit direction from the place out to where the camera stands: the
+    way the place faces, leaned toward the view's own standing three-quarter view so a flat face
+    is seen at an angle rather than square on, and the standing view itself for a place that
+    faces every way at once - a whole part, a bore. Never straight up or down, which would leave
+    a camera whose up is Z with no way to turn. The view only applies it."""
+
+    bounds: list[float]
+    eye: list[float]
+
+
 class MarksView(TypedDict, closed=True):
     """The wires engraved on a plate, ready to draw: ``segments`` is six numbers per line
     segment - both ends, already placed on the stage and just clear of the plate's top - and
@@ -184,7 +199,9 @@ class PartView(TypedDict, closed=True):
     printed part's: a laser part's plate has none, and neither does a round face with no
     ``around=`` to take a tangent at, which is task-61's own "cannot frame" case.
     ``areas`` is every named face of ``mesh`` with its area in square millimetres, summed
-    over the triangles that lie on it - empty without a body. ``printing`` is how a printed
+    over the triangles that lie on it - empty without a body. ``sights`` is where to stand to
+    see each named place of ``mesh`` - every face and every node above one, and the part
+    itself - under the same refs; empty without a body. ``printing`` is how a printed
     part prints, and ``None`` for any other process.
     """
 
@@ -199,6 +216,7 @@ class PartView(TypedDict, closed=True):
     lettering: list[LetteringView]
     frames: dict[str, FrameView]
     areas: dict[str, float]
+    sights: dict[str, SightView]
     printing: PrintingView | None
 
 

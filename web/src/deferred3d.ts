@@ -82,6 +82,8 @@ export function deferred3d(container: HTMLElement, hooks: Viewer3DHooks): Viewer
       real?.say(text);
     },
     fit: () => real?.fit(),
+    // A place is only ever asked for off a finding the scene already drew, so there is a view.
+    frame: (ref) => real?.frame(ref),
     zoom: (factor) => real?.zoom(factor),
     select(ref) {
       chosen = ref;

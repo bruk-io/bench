@@ -40,6 +40,9 @@
  * box it fills, `data-selected` and `data-pointed` for the refs lit, `data-lit` for how many
  * triangles are painted as selected, `data-distance` for how far the camera stands from what
  * it looks at, `data-datum` for how long the origin's own X/Y/Z arms are drawn,
+ * `data-eye` for the way from what it looks at out to the camera, as a unit direction, and
+ * `data-framed` for the place a finding named that it last turned to (empty once *Fit* frames
+ * everything again),
  * `data-mode` for the way of looking, `data-floor` for whether a bed's floor is drawn (only
  * ever *On bed*), `data-section` for the axis and position a section is
  * clipping at (empty unless in *Section*), `data-bed` for the printer *On bed* lays parts on
@@ -68,6 +71,7 @@ import type {
   MeshView,
   PartView,
   SheetView,
+  SightView,
   StageView,
 } from "./scene";
 
@@ -77,6 +81,12 @@ const FAR = 20_000;
 const CLICK_SLOP = 4; // px of pointer travel that is still a click, not a drag
 const LINE_PICK = 0.8; // mm either side of an engraved line that still picks it
 const LETTER_PX = 64; // the height lettering is rendered at before it is laid on its box
+const PLACE_LEAST = 0.12; // the least of the scene's diagonal a framed place is shown across
+
+/** The way the view stands to look at the work: over the front right corner, from above - the
+ * three-quarter view a maker holds a part at. `bench.views.STANDING` is the same, and a place's
+ * own eye leans toward it. */
+const STANDING = new THREE.Vector3(0.78, -1, 0.6).normalize();
 
 /** Which axis a section clips along, and where along it. `position` is an absolute
  * millimetre in the scene's own coordinates - the stage's, not a fraction of the box - so a
@@ -166,6 +176,11 @@ export interface Viewer3D {
   mode(mode: ViewMode): void;
   /** Frame everything, and forget that anybody moved the camera. */
   fit(): void;
+  /** Turn and zoom to one named place - a finding's (task-94) - from where Python said to
+   * stand (`PartView.sights`): its box, looked at along its `eye`, so an underside is seen from
+   * underneath. The camera counts as moved, so a re-run leaves it there. Nothing happens for a
+   * ref no drawn body carries a sight for, or for a part *On bed* does not lay. */
+  frame(ref: string): void;
   /** Dolly in or out about the middle - what the +/- buttons do. */
   zoom(factor: number): void;
   select(ref: string | null): void;
@@ -408,6 +423,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     return {
       show: () => {},
       fit: () => {},
+      frame: () => {},
       zoom: () => {},
       select: () => {},
       selectSecond: () => {},
@@ -914,6 +930,8 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
   /** Draw once, on the next frame; several changes in one tick cost one picture. */
   function draw(): void {
     container.dataset["distance"] = camera.position.distanceTo(controls.target).toFixed(1);
+    const eye = camera.position.clone().sub(controls.target).normalize();
+    container.dataset["eye"] = [eye.x, eye.y, eye.z].map((one) => one.toFixed(2)).join(",");
     if (frame !== 0) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
@@ -1448,21 +1466,27 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
    * pane's real aspect, so a wide scene fills a wide pane.
    */
   function fit(): void {
+    container.dataset["framed"] = "";
+    aimed(bounds, STANDING);
+  }
+
+  /** Stand looking at `box` from `from` - a unit direction out of it - near enough that it
+   * fills the pane, as `fit` frames the whole scene and `framePlace` one place of it. */
+  function aimed(box: THREE.Box3, from: THREE.Vector3): void {
     fitting = true;
     try {
-      frame_();
+      aim(box, from.clone());
     } finally {
       fitting = false;
     }
   }
 
-  function frame_(): void {
-    const centre = bounds.getCenter(new THREE.Vector3());
-    const half = bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+  function aim(box: THREE.Box3, from: THREE.Vector3): void {
+    const centre = box.getCenter(new THREE.Vector3());
+    const half = box.getSize(new THREE.Vector3()).multiplyScalar(0.5);
     const rect = container.getBoundingClientRect();
     const aspect = Math.max(rect.width, 1) / Math.max(rect.height, 1);
 
-    const from = new THREE.Vector3(0.78, -1, 0.6).normalize();
     const forward = from.clone().negate();
     const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
     const up = new THREE.Vector3().crossVectors(right, forward).normalize();
@@ -1481,6 +1505,41 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     controls.update();
     camera.updateProjectionMatrix();
     draw();
+  }
+
+  /** Where to stand to see `ref`, with the body it is a place of - or `null` when no drawn
+   * body carries a sight for it. */
+  function sightOf(ref: string): { readonly sight: SightView; readonly body: Body } | null {
+    for (const body of bodies) {
+      const sight = body.part.sights[ref];
+      if (sight !== undefined) return { sight, body };
+    }
+    return null;
+  }
+
+  /** Turn to one place, from where Python said to stand - see `Viewer3D.frame`. *On bed* the
+   * box and the way out of it are moved by the body's own placement, the matrix the body is
+   * already drawn with, rather than anything worked out here. A place smaller than a little of
+   * the scene is framed with some of what is round it, so a 2 mm face is not a camera pressed
+   * against it with nothing to say where it is. */
+  function framePlace(ref: string): void {
+    const found = sightOf(ref);
+    if (found === null) return;
+    const laid = look === "bed" ? found.body.placement : null;
+    if (look === "bed" && laid === null) return;
+    const [x0, y0, z0, x1, y1, z1] = found.sight.bounds;
+    const box = new THREE.Box3(new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1));
+    const eye = new THREE.Vector3(...found.sight.eye);
+    if (laid !== null) {
+      box.applyMatrix4(laid);
+      eye.transformDirection(laid);
+    }
+    const least = Math.max(bounds.getSize(new THREE.Vector3()).length() * PLACE_LEAST, 10);
+    const size = box.getSize(new THREE.Vector3()).max(new THREE.Vector3(least, least, least));
+    box.setFromCenterAndSize(box.getCenter(new THREE.Vector3()), size);
+    aimed(box, eye);
+    touched = true;
+    container.dataset["framed"] = ref;
   }
 
   // ---- picking ---------------------------------------------------------------
@@ -1653,6 +1712,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       touched = false;
       fit();
     },
+    frame: framePlace,
     zoom(factor) {
       const to = controls.target;
       camera.position.sub(to).multiplyScalar(1 / factor).add(to);

@@ -254,6 +254,7 @@
         "drawer-front-1/left-4": 36.05,
         "drawer-front-1/pull": 210.53501393433132
       },
+      "sights": 42,
       "printing": null
     },
     {
@@ -384,6 +385,7 @@
         "drawer-front-2/left-4": 36.05,
         "drawer-front-2/pull": 210.53501393433132
       },
+      "sights": 42,
       "printing": null
     },
     {
@@ -514,6 +516,7 @@
         "drawer-front-3/left-4": 36.05,
         "drawer-front-3/pull": 210.53501393433132
       },
+      "sights": 42,
       "printing": null
     },
     {
@@ -644,6 +647,7 @@
         "drawer-front-4/left-4": 36.05,
         "drawer-front-4/pull": 210.53501393433132
       },
+      "sights": 42,
       "printing": null
     },
     {
@@ -774,6 +778,7 @@
         "drawer-front-5/left-4": 36.05,
         "drawer-front-5/pull": 210.53501393433132
       },
+      "sights": 42,
       "printing": null
     },
     {
@@ -904,6 +909,7 @@
         "drawer-front-6/left-4": 36.05,
         "drawer-front-6/pull": 210.53501393433132
       },
+      "sights": 42,
       "printing": null
     },
     {
@@ -1013,6 +1019,7 @@
         "drawer-back/left-3": 9.0,
         "drawer-back/left-4": 36.05
       },
+      "sights": 41,
       "printing": null
     },
     {
@@ -1090,6 +1097,7 @@
         "drawer-side/left-3": 9.0,
         "drawer-side/left-4": 36.05
       },
+      "sights": 25,
       "printing": null
     },
     {
@@ -1287,6 +1295,7 @@
         "drawer-bottom/left-11": 9.0,
         "drawer-bottom/left-12": 36.428571428571416
       },
+      "sights": 85,
       "printing": null
     },
     {
@@ -1476,6 +1485,7 @@
         "cabinet-side-left/slot-5": 264.0,
         "cabinet-side-left/slot-5-1": 264.0
       },
+      "sights": 81,
       "printing": null
     },
     {
@@ -1665,6 +1675,7 @@
         "cabinet-side-right/slot-5": 264.0,
         "cabinet-side-right/slot-5-1": 264.0
       },
+      "sights": 81,
       "printing": null
     },
     {
@@ -1798,6 +1809,7 @@
         "cabinet-top-bottom/left-11": 36.0,
         "cabinet-top-bottom/left-12": 83.14285714285717
       },
+      "sights": 53,
       "printing": null
     },
     {
@@ -2091,6 +2103,7 @@
         "cabinet-back/left-23": 36.0,
         "cabinet-back/left-24": 81.46153846153857
       },
+      "sights": 133,
       "printing": null
     },
     {
@@ -2144,6 +2157,7 @@
         "runner/top": 534.0,
         "runner/left": 48.0
       },
+      "sights": 13,
       "printing": null
     }
   ],
