@@ -32,11 +32,6 @@ export const REFERENCE = "reference";
  * decision-9's `[project]`, today only `entry`. */
 export const PROJECT = "project";
 
-/** The table where a project says how its prints are made on the host - today only `slicer`,
- * the program "Open in slicer" hands a file to (task-86). Nothing the app writes: it is the
- * maker's, kept through every regeneration as any table this module does not read is. */
-export const PRINT = "print";
-
 /** The one values document a project directory holds (decision-9), whatever its scripts are
  * called. */
 export const BENCH = "bench.toml";
@@ -410,27 +405,6 @@ export function fromToml(text: string): Read {
     into[read.key] = read.value;
   }
   return { ok: true, values, reference: sawReference ? reference : null };
-}
-
-/** The slicer `text`'s `[print]` table names, or `null` when it names none - the host's own
- * choice is what is left then (`slicer.ts`). A `slicer` that is not a string, or a line in
- * `[print]` this cannot read, names none either: the document is the maker's to fix, and the
- * slicer the host falls back to says which one it tried. */
-export function printSlicer(text: string): string | null {
-  let table: string | null = null;
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    const header = HEADER.exec(line);
-    if (header !== null) {
-      table = header[1] ?? "";
-      continue;
-    }
-    if (table !== PRINT || line === "" || line.startsWith("#")) continue;
-    const read = keyValueAt(line, "", valueAt, "");
-    if ("problem" in read || read.key !== "slicer") continue;
-    return typeof read.value === "string" && read.value.trim() !== "" ? read.value.trim() : null;
-  }
-  return null;
 }
 
 /** What `fromToml` passes over in `text`, kept: `[project]`'s `entry`, and every line of every

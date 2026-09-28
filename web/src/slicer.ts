@@ -6,11 +6,15 @@
  * never through a shell: the file's path and the slicer's name are each one argument, whatever
  * is in them, so neither can become a second command.
  *
- * **Who says which slicer**, first to last: the project's `bench.toml` (`[print] slicer`, read
- * by `values.ts`), the host's environment (`BENCH_SLICER`, set where the server is started), and
- * otherwise the host's own default - Bambu Studio on macOS, opened the way Finder opens an app
- * (`open -a BambuStudio <file>`), and on anything else whatever the desktop opens the file with
- * (`xdg-open <file>`).
+ * **Who says which slicer: the machine's owner, and nobody else.** The host's environment
+ * (`BENCH_SLICER`, set by whoever starts the server) and otherwise the host's own default - Bambu
+ * Studio on macOS, opened the way Finder opens an app (`open -a BambuStudio <file>`), and on
+ * anything else whatever the desktop opens the file with (`xdg-open <file>`). **Never a
+ * project**: a project is content - downloaded from somebody else, dropped in by a maker, written
+ * over the projects route by any client on the LAN - and a `bench.toml` that could name the
+ * program would make opening somebody's project a way to run any binary on this machine with a
+ * file of theirs as its argument (`slicer = "/bin/sh"`). What a project says about slicing it
+ * can say to the slicer, in the file; which program runs is not its to say.
  *
  * **What a name means.** On macOS a bare name, or a path to an `.app`, is an application, and
  * `open -a` finds it the way Spotlight would; anything else - a path to a program - is run
@@ -26,8 +30,8 @@ export const SLICER_VARIABLE = "BENCH_SLICER";
  * itself (`/Applications/BambuStudio.app`). */
 export const MAC_DEFAULT = "BambuStudio";
 
-/** Who chose the slicer: the project, the host's environment, or nobody. */
-export type Said = "project" | "environment" | "default";
+/** Who chose the slicer: the host's environment, or nobody. */
+export type Said = "environment" | "default";
 
 /** A slicer, chosen, and the command that opens `file` in it. */
 export interface Launch {
@@ -39,18 +43,14 @@ export interface Launch {
 }
 
 /** How opening `file` - an absolute path on the host - goes, on `platform` (Node's
- * `process.platform`), given the slicer the project names (`null` for none) and the host's
- * environment. */
+ * `process.platform`), given the host's environment - and nothing a project says. */
 export function launch(
-  project: string | null,
   env: Readonly<Record<string, string | undefined>>,
   platform: string,
   file: string,
 ): Launch {
-  const fromEnv = env[SLICER_VARIABLE]?.trim() ?? "";
-  const named = project?.trim() ?? "";
-  const chosen = named !== "" ? named : fromEnv;
-  const said: Said = named !== "" ? "project" : fromEnv !== "" ? "environment" : "default";
+  const chosen = env[SLICER_VARIABLE]?.trim() ?? "";
+  const said: Said = chosen !== "" ? "environment" : "default";
   if (chosen === "") {
     return platform === "darwin"
       ? { argv: ["open", "-a", MAC_DEFAULT, file], slicer: MAC_DEFAULT, said }
@@ -74,14 +74,11 @@ export type Failure =
   | { readonly exit: number | null; readonly stderr: string };
 
 const WHERE: Readonly<Record<Said, string>> = {
-  project: "the project's bench.toml ([print] slicer)",
   environment: `${SLICER_VARIABLE} on the host`,
   default: "the host's default",
 };
 
-const HOW_TO_NAME =
-  `Name the slicer as [print] slicer in the project's bench.toml, or set ${SLICER_VARIABLE} ` +
-  "where the server is started.";
+const HOW_TO_NAME = `Set ${SLICER_VARIABLE} to the slicer where the server is started.`;
 
 /** What went wrong opening a slicer, in words a person can act on: which slicer, who chose it,
  * what happened, and what to set to choose another. */

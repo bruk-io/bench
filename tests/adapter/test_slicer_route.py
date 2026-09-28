@@ -2,18 +2,20 @@
 
 ``/__bench/prints/<project>/<file>`` writes a file a run made into the project's ``prints/`` and
 opens it in the host's slicer with ``execFile`` and a fixed argument list. Nothing here stands in
-for that: the slicer each server is pointed at (``BENCH_SLICER``, or a project's own
-``[print] slicer``) is a small program of its own - a Python script that writes the arguments it
-was started with to a file and exits - so the test reads back exactly what a slicer would have
-been handed. The real Bambu Studio is never started here: every server this module runs names
-its slicer, so the host's own default is never reached (``web/src/slicer.test.ts`` has that
-choice, as data).
+for that: the slicer each server is pointed at (``BENCH_SLICER``) is a small program of its own -
+a Python script that writes the arguments it was started with to a file and exits - so the test
+reads back exactly what a slicer would have been handed. Which program runs is the machine
+owner's to say and never a project's, so a project whose ``bench.toml`` names one of its own is
+here too, and its program is never started. The real Bambu Studio is never started here: every
+server this module runs names its slicer, so the host's own default is never reached
+(``web/src/slicer.test.ts`` has that choice, as data).
 
 Every refusal is driven the way an attacker or an accident would drive it, with the path sent
 byte for byte (:func:`test_projects_route.ask`'s reason), and each one checked twice: the answer
 refuses, and the recording program was never started and nothing landed where it should not.
 """
 
+import contextlib
 import json
 import shutil
 import sys
@@ -57,11 +59,10 @@ def _recorder(path: Path, record: Path, status: int = 0) -> Path:
 
 
 class Slicers(NamedTuple):
-    """What each of the module's slicers recorded, by where it records."""
+    """Where the host's slicer records, and where the one a project names would have."""
 
     host: Path
     project: Path
-    grumpy: Path
 
 
 class Hosted(NamedTuple):
@@ -79,22 +80,19 @@ def _launches(record: Path) -> list[list[str]]:
 
 
 def _laid_out(base: Path) -> tuple[Path, Path, Slicers, Path]:
-    """A root with a plain project, projects that name their own slicer, and every trap."""
+    """A root with a plain project, one that names a slicer of its own, and every trap."""
     root = base / "projects"
     outside = base / "projects-evil"
     bin_ = base / "bin"
     for one in (root / "cabinet", outside, bin_):
         one.mkdir(parents=True)
-    records = Slicers(base / "host.jsonl", base / "project.jsonl", base / "grumpy.jsonl")
+    records = Slicers(base / "host.jsonl", base / "project.jsonl")
     host = _recorder(bin_ / "host-slicer", records.host)
     own = _recorder(bin_ / "own slicer", records.project)
-    grumpy = _recorder(bin_ / "grumpy-slicer", records.grumpy, status=3)
     (root / "cabinet" / "cabinet.py").write_text("x = 1\n")
-    for name, slicer in (("named", own), ("grumpy", grumpy), ("missing", bin_ / "no-such-slicer")):
-        (root / name).mkdir()
-        (root / name / "bench.toml").write_text(
-            f'[values]\nx = 1\n\n[print]\nslicer = "{slicer}"\n'
-        )
+    # A project somebody else wrote, naming a program of its own for the next click to run.
+    (root / "named").mkdir()
+    (root / "named" / "bench.toml").write_text(f'[values]\nx = 1\n\n[print]\nslicer = "{own}"\n')
     # prints/ a symlink out of the project, and a file in prints/ that is a symlink out.
     (root / "linked").mkdir()
     (root / "linked" / "prints").symlink_to(outside, target_is_directory=True)
@@ -150,36 +148,57 @@ def test_a_parts_stl_opens_too_and_a_second_click_replaces_the_first(hosted: Hos
     assert _launches(hosted.records.host)[-2:] == [[str(landed.resolve())]] * 2
 
 
-def test_the_projects_own_slicer_wins_over_the_hosts(hosted: Hosted) -> None:
+def test_a_slicer_a_project_names_is_never_started(hosted: Hosted) -> None:
+    """A project is content - downloaded, dropped in, written by any client on the LAN - so a
+    ``bench.toml`` naming a program (``slicer = "/bin/sh"`` as easily as this recorder) is not
+    who chooses what runs: the host's own slicer opens the file, and the named one never starts."""
     before = len(_launches(hosted.records.host))
     answer = _open(hosted, f"{OPEN}/named/named.3mf")
     assert answer.status == 200, answer
-    assert answer.json()["said"] == "project"
+    assert answer.json() == {
+        "file": "prints/named.3mf",
+        "slicer": "host-slicer",
+        "said": "environment",
+    }
     landed = hosted.server.root / "named" / "prints" / "named.3mf"
-    # A path with a space in it is still one argument - the program, never a shell's words.
-    assert _launches(hosted.records.project) == [[str(landed.resolve())]]
-    assert len(_launches(hosted.records.host)) == before
+    assert _launches(hosted.records.host)[before:] == [[str(landed.resolve())]]
+    assert _launches(hosted.records.project) == []
 
 
-def test_no_slicer_where_it_was_looked_for_is_said_plainly(hosted: Hosted) -> None:
-    answer = _open(hosted, f"{OPEN}/missing/missing.3mf")
-    assert answer.status == 502
-    said = answer.json()
-    assert said["refused"] == "slicer"
-    assert str(said["message"]).startswith("No slicer was found: ")
-    assert "no-such-slicer" in str(said["message"])
-    assert "[print] slicer" in str(said["message"])
-    # The file is written either way: it is the slicer, not the file, that was missing.
-    assert (hosted.server.root / "missing" / "prints" / "missing.3mf").read_bytes() == PACKAGE
+@contextlib.contextmanager
+def _alone(base: Path, slicer: Path) -> Iterator[tuple[Server, Path]]:
+    """A server of its own over one plain project, with ``slicer`` as the host's slicer."""
+    root = base / "projects"
+    (root / "cabinet").mkdir(parents=True)
+    with preview.served(dev=True, env={VARIABLE: str(root), SLICER: str(slicer)}) as url:
+        port = urlsplit(url).port
+        assert port is not None
+        yield Server(port, root, base), root / "cabinet" / "prints" / "cabinet.3mf"
 
 
-def test_a_slicer_that_says_no_is_reported_with_what_it_said(hosted: Hosted) -> None:
-    answer = _open(hosted, f"{OPEN}/grumpy/grumpy.3mf")
-    assert answer.status == 502
-    said = answer.json()
-    assert said["refused"] == "slicer"
-    assert "exited 3 - cannot read that file" in str(said["message"])
-    assert len(_launches(hosted.records.grumpy)) == 1
+def test_no_slicer_where_it_was_looked_for_is_said_plainly(tmp_path: Path) -> None:
+    with _alone(tmp_path, tmp_path / "no-such-slicer") as (server, landed):
+        answer = ask(server, "POST", f"{OPEN}/cabinet/cabinet.3mf", PACKAGE)
+        assert answer.status == 502
+        said = answer.json()
+        assert said["refused"] == "slicer"
+        assert str(said["message"]).startswith("No slicer was found: ")
+        assert "no-such-slicer" in str(said["message"])
+        assert SLICER in str(said["message"])
+        # The file is written either way: it is the slicer, not the file, that was missing.
+        assert landed.read_bytes() == PACKAGE
+
+
+def test_a_slicer_that_says_no_is_reported_with_what_it_said(tmp_path: Path) -> None:
+    record = tmp_path / "grumpy.jsonl"
+    grumpy = _recorder(tmp_path / "grumpy-slicer", record, status=3)
+    with _alone(tmp_path, grumpy) as (server, _):
+        answer = ask(server, "POST", f"{OPEN}/cabinet/cabinet.3mf", PACKAGE)
+        assert answer.status == 502
+        said = answer.json()
+        assert said["refused"] == "slicer"
+        assert "exited 3 - cannot read that file" in str(said["message"])
+    assert len(_launches(record)) == 1
 
 
 # ---- AC#2: confined to prints/, localhost only --------------------------------------------

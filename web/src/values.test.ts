@@ -8,7 +8,6 @@ import {
   fromToml,
   keptOf,
   placing,
-  printSlicer,
   stemOf,
   toml,
   tomlName,
@@ -353,26 +352,5 @@ describe("placing", () => {
     // A partial placement is still a placement - and still refused by the run, naming what is
     // missing, rather than quietly read as no placement at all.
     expect(placing({ file: "foot.stl", origin: "low" })).toBe(true);
-  });
-});
-
-describe("values, the slicer a project names (task-86)", () => {
-  it("reads [print] slicer, and nothing else by that name", () => {
-    const text = '[project]\nentry = "cabinet.py"\nslicer = "not this"\n\n[print]\n# the maker\'s own\nslicer = "OrcaSlicer"\n';
-    expect(printSlicer(text)).toBe("OrcaSlicer");
-    expect(printSlicer('[values]\nslicer = "BambuStudio"\n')).toBeNull();
-    expect(printSlicer("")).toBeNull();
-  });
-
-  it("names none when [print] says it as anything but a word", () => {
-    expect(printSlicer("[print]\nslicer = 3\n")).toBeNull();
-    expect(printSlicer('[print]\nslicer = "  "\n')).toBeNull();
-    expect(printSlicer("[print]\nslicer = \n")).toBeNull();
-  });
-
-  it("keeps [print] through a regeneration, as any table it does not write", () => {
-    const text = '[values]\nunits_x = 4\n\n[print]\nslicer = "OrcaSlicer"\n';
-    const again = toml({ units_x: 5 }, CABINET, [], null, keptOf(text));
-    expect(printSlicer(again)).toBe("OrcaSlicer");
   });
 });

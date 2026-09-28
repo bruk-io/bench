@@ -33,9 +33,9 @@
  * only for a request from this machine to this machine (`remoteRefused`), since a slicer window
  * opening on a desk nobody is at is not what anybody asked for. It takes no lease: `prints/` is
  * what a run makes, not a source, and a tab reading a project may print it as well as one
- * writing it. **What is not closed**: `[print] slicer` is read from the project's `bench.toml`,
- * which any client the projects route takes writes from can change - a tablet on the LAN among
- * them - so whoever can write a project can choose the program the next click here runs.
+ * writing it. The program is the machine owner's choice alone - `BENCH_SLICER` or the
+ * platform's default, never anything in the project, which is content somebody else may have
+ * written (`slicer.ts`).
  */
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -76,7 +76,6 @@ import {
   within,
 } from "../src/route";
 import { type Failure, type Launch, launch, unlaunched } from "../src/slicer";
-import { BENCH, printSlicer } from "../src/values";
 
 /** The one environment variable that says where the projects are. `tools/projects.py` reads
  * the same one, with the same default and the same refusal of a relative path. */
@@ -414,8 +413,8 @@ async function printsDir(dir: string, project: string): Promise<string | Refusal
   return path;
 }
 
-/** Write the body into `project`'s `prints/` as `file`, and open it in the slicer the project,
- * or the host, names (`slicer.ts`). The file stays where it was written whether or not the
+/** Write the body into `project`'s `prints/` as `file`, and open it in the slicer the host
+ * names (`slicer.ts`) - never one the project names. The file stays where it was written whether or not the
  * slicer opens, and the answer says which. */
 async function printed(
   rootReal: string,
@@ -438,9 +437,7 @@ async function printed(
   const bytes = await body(req);
   if (bytes === null) return refused(refusal("too-large", `${at} is too large to write`, at));
   await replaced(path, bytes);
-  const document = await readable(rootReal, dir, `${project}/${BENCH}`, BENCH);
-  const named = isRefusal(document) ? null : printSlicer(await readFile(document, "utf8"));
-  const chosen = launch(named, slicing.env, slicing.platform, path);
+  const chosen = launch(slicing.env, slicing.platform, path);
   const failed = await launched(chosen.argv);
   if (failed !== null) return refused(refusal("slicer", unlaunched(chosen, failed), at));
   return json(200, { file: `${PRINTS}/${file}`, slicer: chosen.slicer, said: chosen.said });
