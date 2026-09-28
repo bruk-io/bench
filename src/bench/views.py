@@ -64,6 +64,7 @@ from .stage import (
     Box,
     Offset,
     as_given,
+    edges,
     extent,
     floor,
     layout,
@@ -358,7 +359,7 @@ def _bed(
         None if one is None or orient is None else extent(one.mesh)
         for one, orient in zip(laid, printing, strict=True)
     )
-    slots, box = on_bed(boxes, volume)
+    slots, plates, box = on_bed(boxes, volume)
     views: list[PrintingView | None] = []
     for part, orient, one, slot, offset in zip(parts, printing, laid, slots, offsets, strict=True):
         if orient is None:
@@ -374,7 +375,9 @@ def _bed(
         said=said,
         volume=[volume.w, volume.d, volume.h],
         bounds=[box.x0, box.y0, box.z0, box.x1, box.y1, box.z1],
-        floor=floor(volume),
+        plates=len(plates),
+        floor=floor(volume, plates),
+        edges=edges(volume, plates),
     )
 
 

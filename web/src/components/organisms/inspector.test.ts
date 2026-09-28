@@ -45,7 +45,9 @@ const H2D: BedView = {
   said: "host",
   volume: [350, 320, 325],
   bounds: [0, 0, 0, 350, 320, 325],
+  plates: 1,
   floor: [],
+  edges: [],
 };
 const PANEL = part("panel", { process: "laser", qty: 2, stock: { thickness: 3, material: "ply", kerf: 0.2 } });
 

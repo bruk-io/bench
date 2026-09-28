@@ -78,15 +78,18 @@ export interface StageView {
 export type PrinterSaid = "script" | "host";
 
 /** The printer's bed *On bed* lays the printed parts on: its name, who chose it, its volume
- * `w, d, h` with its corner at the origin, the box it and every part laid on it fill (what *On
- * bed* frames), and its grid - six numbers per line, both ends. */
+ * `w, d, h`, how many plates the parts take - the first with its corner at the origin, the rest
+ * beside it along X - the box they and every part laid on them fill (what *On bed* frames), and
+ * every plate's grid and build-volume edges, six numbers per line, both ends. */
 export interface BedView {
   /** The machine's name, or `null` for a volume a script asked about that has none. */
   readonly printer: string | null;
   readonly said: PrinterSaid;
   readonly volume: readonly number[];
   readonly bounds: readonly number[];
+  readonly plates: number;
   readonly floor: readonly number[];
+  readonly edges: readonly number[];
 }
 
 /** How a printed part prints, worked out in Python: `up` in its own coordinates, the face it
@@ -305,9 +308,12 @@ function bedProblem(value: unknown): string | null {
   if (value["said"] !== "script" && value["said"] !== "host") return 'bed.said is not "script" or "host"';
   if (!isNumbers(value["volume"], 3)) return "bed.volume is not three numbers";
   if (!isNumbers(value["bounds"], 6)) return "bed.bounds is not six numbers";
-  const floor = value["floor"];
-  if (!isList(floor) || floor.length % 6 !== 0 || !floor.every(isNumber)) {
-    return "bed.floor is not six numbers per line";
+  if (!Number.isInteger(value["plates"])) return "bed.plates is not a whole number";
+  for (const field of ["floor", "edges"] as const) {
+    const lines = value[field];
+    if (!isList(lines) || lines.length % 6 !== 0 || !lines.every(isNumber)) {
+      return `bed.${field} is not six numbers per line`;
+    }
   }
   return null;
 }

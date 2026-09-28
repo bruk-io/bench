@@ -41,7 +41,9 @@
  * triangles are painted as selected, `data-distance` for how far the camera stands from what
  * it looks at, `data-datum` for how long the origin's own X/Y/Z arms are drawn,
  * `data-mode` for the way of looking, `data-section` for the axis and position a section is
- * clipping at (empty unless in *Section*), `data-bed` for the printer *On bed* lays parts on,
+ * clipping at (empty unless in *Section*), `data-bed` for the printer *On bed* lays parts on
+ * and `data-plates` for how many of its plates they take, `data-laid` for how many parts it
+ * lays,
  * `data-unfit` for how many parts laid on it do not fit and `data-overhang` for how many
  * triangles are painted as an overhang,
  * `data-colour-faces` for whether every named face is painted its own colour (empty when off),
@@ -102,7 +104,7 @@ const CURSOR = new THREE.Color(0xe38b00);
  * painted in their own colours, darker than their ghosts, so a foot in its pocket reads as two
  * different solids with a gap between them. */
 const CUT = new THREE.Color(0xb23a2e);
-const REFERENCE_CUT = new THREE.Color(0x5f6874);
+const REFERENCE_CUT = new THREE.Color(0x27303a);
 const CONTEXT_CUT = new THREE.Color(0xa9803d);
 
 /** *On bed*: a face the run's overhang findings name, and a part that does not fit the bed. A
@@ -1378,6 +1380,7 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
       ghosts.reduce((sum, one) => sum + one.index.length, 0),
     );
     container.dataset["bed"] = bed === null ? "" : (bed.printer ?? bed.volume.join(" x "));
+    container.dataset["plates"] = String(bed?.plates ?? 0);
     container.dataset["laid"] = String(bodies.filter((one) => one.placement !== null).length);
 
     // A selected or pointed-at ref the new scene no longer has is dropped, and the host is
@@ -1418,28 +1421,20 @@ export function mount(container: HTMLElement, hooks: Viewer3DHooks): Viewer3D {
     lettered.some((one) => one.ref === ref) ||
     ghosts.some((one) => one.refs.includes(ref));
 
-  /** The printer's floor and build volume, drawn from `bed`'s own numbers into `bedGroup`, and
-   * the box *On bed* frames - or `null` when no printer was named. */
+  /** The printer's plates - each one's floor and build volume, line segments Python placed -
+   * drawn into `bedGroup`, and the box *On bed* frames; `null` when no printer was named. */
   function layBed(bed: BedView | null): THREE.Box3 | null {
     if (bed === null) return null;
-    const floor = new THREE.BufferGeometry();
-    floor.setAttribute("position", new THREE.BufferAttribute(new Float32Array(bed.floor), 3));
-    const grid = new THREE.LineSegments(
-      floor,
-      new THREE.LineBasicMaterial({ color: FLOOR, transparent: true, opacity: 0.6 }),
+    const lines = (segments: readonly number[], material: THREE.LineBasicMaterial): THREE.LineSegments => {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(segments), 3));
+      return new THREE.LineSegments(geometry, material);
+    };
+    bedGroup.add(
+      lines(bed.floor, new THREE.LineBasicMaterial({ color: FLOOR, transparent: true, opacity: 0.6 })),
+      lines(bed.edges, new THREE.LineBasicMaterial({ color: VOLUME_EDGE })),
     );
-    const [w = 0, d = 0, h = 0] = bed.volume;
-    const edges = new THREE.BufferGeometry();
-    // The volume's twelve edges, corner to corner - the numbers `bed.volume` already is.
-    const corners = [
-      [0, 0, 0, w, 0, 0], [w, 0, 0, w, d, 0], [w, d, 0, 0, d, 0], [0, d, 0, 0, 0, 0],
-      [0, 0, h, w, 0, h], [w, 0, h, w, d, h], [w, d, h, 0, d, h], [0, d, h, 0, 0, h],
-      [0, 0, 0, 0, 0, h], [w, 0, 0, w, 0, h], [w, d, 0, w, d, h], [0, d, 0, 0, d, h],
-    ].flat();
-    edges.setAttribute("position", new THREE.BufferAttribute(new Float32Array(corners), 3));
-    const volume = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: VOLUME_EDGE }));
-    bedGroup.add(grid, volume);
-    const [x0 = 0, y0 = 0, z0 = 0, x1 = w, y1 = d, z1 = h] = bed.bounds;
+    const [x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0] = bed.bounds;
     return new THREE.Box3(new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1)).expandByPoint(ORIGIN);
   }
 

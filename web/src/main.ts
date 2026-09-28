@@ -178,6 +178,7 @@ const ui = {
   zoomOut: need<HTMLButtonElement>("zoom-out"),
   viewModes: need<BenchViewModes>("view-modes"),
   colourFacesToggle: need<HTMLButtonElement>("colour-faces-toggle"),
+  sectionBar: need<HTMLDivElement>("section-bar"),
   sectionAxis: need<HTMLSelectElement>("section-axis"),
   sectionPosition: need<HTMLInputElement>("section-position"),
   panel: need<BenchPanel>("run-panel"),
@@ -1238,9 +1239,10 @@ function centreSectionOn(axis: SectionAxis): void {
 }
 
 /** Where the section cuts. The plane is always kept; the view clips at it only in *Section*,
- * and the controls that move it are live only then. */
+ * and the controls that move it are there and live only then. */
 function applySection(): void {
   const cutting = viewMode === "section";
+  ui.sectionBar.hidden = !cutting;
   ui.sectionAxis.disabled = !cutting;
   ui.sectionPosition.disabled = !cutting;
   space.section({ axis: sectionAxis, position: sectionPosition });

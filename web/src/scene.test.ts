@@ -159,7 +159,9 @@ describe("received, how a printed part prints and the bed it is laid on", () => 
     said: "host",
     volume: [350, 320, 325],
     bounds: [0, 0, 0, 350, 320, 325],
+    plates: 1,
     floor: [0, 0, 0, 0, 320, 0],
+    edges: [0, 0, 0, 350, 0, 0],
   };
 
   it("reads a part's printing and face areas, and the bed, as Python sent them", () => {

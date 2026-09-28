@@ -69,6 +69,7 @@ def test_the_hosts_printer_is_the_bed_when_the_script_names_none() -> None:
     assert bed is not None
     assert (bed["printer"], bed["said"], bed["volume"]) == ("H2D", "host", [350.0, 320.0, 325.0])
     assert bed["floor"][:6] == [0.0, 0.0, 0.0, 0.0, 320.0, 0.0]
+    assert (bed["plates"], len(bed["edges"])) == (1, 12 * 6)
 
 
 def test_no_printer_from_anybody_is_no_bed_and_no_fit_asked() -> None:

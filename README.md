@@ -126,6 +126,7 @@ and says in its own text what it could not do and why.
   `moved_part()` moves a part's shape and engravings together. A part is made of
   `Stock | Printed` - a sheet with a thickness and a kerf, or a `Material` and an
   `Orient` - and `process_of()` reads the process off it rather than off a fourth field.
+  A `Printer` is a machine by name and the `Volume` it builds in.
 - `ops.py`, `solids.py`, `features.py` - what you can do, in three files that import only
   downward. Constructors (`rect`, `circle`, `slot`,
   `rounded_rect`), the face builder (`fill`), the flat modifiers (`offset` for kerf,
@@ -286,8 +287,12 @@ and says in its own text what it could not do and why.
   top. No kernel: a laser part is drawn whether or not the modeller loaded. `triangulate.py`
   is the ear clipping that fills its top and bottom.
 - `stage.py` - where bodies stand in the view: rows along X, front edges on the row's line
-  and lying on the floor, a row wrapping before it runs past 600 mm, with the grid under
-  them. Done here so the viewer is handed places already worked out.
+  and lying on the floor, a row wrapping before it runs past 600 mm - or, for a posed
+  assembly, where the script put them - with no floor drawn, since an assembly has no bed.
+  And where each printed part lies on a printer's bed for the view's *On bed* (`on_bed`):
+  already laid down the way it prints, side by side on a plate, the next plate along when one
+  is full, with each plate's grid and build volume as line segments (`floor`, `edges`). Done
+  here so the viewer is handed places already worked out.
 - `telemetry.py` - what a run says about itself, in the standards a collector already
   reads. Logs are the standard library's `logging`, one logger per module under `bench`;
   importing the package configures none of it, and routing records is the host's job. Spans
@@ -316,8 +321,10 @@ and says in its own text what it could not do and why.
   printed part is laid down by wherever its `Orient` is read: `checks.bed_along(shape,
   orient)` resolves `bed_along` off a shape's own `Orient` before `views` calls this, and
   `checks.fits` calls both to turn the tree's own points and measure the box a part prints
-  in before a kernel ever builds it. `views._files` is the only caller, on every printed
-  part's body, so an STL or a 3MF is never the posed mesh. All four are pure functions.
+  in before a kernel ever builds it. `laid_on_bed` is the same, answering the move it made
+  beside the mesh, so the view can lay the body it drew by that move rather than by a mesh of
+  its own; `views` is the only caller, on every printed part's body, so an STL or a 3MF is
+  never the posed mesh. All of them are pure functions.
 - `params.py` - a script's settings as one frozen dataclass. `knob(default, *, label, min,
   max, step)` puts the panel's hints on a field without changing its type, and a `Literal`
   field is a menu. `declared(cls)` reads the class into the panel's `ParamView`s before
@@ -352,6 +359,9 @@ and says in its own text what it could not do and why.
   `check_overhangs` all take - so it answers in the solid's own names - `socket-1` - and the run
   keeps the shapes each check measured beside its answer, so the scene can say `tote/socket-1`.
   Each part that is a body carries its `mesh` when the run was given a kernel.
+  `run(printer=)` is the machine the host lays printed parts on for the view's *On bed* when
+  the script names none; a script names one by the first volume it asks `check_fits` about,
+  so the bed a part is drawn on is the bed its check measured it against.
   `check_clearance_through(at, least, over=, samples=, contacts=)` is the same question asked
   of a motion rather than a pose: `at(t)` is the script's own "give me the assembly posed
   there", it is built and measured at every one of `samples` values across `over`, and the
@@ -373,7 +383,10 @@ and says in its own text what it could not do and why.
   never by a face's last name, so two panels with a `bottom` keep their findings apart - and
   each record as the view the wire carries. A body shown for context is built last, after
   every file, and reaches the scene only as a `ContextView` and as room on the stage
-  (`stage.widened`). It runs no script and knows nothing of one.
+  (`stage.widened`). Each printed part gets a `PrintingView` - its way up, the face it stands
+  on, whether it fits the printer's bed (`checks.fits`, the rule `check_fits` answers) and the
+  one move that lays its drawn body where its STL has it - and each part its faces' areas. It
+  runs no script and knows nothing of one.
 - `transport.py` - a scene as it crosses to the browser: `scene_json`, `scene_wire` (a mesh's
   long lists as buffers beside the JSON - every part's, then the reference's, then each
   context body's), and `binary(filename)`, the one place that says which files are bytes.
@@ -386,7 +399,8 @@ and says in its own text what it could not do and why.
   (shrink, printed-hole compensation, first-layer spread, minimum wall, maximum overhang,
   longest bridge, layer height and the per-fit clearance table), the public
   `clearance(fit, material)` **per side** that a lid lip and a hinge bore need as much as a
-  hole does, the build volumes (`H2D`, `BEDS`), and `rim(profile, length, lead=, drop=,
+  hole does, the build volumes (`H2D`, `BEDS`) and `PRINTER`, the H2D by name - the machine
+  the app lays printed parts on when a script names none - and `rim(profile, length, lead=, drop=,
   style=, top=, bottom=)` - an extrusion with a top, a bottom or both eased round or
   chamfered by a stack of hulled slices, so convex-only: a profile with a hole or a concave
   outline is refused, since a hull would fill either in; `eased()` is `rim()` called with

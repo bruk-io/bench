@@ -606,6 +606,11 @@ kbd {
   gap: 6px;
 }
 
+/* Where a section cuts is a way of looking only in Section. */
+.sectionbar[hidden] {
+  display: none;
+}
+
 .section-axis {
   height: 18px;
   min-width: 0;

@@ -115,16 +115,20 @@ class BedView(TypedDict, closed=True):
 
     ``printer`` is the machine's name - ``None`` for a volume the script's ``check_fits``
     asked about that is not the host's own machine, which then has only its size to go by -
-    and ``said`` who chose it. ``volume`` is ``w, d, h``, standing with its corner at the
-    origin; ``bounds`` is the box the bed and every part laid on it fill, ``x0 .. z1``, which
-    is what *On bed* frames, and a part that runs off the bed takes it past the volume.
-    ``floor`` is the bed's grid, six numbers per line - both ends, on ``z = 0``."""
+    and ``said`` who chose it. ``volume`` is ``w, d, h``, the first plate standing with its
+    corner at the origin and any more beside it along X, ``plates`` of them - as many as the
+    printed parts take; ``bounds`` is the box the plates and every part laid on them fill,
+    ``x0 .. z1``, which is what *On bed* frames, and a part that runs off its plate takes it
+    past the volume. ``floor`` is every plate's grid, six numbers per line - both ends, on
+    ``z = 0`` - and ``edges`` the build volume's edges over every plate, six per edge."""
 
     printer: str | None
     said: PrinterSaid
     volume: list[float]
     bounds: list[float]
+    plates: int
     floor: list[float]
+    edges: list[float]
 
 
 class PrintingView(TypedDict, closed=True):

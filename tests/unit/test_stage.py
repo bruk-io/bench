@@ -14,6 +14,7 @@ from bench.stage import (
     GAP,
     Box,
     as_given,
+    edges,
     extent,
     floor,
     layout,
@@ -136,34 +137,64 @@ _BED = Volume(100.0, 80.0, 50.0)
 def test_the_first_part_on_a_bed_is_a_gap_in_from_its_corner() -> None:
     """A laid-down part is centred on the origin, footprint and all; on the bed its low corner
     is a gap in from the bed's, and its lowest point stays on the bed."""
-    offsets, box = on_bed([Box(-10, -5, 0, 10, 5, 7)], _BED)
+    offsets, plates, box = on_bed([Box(-10, -5, 0, 10, 5, 7)], _BED)
     assert offsets == ((GAP + 10, GAP + 5, 0),)
+    assert plates == (0,)
     assert box == Box(0, 0, 0, 100, 80, 50)
 
 
 def test_parts_on_a_bed_go_side_by_side_and_wrap_before_the_far_edge() -> None:
     """Two 40 mm parts fill the 100 mm bed's first row (10 + 40 + 10 + 40 = 100 is past its
     90 mm of room, so the second already wraps), a gap behind the first."""
-    offsets, _ = on_bed([Box(-20, -5, 0, 20, 5, 3), Box(-20, -10, 0, 20, 10, 3)], _BED)
+    offsets, plates, _ = on_bed([Box(-20, -5, 0, 20, 5, 3), Box(-20, -10, 0, 20, 10, 3)], _BED)
     assert offsets == ((GAP + 20, GAP + 5, 0), (GAP + 20, GAP + 10 + GAP + 10, 0))
+    assert plates == (0,)
 
 
 def test_parts_that_share_a_row_stand_a_gap_apart() -> None:
-    offsets, _ = on_bed([Box(-10, -5, 0, 10, 5, 3), Box(-15, -5, 0, 15, 5, 3)], _BED)
+    offsets, _, _ = on_bed([Box(-10, -5, 0, 10, 5, 3), Box(-15, -5, 0, 15, 5, 3)], _BED)
     assert offsets == ((GAP + 10, GAP + 5, 0), (GAP + 20 + GAP + 15, GAP + 5, 0))
+
+
+def test_a_row_that_would_run_off_the_back_starts_the_next_plate() -> None:
+    """Two 50 mm deep parts: the second's row would end at 10 + 50 + 10 + 50 = 120, past the
+    80 mm bed's 70 of room, so it goes on a second plate, 40 mm to the right of the first."""
+    offsets, plates, box = on_bed([Box(-40, -25, 0, 40, 25, 3), Box(-40, -25, 0, 40, 25, 3)], _BED)
+    assert plates == (0, 140)
+    assert offsets == ((GAP + 40, GAP + 25, 0), (140 + GAP + 40, GAP + 25, 0))
+    assert box == Box(0, 0, 0, 240, 80, 50)
 
 
 def test_a_part_bigger_than_the_bed_is_laid_all_the_same_and_the_box_takes_it_in() -> None:
     """Fitting is the check's to say; the view lays the part and shows it running off."""
-    offsets, box = on_bed([Box(-70, -5, 0, 70, 5, 60)], _BED)
+    offsets, _, box = on_bed([Box(-70, -5, 0, 70, 5, 60)], _BED)
     assert offsets == ((GAP + 70, GAP + 5, 0),)
     assert box == Box(0, 0, 0, GAP + 140, 80, 60)
 
 
+def test_the_plate_after_a_part_that_ran_off_its_own_clears_it() -> None:
+    """The 140 mm part runs to x = 150 on a 100 mm plate; the next plate starts past that, not
+    on top of it."""
+    _, plates, _ = on_bed([Box(-70, -35, 0, 70, 35, 6), Box(-10, -35, 0, 10, 35, 6)], _BED)
+    assert plates == (0, GAP + 140 + 40)
+
+
 def test_a_part_with_nothing_to_lay_takes_no_place_on_the_bed() -> None:
-    offsets, box = on_bed([None, Box(-10, -5, 0, 10, 5, 7)], _BED)
+    offsets, _, box = on_bed([None, Box(-10, -5, 0, 10, 5, 7)], _BED)
     assert offsets == (None, (GAP + 10, GAP + 5, 0))
     assert box == Box(0, 0, 0, 100, 80, 50)
+
+
+def test_each_plate_has_its_floor_and_its_twelve_edges() -> None:
+    volume = Volume(20.0, 10.0, 5.0)
+    one, two = floor(volume), floor(volume, (0.0, 60.0))
+    assert len(two) == 2 * len(one)
+    assert two[len(one) : len(one) + 6] == [60, 0, 0, 60, 10, 0]
+    lines = edges(volume, (0.0, 60.0))
+    assert len(lines) == 2 * 12 * 6
+    assert lines[:6] == [0, 0, 0, 20, 0, 0]
+    tops = {tuple(lines[at : at + 6]) for at in range(0, len(lines), 6)}
+    assert (60, 10, 0, 60, 10, 5) in tops
 
 
 def test_the_floor_is_a_line_every_ten_millimetres_and_one_on_each_far_edge() -> None:

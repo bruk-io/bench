@@ -1274,7 +1274,15 @@ def test_clicking_empty_space_goes_back_to_the_project(page: Page) -> None:
     assert _lit(page) == 0, "something is still lit after a click on nothing"
     assert page.locator("#selection").inner_text().strip() == HOW_TO_SELECT
     looks = [one.get_attribute("id") for one in page.locator(".viewer-bar button").all()]
-    assert looks == ["colour-faces-toggle", "section-toggle", "zoom-out", "fit", "zoom-in"], looks
+    assert looks == [
+        "mode-assembled",
+        "mode-bed",
+        "mode-section",
+        "colour-faces-toggle",
+        "zoom-out",
+        "fit",
+        "zoom-in",
+    ], looks
 
 
 @pytest.mark.e2e
