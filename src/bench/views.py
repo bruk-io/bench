@@ -54,6 +54,7 @@ from .scene import (
     PrintingView,
     Scalar,
     SheetView,
+    SightView,
     StageView,
     StockView,
     SummaryView,
@@ -526,6 +527,7 @@ def _part_view(
     label = str(part.label)
     body = _body(built)
     here = offset or (0.0, 0.0, 0.0)
+    faces = {} if body is None else _faces(body, label, here)
     marks: MarksView | None = None
     lettering: list[LetteringView] = []
     if isinstance(built, Plate):
@@ -542,27 +544,171 @@ def _part_view(
         marks=marks,
         lettering=lettering,
         frames=_frames_view(part.shape, body, label, here, tracer),
-        areas={} if body is None else _areas(body, label),
+        areas=_areas(faces),
+        sights=_sights(faces),
         printing=printing,
     )
 
 
-def _areas(mesh: Mesh, prefix: str) -> dict[str, float]:
-    """Every named face of ``mesh`` under ``prefix``, with the area of the triangles on it in
-    square millimetres - one pass over the flat lists, no record made per triangle, because a
-    printed part is tens of thousands of them and this runs on every keystroke."""
+class _Faced(NamedTuple):
+    """What the triangles on one named place add up to: their area in square millimetres, the
+    sum of their normals each scaled by its triangle's area (so a flat face's is its normal
+    times its area, and a closed body's is nothing), and the box they fill on the stage."""
+
+    area: float
+    facing: tuple[float, float, float]
+    low: tuple[float, float, float]
+    high: tuple[float, float, float]
+
+
+def _merged(a: _Faced, b: _Faced) -> _Faced:
+    return _Faced(
+        area=a.area + b.area,
+        facing=(a.facing[0] + b.facing[0], a.facing[1] + b.facing[1], a.facing[2] + b.facing[2]),
+        low=(min(a.low[0], b.low[0]), min(a.low[1], b.low[1]), min(a.low[2], b.low[2])),
+        high=(max(a.high[0], b.high[0]), max(a.high[1], b.high[1]), max(a.high[2], b.high[2])),
+    )
+
+
+def _faces(mesh: Mesh, prefix: str, offset: Offset) -> dict[str, _Faced]:
+    """Every named face of ``mesh`` under ``prefix``, with what its triangles add up to - one
+    pass over the flat lists, no record made per triangle, because a printed part is tens of
+    thousands of them and this runs on every keystroke. The box is moved by ``offset``, the
+    translation :func:`_mesh_view` stands the triangles at; area and facing need none."""
     vertices = mesh.vertices
     corners = mesh.triangles
-    sums: dict[Ref, float] = {}
+    area: dict[Ref, float] = {}
+    facing: dict[Ref, list[float]] = {}
+    box: dict[Ref, list[float]] = {}
     for at, ref in enumerate(mesh.refs):
         if ref is None:
             continue
         a, b, c = 3 * corners[3 * at], 3 * corners[3 * at + 1], 3 * corners[3 * at + 2]
-        ux, uy, uz = (vertices[b + k] - vertices[a + k] for k in range(3))
-        vx, vy, vz = (vertices[c + k] - vertices[a + k] for k in range(3))
-        doubled = math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)
-        sums[ref] = sums.get(ref, 0.0) + doubled / 2.0
-    return {f"{prefix}{SEP}{ref}": area for ref, area in sums.items()}
+        ax, ay, az = vertices[a], vertices[a + 1], vertices[a + 2]
+        bx, by, bz = vertices[b], vertices[b + 1], vertices[b + 2]
+        cx, cy, cz = vertices[c], vertices[c + 1], vertices[c + 2]
+        ux, uy, uz = bx - ax, by - ay, bz - az
+        vx, vy, vz = cx - ax, cy - ay, cz - az
+        nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+        area[ref] = area.get(ref, 0.0) + math.hypot(nx, ny, nz) / 2.0
+        summed = facing.setdefault(ref, [0.0, 0.0, 0.0])
+        summed[0] += nx / 2.0
+        summed[1] += ny / 2.0
+        summed[2] += nz / 2.0
+        edge = box.setdefault(ref, [ax, ay, az, ax, ay, az])
+        edge[0] = min(edge[0], ax, bx, cx)
+        edge[1] = min(edge[1], ay, by, cy)
+        edge[2] = min(edge[2], az, bz, cz)
+        edge[3] = max(edge[3], ax, bx, cx)
+        edge[4] = max(edge[4], ay, by, cy)
+        edge[5] = max(edge[5], az, bz, cz)
+    dx, dy, dz = offset
+    out: dict[str, _Faced] = {}
+    for ref, total in area.items():
+        fx, fy, fz = facing[ref]
+        x0, y0, z0, x1, y1, z1 = box[ref]
+        out[f"{prefix}{SEP}{ref}"] = _Faced(
+            area=total,
+            facing=(fx, fy, fz),
+            low=(x0 + dx, y0 + dy, z0 + dz),
+            high=(x1 + dx, y1 + dy, z1 + dz),
+        )
+    return out
+
+
+def _areas(faces: Mapping[str, _Faced]) -> dict[str, float]:
+    """Every named face with the area of the triangles on it, in square millimetres."""
+    return {ref: one.area for ref, one in faces.items()}
+
+
+STANDING = (0.78, -1.0, 0.6)
+"""The way the view stands to look at the work - over the front right corner, from above - as
+``web/src/viewer3d.ts`` frames a whole scene. A place's eye leans toward it."""
+
+_LEAN = 2.0
+"""How much more a place's own facing counts than :data:`STANDING` in its eye: enough that an
+underside is looked at from underneath, little enough that a flat face is still seen at an
+angle, with its edges, rather than square on as a flat patch."""
+
+_OUT = 1.5
+"""How much the way out of the part - from the middle of the part to the middle of the place -
+counts in a place's eye. The facing alone looks at the top of a hand-hold cut through the left
+wall from under the floor, through the whole tote; leaning out of the part as well looks at it
+from outside the wall it is cut through, and at a socket in the floor from under its own
+corner."""
+
+_SPREAD = 0.3
+"""How much of a place's area has to face one way before it is looked at from that way: below
+it the place faces every way at once - a whole part, a bore - and is looked at from
+:data:`STANDING`."""
+
+_STEEP = 0.1
+"""How far from straight up or down an eye has to be, as its horizontal length: a camera whose
+up is Z has no way to turn when it looks straight along it."""
+
+
+_MM = 3
+"""The decimals a sight's box is sent with: a micron, where a float's own seventeen digits
+were a sixth of the cabinet's whole scene on every run."""
+
+_TURN = 4
+"""The decimals a sight's eye is sent with - far finer than a camera can be seen to turn."""
+
+
+def _unit(x: float, y: float, z: float) -> tuple[float, float, float]:
+    reach = math.hypot(x, y, z)
+    return (0.0, 0.0, 0.0) if reach <= 0.0 else (x / reach, y / reach, z / reach)
+
+
+def _middle(one: _Faced) -> tuple[float, float, float]:
+    return (
+        (one.low[0] + one.high[0]) / 2.0,
+        (one.low[1] + one.high[1]) / 2.0,
+        (one.low[2] + one.high[2]) / 2.0,
+    )
+
+
+def _eye(place: _Faced, part: _Faced) -> list[float]:
+    """Where to look at ``place`` of ``part`` from, as a unit direction out of it - the way it
+    faces, the way out of the part and the standing view, weighed in that order; see
+    :class:`SightView`."""
+    sx, sy, sz = _unit(*STANDING)
+    fx, fy, fz = place.facing
+    facing = (0.0, 0.0, 0.0)
+    if place.area > 0.0 and math.hypot(fx, fy, fz) >= _SPREAD * place.area:
+        facing = _unit(fx, fy, fz)
+    (px, py, pz), (cx, cy, cz) = _middle(place), _middle(part)
+    reach = math.dist(part.low, part.high) / 2.0
+    out = (0.0, 0.0, 0.0)
+    if reach > 0.0 and math.dist((px, py, pz), (cx, cy, cz)) > 0.05 * reach:
+        out = _unit(px - cx, py - cy, pz - cz)
+    ex = _LEAN * facing[0] + _OUT * out[0] + sx
+    ey = _LEAN * facing[1] + _OUT * out[1] + sy
+    ez = _LEAN * facing[2] + _OUT * out[2] + sz
+    if math.hypot(ex, ey) < _STEEP * math.hypot(ex, ey, ez):
+        ex, ey = ex + sx, ey + sy
+    return list(_unit(ex, ey, ez))
+
+
+def _sights(faces: Mapping[str, _Faced]) -> dict[str, SightView]:
+    """Where to stand to see every named face of a part, every node above one and the part
+    itself - each node what the faces under it add up to, so a finding that names
+    ``tote/grip-left`` is framed on every face of the grip. One merge per face per step of its
+    ref, never per triangle."""
+    places: dict[str, _Faced] = {}
+    for ref, one in faces.items():
+        steps = ref.split(SEP)
+        for depth in range(1, len(steps) + 1):
+            key = SEP.join(steps[:depth])
+            seen = places.get(key)
+            places[key] = one if seen is None else _merged(seen, one)
+    return {
+        ref: SightView(
+            bounds=[round(at, _MM) for at in (*one.low, *one.high)],
+            eye=[round(at, _TURN) for at in _eye(one, places[ref.split(SEP, 1)[0]])],
+        )
+        for ref, one in places.items()
+    }
 
 
 def _frames_view(

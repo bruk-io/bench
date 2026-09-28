@@ -308,15 +308,15 @@ def test_the_stale_bundle_indicator_is_invisible_when_nothing_is_stale(page: Pag
 
 @pytest.mark.e2e
 def test_the_left_is_the_project_and_nothing_else(clean_page: Page) -> None:
-    """decision-12: the sidebar is the project's switcher and its files, and the rail has
-    nothing else to switch it to - the refs, the parameters, the sheets and the problems each
-    have one home now, in the inspector beside their subject."""
+    """decision-12: the sidebar is the project's switcher and its files, and nothing switches
+    it to anything else - the refs, the parameters, the sheets and the problems each have one
+    home now, in the inspector beside their subject. The rail that was left holding one button
+    is gone (task-94): the header's files button shows the files or folds them away."""
     page = clean_page
     assert page.locator("#container-files").is_visible()
-    assert page.locator("#rail-files").get_attribute("aria-pressed") == "true"
-    assert page.locator("#rail .ric").count() == 1, "the rail still switches to something else"
-    for gone in ("refs", "parameters", "sheets", "problems"):
-        assert page.locator(f"#rail-{gone}").count() == 0, f"the rail still has {gone}"
+    assert page.locator("#rail").count() == 0, "the one-button rail is still there"
+    assert page.locator("#files-toggle").get_attribute("aria-pressed") == "true"
+    assert page.locator("#sidebar .container").count() == 1, "the sidebar holds something else"
 
 
 @pytest.mark.e2e
@@ -346,15 +346,22 @@ def test_the_inspector_counts_the_knobs_and_the_parts(page: Page) -> None:
 
 
 @pytest.mark.e2e
-def test_the_knobs_live_with_the_project_in_the_inspector(clean_page: Page) -> None:
-    """The panel generated from the script is the project's, so it is what the inspector shows
-    with nothing selected - and it gives way to a part when a part is the subject, and comes
-    back with the project."""
+def test_the_knobs_are_over_every_subject_folded_when_something_is_selected(
+    clean_page: Page,
+) -> None:
+    """The panel generated from the script leads the project's inspector, and stays at the top
+    of a part's too (task-94) - folded to its heading there, so the part's own sections lead,
+    and a click away from being turned without leaving the part."""
     page = clean_page
     assert page.locator("#params").is_visible()
     assert page.locator("#reset").is_disabled()
     _part(page, "runner")
-    assert page.locator("#params").count() == 0, "the knobs outstayed the project"
+    assert page.locator("#knobs-fold").is_visible(), "the knobs went with the project"
+    assert page.locator("#params").is_hidden(), "the knobs lead a part instead of its findings"
+    page.click("#knobs-fold")
+    assert page.locator("#params").is_visible()
+    assert page.locator("#crumb-part").get_attribute("aria-current") == "page"
+    page.click("#knobs-fold")
     _project(page)
     assert page.locator("#params").is_visible()
     assert page.locator("#param-count").inner_text().strip() == "11"
@@ -609,14 +616,15 @@ def test_the_panel_can_be_put_away_and_brought_back(clean_page: Page) -> None:
 
 @pytest.mark.e2e
 def test_a_clean_run_says_so_rather_than_showing_an_empty_list(clean_page: Page) -> None:
-    """A part nothing was found on says so where its findings would be, its badge says ok, and
-    the status bar has no count to go to - rather than an empty list anywhere."""
+    """A part nothing was found on says so in how it is made, its badge saying ok, and has no
+    Findings section with nothing in it (task-94); the status bar has no count to go to."""
     page = clean_page
     assert page.locator("#findings").is_hidden(), "a clean run was counted in the status bar"
     assert page.locator("#parts .badge", has_text="warning").count() == 0
     assert page.locator("#parts .badge", has_text="error").count() == 0
     _part(page, "runner")
-    assert page.locator("#no-problems").is_visible()
+    assert page.locator("#prints #no-problems").is_visible()
+    assert page.locator("#part-findings").count() == 0, "an empty Findings section is drawn"
 
 
 # ---- downloads ------------------------------------------------------------------------
@@ -679,6 +687,52 @@ def test_the_downloads_live_with_their_subject(clean_page: Page) -> None:
     assert "part-runner.svg" in names, names
     assert "baseplate.scad" not in names, "a part lists the project's files"
     assert page.locator("#zip").count() == 0, "a part offers Download all"
+
+
+@pytest.mark.e2e
+def test_the_export_stays_in_reach_and_a_sheets_name_is_whole(
+    clean_page: Page, screenshots: Path
+) -> None:
+    """task-94 AC#4: the cabinet's project view - eleven knobs, fourteen parts - is longer than
+    the column, so the export's heading holds to the foot of it while the export is below, and
+    a click on the heading goes down to *Download all*. There, every sheet's name is written
+    whole, rather than cut to "shee…" beside its picture and its buttons."""
+    page = clean_page
+    _project(page)
+    pane = page.locator("#inspector-pane").bounding_box()
+    assert pane is not None
+    foot = pane["y"] + pane["height"]
+    head = page.locator(".export-head").bounding_box()
+    assert head is not None
+    assert abs(head["y"] + head["height"] - foot) < 2, "the heading is not held at the foot"
+    zipped = page.locator("#zip").bounding_box()
+    assert zipped is not None and zipped["y"] > foot, "the export was in reach without a scroll"
+    page.screenshot(path=str(screenshots / "task-94-export-in-reach.png"))
+
+    page.click("#export-reach")
+    page.wait_for_function(
+        """(foot) => {
+            const button = document.querySelector('#inspector')?.shadowRoot
+                ?.querySelector('bench-exports')?.shadowRoot?.querySelector('#zip');
+            const box = button?.getBoundingClientRect();
+            return box !== undefined && box.bottom <= foot;
+        }""",
+        arg=foot,
+        timeout=5_000,
+    )
+    sheets = page.locator("#export bench-file-row[stacked]")
+    assert sheets.count() == 7, f"{sheets.count()} sheet rows"
+    for row in sheets.all():
+        whole = row.evaluate(
+            "(row) => { const name = row.shadowRoot.querySelector('.name');"
+            " return name.scrollWidth <= name.clientWidth; }"
+        )
+        assert whole, f"{row.get_attribute('name')} is cut short"
+    assert (
+        page.locator("#export bench-file-row[name='baseplate.scad']").get_attribute("stacked")
+        is None
+    ), "a file that is not a sheet was stacked"
+    page.locator("#inspector-pane").screenshot(path=str(screenshots / "task-94-export-names.png"))
 
 
 # ---- a cut sheet, opened beside the script ---------------------------------------------
@@ -1323,6 +1377,10 @@ def test_a_narrow_window_stacks_the_layout(dark_page: Page, screenshots: Path) -
     assert dark_page.locator("#sidebar").is_hidden(), "the sidebar is still taking room"
     assert dark_page.locator("#canvas3d").is_visible(), "the view went away"
     assert dark_page.locator("#inspector-pane").is_visible(), "the inspector went away"
+    # The header keeps the files button - the one way to the files here - and Run on screen.
+    for keep in ("#files-toggle", "#run"):
+        box = dark_page.locator(keep).bounding_box()
+        assert box is not None and box["x"] >= 0 and box["x"] + box["width"] <= 420, keep
 
 
 # ---- a printed part: the 3D pane, its refs, and what a printer reads --------------------

@@ -1,4 +1,6 @@
-"""End to end: task-91 - the centre is Code, Split or View, and this browser remembers which.
+"""End to end: task-91 - the centre is Code, Split or View, and this browser remembers which;
+and task-94 - View folds the project's files away too, and the header's files button shows or
+folds them at any width.
 
 decision-12: "Centre: editor and view, with a Code | Split | View control: Code for writing,
 View for checking and printing, Split as today." A browser that never chose sees Split; the
@@ -234,3 +236,67 @@ def test_a_notice_in_the_editor_group_is_shown_even_in_the_view_layout(
         assert page.locator("#no-host").is_visible()
         assert page.locator("#canvas3d").is_visible()
         context.close()
+
+
+# ---- task-94 AC#7: View folds the files too; the header's button shows and folds them ------
+
+
+def _files_pressed(page: Page) -> str:
+    return page.locator("#files-toggle").get_attribute("aria-pressed") or ""
+
+
+def test_view_folds_the_files_so_the_view_takes_everything_but_the_inspector(
+    browser: Browser, tmp_path: Path, built_app: Path
+) -> None:
+    with _opened(browser, tmp_path) as page:
+        assert page.locator("#sidebar").is_visible()
+        assert _files_pressed(page) == "true"
+        page.click("#layout-view")
+        assert page.locator("#sidebar").is_hidden(), "View kept the files beside the view"
+        assert _files_pressed(page) == "false"
+        # The centre and the inspector share the whole width: nothing else is left in the row.
+        shell = _width(page, "#shell")
+        assert abs(_width(page, "#centre") + _width(page, "#inspector-pane") - shell) < 2
+        folded_view = _width(page, "#canvas3d")
+        _shot(page, "layout-view-files-folded.png")
+
+        # Asked for, the files come back beside the view, and go again on a second click.
+        page.click("#files-toggle")
+        assert page.locator("#sidebar").is_visible()
+        assert _files_pressed(page) == "true"
+        assert _width(page, "#canvas3d") < folded_view - 100
+        page.click("#files-toggle")
+        assert page.locator("#sidebar").is_hidden()
+
+        # Split shows them by itself again; the button folds them there too.
+        page.click("#layout-split")
+        assert page.locator("#sidebar").is_visible()
+        split_view = _width(page, "#canvas3d")
+        page.click("#files-toggle")
+        assert page.locator("#sidebar").is_hidden()
+        assert _files_pressed(page) == "false"
+        assert _width(page, "#canvas3d") > split_view + 50, "folding gave the view nothing"
+        page.click("#files-toggle")
+        assert page.locator("#sidebar").is_visible()
+
+
+def test_a_narrow_window_keeps_the_files_folded_until_they_are_asked_for(
+    browser: Browser, tmp_path: Path, built_app: Path
+) -> None:
+    """Where the files and the work cannot sit side by side, the files take the centre's
+    place when asked for and give it back on the next click - the rail's one job, which the
+    header's button does now."""
+    with _opened(browser, tmp_path) as page:
+        page.set_viewport_size({"width": 900, "height": 900})
+        # The button follows the width as it changes, and says so as soon as it has.
+        page.wait_for_selector("#files-toggle[aria-pressed='false']", timeout=5_000)
+        assert page.locator("#sidebar").is_hidden()
+        assert page.locator("#canvas3d").is_visible()
+        page.click("#files-toggle")
+        assert page.locator("#sidebar").is_visible()
+        assert page.locator("#centre").is_hidden(), "the files and the work are sharing a row"
+        assert page.locator("#inspector").is_visible()
+        assert _files_pressed(page) == "true"
+        page.click("#files-toggle")
+        assert page.locator("#sidebar").is_hidden()
+        assert page.locator("#canvas3d").is_visible()

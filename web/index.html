@@ -7,6 +7,20 @@
   </head>
   <body>
     <header id="titlebar">
+      <!-- The project's files, shown or folded away (task-94): what the rail's one button was,
+           beside the name of the project it opens. -->
+      <button
+        id="files-toggle"
+        class="files-toggle"
+        type="button"
+        aria-controls="sidebar"
+        aria-pressed="true"
+        title="Show or fold away the project's files"
+      >
+        <svg class="ic" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M2.5 5.5h5l1.5 2h8.5v8.5h-15z" />
+        </svg>
+      </button>
       <div class="brand">
         <svg class="brand-mark" viewBox="0 0 20 20" aria-hidden="true">
           <path d="M2 5h3v2h3V5h4v2h3V5h3v13H2z" />
@@ -32,26 +46,12 @@
       </button>
     </header>
 
-    <div id="shell">
-      <!-- The left is the project and nothing else (decision-12): its switcher and its files.
-           Knobs, parts, findings, faces and exports live in the inspector on the right, beside
-           whatever is selected. The rail keeps its one button for a narrow window, where the
-           sidebar takes the centre's place and has to be asked for. -->
-      <nav id="rail" aria-label="What the sidebar shows">
-        <button
-          id="rail-files"
-          class="ric"
-          type="button"
-          data-container="files"
-          aria-pressed="false"
-          title="The open project, its files, and the others to switch to"
-        >
-          <svg class="ic" viewBox="0 0 20 20" aria-hidden="true">
-            <path d="M2.5 5.5h5l1.5 2h8.5v8.5h-15z" />
-          </svg>
-        </button>
-      </nav>
-
+    <!-- The left is the project and nothing else (decision-12): its switcher and its files.
+         Knobs, parts, findings, faces and exports live in the inspector on the right, beside
+         whatever is selected. The header's files button shows it or folds it away; the View
+         layout folds it by itself, and a narrow window keeps it folded until it is asked for,
+         when it takes the centre's place (task-94). -->
+    <div id="shell" data-sidebar="auto">
       <aside id="sidebar">
         <section id="container-files" class="container" aria-labelledby="head-files">
           <div class="container-head">
@@ -176,7 +176,6 @@
       <button id="findings" type="button" class="findings" hidden title="Show the part with the worst findings"></button>
       <span id="stale-bundle" class="state" data-state="error" hidden>stale examples</span>
       <span id="reach" class="state" data-state="ok" hidden></span>
-      <span id="standing" class="state" data-state="warn" hidden></span>
       <span class="spacer"></span>
       <span id="timing" class="timing"></span>
     </footer>

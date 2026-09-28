@@ -16,6 +16,14 @@
  * A run that failed says so at the top, whatever the subject: that is about the run, not about
  * a part.
  *
+ * **The knobs are over every subject** (task-94). Tuning while reading a part's findings is the
+ * point of having both on screen, so the knobs are one section at the top of the column for
+ * every subject - open on the project, folded to its one line of heading on anything selected,
+ * so the findings lead - drawn by one template at one place, the same way the faces tree is, so
+ * a knob half-typed or focused survives the selection moving. A section with nothing in it is
+ * not drawn at all, and the export's heading stays at the foot of the column while the export
+ * itself is further down, so *Download all* is a click away however long the project's list.
+ *
  * Nothing here selects itself, and nothing here holds a copy of the run: the page hands down the
  * subject and the scene's own lists as properties, and every click goes back up as an event -
  * `subject-pick` from the breadcrumb, a part row or a face's part, `insert-ref`, `insert-fit`,
@@ -30,7 +38,7 @@
  * row in the tree the person was already reading.
  */
 import { LitElement, css, html, nothing } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 
 import type { Overrides } from "../../overrides";
 import type { BedView, ParamView, PartView, SheetView, ViolationView } from "../../scene";
@@ -48,6 +56,7 @@ import {
   standingWords,
   within,
 } from "../../subjects";
+import { layout, partLayout } from "../../exports";
 import "../atoms/callout";
 import "../molecules/reference-list";
 import "../molecules/violation-list";
@@ -202,7 +211,17 @@ export class BenchInspector extends LitElement {
         flex: 1;
         min-height: 0;
         overflow: auto;
-        padding-bottom: 16px;
+        /* What is scrolled to - a face's row revealed in the tree - stops above the export's
+           heading held at the foot, rather than under it. */
+        scroll-padding-bottom: 44px;
+      }
+
+      /* The room under the last section, as a box rather than the column's own padding: a
+         heading held at the foot sits inside the padding, and would stop short of the edge. */
+      .body::after {
+        content: "";
+        display: block;
+        height: 16px;
       }
 
       section {
@@ -243,10 +262,89 @@ export class BenchInspector extends LitElement {
         margin-left: auto;
       }
 
+      /* A section that folds: its heading is the button. */
+      .fold {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        height: auto;
+        padding: 0;
+        border: none;
+        background: none;
+        box-shadow: none;
+        color: inherit;
+        font: inherit;
+        letter-spacing: inherit;
+        text-transform: inherit;
+      }
+
+      .fold:hover:not(:disabled) {
+        background: none;
+        color: var(--fg);
+      }
+
+      .fold::before {
+        content: "";
+        width: 0;
+        height: 0;
+        border-left: 4px solid currentcolor;
+        border-top: 3.5px solid transparent;
+        border-bottom: 3.5px solid transparent;
+        transition: transform 0.12s;
+      }
+
+      .fold[aria-expanded="true"]::before {
+        transform: rotate(90deg);
+      }
+
+      #knobs[data-folded="true"] .section-head {
+        margin-bottom: 0;
+      }
+
+      /* The export's heading, held at the foot of the column while the export is below it: a
+         click goes down to it. In the flow it is simply the export's heading. */
+      .export-head {
+        position: sticky;
+        bottom: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 10px 6px;
+        border-top: 1px solid var(--line);
+        background: var(--panel);
+        box-shadow: 0 -6px 10px -8px color-mix(in srgb, var(--fg) 30%, transparent);
+      }
+
+      .reach {
+        height: auto;
+        padding: 0;
+        border: none;
+        background: none;
+        box-shadow: none;
+        color: inherit;
+        font: inherit;
+        letter-spacing: inherit;
+        text-transform: inherit;
+      }
+
+      .reach:hover:not(:disabled) {
+        background: none;
+        color: var(--fg);
+      }
+
+      .export-head + section {
+        padding-top: 0;
+      }
+
       .quiet {
         margin: 0;
         font-size: 12px;
         color: var(--fg-dim);
+      }
+
+      .waiting {
+        padding: 8px 10px;
       }
 
       .foot {
@@ -448,13 +546,25 @@ export class BenchInspector extends LitElement {
   @property({ attribute: false }) activeReference: string | null = null;
   @property({ attribute: false }) tools: ReferenceToolsView | null = null;
 
+  /** Whether the knobs are folded - on the project, and on anything selected. Each is the
+   * person's to change and lasts while the page does; a selection starts folded, so its
+   * findings lead. */
+  @state() private knobsFolded: { readonly project: boolean; readonly selected: boolean } = {
+    project: false,
+    selected: true,
+  };
+
   override render() {
+    const nothingRan = this.parts.length === 0 && this.error === "" && this.subject.kind === "project";
     return html`
       ${this.head()}
       ${this.error === ""
         ? nothing
         : html`<bench-callout class="failed" tone="danger"><pre id="error" class="error">${this.error}</pre></bench-callout>`}
-      <div class="body">${this.lead()}${this.faces()}${this.exported()}</div>
+      <div class="body">
+        ${this.knobs()}${this.lead()}${this.faces()}${this.exported()}
+        ${nothingRan ? html`<p id="nothing-ran" class="quiet waiting">Nothing has run yet.</p>` : nothing}
+      </div>
     `;
   }
 
@@ -552,19 +662,38 @@ export class BenchInspector extends LitElement {
     }
   }
 
-  private projectLead() {
+  /** The knobs, over every subject - see the module's own note. Not drawn until a run has
+   * declared some, and not for a script that declares none. */
+  private knobs() {
     const count = this.params?.length ?? 0;
-    const unplaced = findingsOnNoPart(this.violations, this.parts);
+    if (count === 0) return nothing;
+    const which = this.subject.kind === "project" ? "project" : "selected";
+    const folded = this.knobsFolded[which];
+    const turned = Object.keys(this.overrides).length;
     return html`
-      <section id="knobs" aria-labelledby="knobs-head">
+      <section id="knobs" aria-labelledby="knobs-head" data-folded=${String(folded)}>
         <div class="section-head">
-          <h2 id="knobs-head">Knobs</h2>
-          <span id="param-count" class="count">${count === 0 ? "" : String(count)}</span>
+          <h2 id="knobs-head">
+            <button
+              id="knobs-fold"
+              class="fold"
+              type="button"
+              aria-expanded=${folded ? "false" : "true"}
+              aria-controls="params"
+              title=${folded ? "Show the knobs" : "Fold the knobs away"}
+              @click=${() => {
+                this.knobsFolded = { ...this.knobsFolded, [which]: !folded };
+              }}
+            >
+              Knobs
+            </button>
+          </h2>
+          <span id="param-count" class="count">${String(count)}</span>
           <button
             id="reset"
             type="button"
             class="link push"
-            ?disabled=${Object.keys(this.overrides).length === 0}
+            ?disabled=${turned === 0}
             @click=${() => {
               this.plain("params-reset");
             }}
@@ -572,23 +701,29 @@ export class BenchInspector extends LitElement {
             reset
           </button>
         </div>
-        <bench-params id="params" .params=${this.params} .overrides=${this.overrides}></bench-params>
-        ${this.reading
+        <bench-params id="params" ?hidden=${folded} .params=${this.params} .overrides=${this.overrides}></bench-params>
+        ${this.reading && !folded
           ? html`<p id="params-unkept" class="foot">
               Read-only here: these knobs turn and the model runs, but nothing turned is kept.
             </p>`
           : nothing}
       </section>
-      <section id="parts" aria-labelledby="parts-head">
-        <div class="section-head">
-          <h2 id="parts-head">Parts</h2>
-          <span class="count">${this.parts.length === 0 ? "" : String(this.parts.length)}</span>
-          ${this.showAll()}
-        </div>
-        ${this.parts.length === 0
-          ? html`<p class="quiet">Nothing has run yet.</p>`
-          : html`<div class="parts">${this.parts.map((part) => this.partRow(part))}</div>`}
-      </section>
+    `;
+  }
+
+  private projectLead() {
+    const unplaced = findingsOnNoPart(this.violations, this.parts);
+    return html`
+      ${this.parts.length === 0
+        ? nothing
+        : html`<section id="parts" aria-labelledby="parts-head">
+            <div class="section-head">
+              <h2 id="parts-head">Parts</h2>
+              <span class="count">${String(this.parts.length)}</span>
+              ${this.showAll()}
+            </div>
+            <div class="parts">${this.parts.map((part) => this.partRow(part))}</div>
+          </section>`}
       ${unplaced.length === 0 && this.warnings.length === 0
         ? nothing
         : html`<section id="project-findings" aria-labelledby="project-findings-head">
@@ -658,19 +793,26 @@ export class BenchInspector extends LitElement {
     }
     const found = findingsOn(part.ref, this.violations);
     return html`
-      <section id="part-findings" aria-labelledby="part-findings-head">
-        <div class="section-head">
-          <h2 id="part-findings-head">Findings</h2>
-          <span class="count">${found.length === 0 ? "" : String(found.length)}</span>
-          <span class="push">${this.badge(standingOf(found))}</span>
-        </div>
-        ${found.length === 0
-          ? html`<p id="no-problems" class="quiet">Nothing was reported about this part.</p>`
-          : html`<bench-violation-list id="violations" .violations=${found} .lit=${this.lit}></bench-violation-list>`}
-      </section>
+      ${found.length === 0
+        ? nothing
+        : html`<section id="part-findings" aria-labelledby="part-findings-head">
+            <div class="section-head">
+              <h2 id="part-findings-head">Findings</h2>
+              <span class="count">${String(found.length)}</span>
+              <span class="push">${this.badge(standingOf(found))}</span>
+            </div>
+            <bench-violation-list id="violations" .violations=${found} .lit=${this.lit}></bench-violation-list>
+          </section>`}
       <section id="prints" aria-labelledby="prints-head">
-        <div class="section-head"><h2 id="prints-head">How it is made</h2></div>
+        <div class="section-head">
+          <h2 id="prints-head">How it is made</h2>
+          ${found.length === 0 ? html`<span class="push">${this.badge(standingOf(found))}</span>` : nothing}
+        </div>
         <dl>
+          ${found.length === 0
+            ? html`<dt>checks</dt>
+                <dd id="no-problems">nothing was reported about this part</dd>`
+            : nothing}
           <dt>process</dt>
           <dd>${part.process}</dd>
           <dt>stock</dt>
@@ -750,15 +892,15 @@ export class BenchInspector extends LitElement {
                 <dd class="mono">${frame.normal.map((one) => one.toFixed(3)).join(", ")}</dd>`}
         </dl>
       </section>
-      <section id="face-findings" aria-labelledby="face-findings-head">
-        <div class="section-head">
-          <h2 id="face-findings-head">Findings naming it</h2>
-          <span class="count">${found.length === 0 ? "" : String(found.length)}</span>
-        </div>
-        ${found.length === 0
-          ? html`<p class="quiet">No check named this face.</p>`
-          : html`<bench-violation-list id="violations" .violations=${found} .lit=${this.lit}></bench-violation-list>`}
-      </section>
+      ${found.length === 0
+        ? nothing
+        : html`<section id="face-findings" aria-labelledby="face-findings-head">
+            <div class="section-head">
+              <h2 id="face-findings-head">Findings naming it</h2>
+              <span class="count">${String(found.length)}</span>
+            </div>
+            <bench-violation-list id="violations" .violations=${found} .lit=${this.lit}></bench-violation-list>
+          </section>`}
     `;
   }
 
@@ -780,11 +922,13 @@ export class BenchInspector extends LitElement {
     const part = this.subjectPart();
     if (part === null) return nothing;
     const refs = this.refs.filter((ref) => within(ref, part.ref));
+    // The part's own ref is always in the list; a part with no face of its own has one row.
+    if (refs.length <= 1) return nothing;
     return html`
       <section id="faces" aria-labelledby="faces-head">
         <div class="section-head">
           <h2 id="faces-head">Faces</h2>
-          <span id="refs-count" class="count">${refs.length === 0 ? "" : String(refs.length)}</span>
+          <span id="refs-count" class="count">${String(refs.length)}</span>
           ${this.showAll()}
         </div>
         <bench-refs-tree
@@ -820,23 +964,36 @@ export class BenchInspector extends LitElement {
     if (subject.kind === "face" || subject.kind === "reference") return nothing;
     const part = subject.kind === "part" ? (this.parts.find((one) => one.ref === subject.ref) ?? null) : null;
     if (subject.kind === "part" && part === null) return nothing;
-    const count = Object.keys(this.files).length;
+    const only = part === null ? null : { ref: part.ref, label: part.label };
+    const rows = only === null ? layout(this.sheets, this.files) : partLayout(only, this.sheets, this.files);
+    const count = [...rows.sheets, ...rows.printed, ...rows.others].reduce((sum, row) => sum + row.downloads.length, 0);
+    if (count === 0) return nothing;
     return html`
+      <div class="export-head">
+        <h2 id="export-head">
+          <button id="export-reach" class="reach" type="button" title="Go down to the export" @click=${this.toExport}>
+            ${part === null ? "Export" : "Export this part"}
+          </button>
+        </h2>
+        <span class="count">${`${String(count)} ${plural(count, "file")}`}</span>
+      </div>
       <section id="export" aria-labelledby="export-head">
-        <div class="section-head">
-          <h2 id="export-head">${part === null ? "Export" : "Export this part"}</h2>
-          <span class="count">${part === null && count > 0 ? `${String(count)} ${plural(count, "file")}` : ""}</span>
-        </div>
         <bench-exports
           .sheets=${this.sheets}
           .files=${this.files}
-          .onlyPart=${part === null ? null : { ref: part.ref, label: part.label }}
+          .onlyPart=${only}
           ?slicer=${this.slicer}
           .opening=${this.opening}
         ></bench-exports>
       </section>
     `;
   }
+
+  /** Scroll the column down to the export - the last thing in it. */
+  private readonly toExport = (): void => {
+    const body = this.shadowRoot?.querySelector(".body");
+    body?.scrollTo({ top: body.scrollHeight, behavior: "smooth" });
+  };
 
   // ---- helpers -----------------------------------------------------------------------------
 
