@@ -1257,6 +1257,27 @@ def test_hovering_a_plate_names_its_part_its_stock_and_its_sheet(page: Page) -> 
 
 
 @pytest.mark.e2e
+def test_clicking_empty_space_goes_back_to_the_project(page: Page) -> None:
+    """decision-12: the inspector follows the selection, and a click on nothing is nothing
+    selected - the project, its knobs back in the inspector and nothing lit. And the bar over
+    the view holds only ways of looking at it, every action having moved to its subject."""
+    page.click("#fit")
+    page.wait_for_timeout(100)
+    _part(page, "runner")
+    assert page.locator("#crumb-part").get_attribute("aria-current") == "page"
+    assert _lit(page) > 0
+    box = _canvas3d(page)
+    page.mouse.click(box["x"] + box["width"] * 0.1, box["y"] + box["height"] * 0.1)
+    page.wait_for_timeout(150)
+    assert page.locator("#crumb-project").get_attribute("aria-current") == "page"
+    assert page.locator("#params").is_visible(), "the knobs did not come back"
+    assert _lit(page) == 0, "something is still lit after a click on nothing"
+    assert page.locator("#selection").inner_text().strip() == HOW_TO_SELECT
+    looks = [one.get_attribute("id") for one in page.locator(".viewer-bar button").all()]
+    assert looks == ["colour-faces-toggle", "section-toggle", "zoom-out", "fit", "zoom-in"], looks
+
+
+@pytest.mark.e2e
 def test_a_cancelled_press_does_not_land_as_a_click(page: Page) -> None:
     page.keyboard.press("Escape")
     assert page.evaluate(CANCELLED_CLICK) == HOW_TO_SELECT, "the cancelled press selected"

@@ -235,7 +235,7 @@ def _toured_inspector(page: Page, stop: str, log: _Log, number: int) -> None:
         place = page.locator("#part-findings .place").first
         if place.count() > 0:
             place.click()
-    else:
+    elif page.locator("#parts .part").count() > 0:
         page.locator("#parts .part").first.click()
     _shot(page, stop, log, number, "-problems")
     tree = page.locator("bench-refs-tree .row[aria-expanded='false'] .twist").first
