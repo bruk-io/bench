@@ -1,11 +1,16 @@
 """End to end: task-62 - a section view, clipping the whole scene at a plane.
 
 decision-10 is what this is for: the vent's tongue sits under the collar's hook, inside the
-attachment, and no pose shows it from outside. A toggle in the view clips every part at a
-plane along X, Y or Z, with a slider for where along it - off by default (AC#1), reading as a
-gap where two parts meet rather than as one more shaded face (AC#2), left exactly as set
-across a re-run or a parameter edit rather than reset by either (AC#3), and taking picking
-with it: a face the plane has clipped away must not answer a click (AC#4).
+attachment, and no pose shows it from outside. The view clips every part at a plane along X, Y
+or Z, with a slider for where along it - off by default (AC#1), reading as a gap where two
+parts meet rather than as one more shaded face (AC#2), left exactly as set across a re-run or
+a parameter edit rather than reset by either (AC#3), and taking picking with it: a face the
+plane has clipped away must not answer a click (AC#4).
+
+Since task-89 the section is a way of looking rather than a toggle: *Section* in the view's
+mode control, beside *Assembled* and *On bed*, with the axis and the slider offered only
+while it is on. These checks were written against the toggle and are the same checks against
+the mode - what it cuts beyond the parts is ``test_view_modes.py``'s.
 
 The default page (``page``, from ``conftest.py``) already has the cabinet drawn, which is
 enough for the toggle, the persistence and the picking checks; the vent's own hook, sectioned
@@ -74,26 +79,28 @@ def _bounds(page: Page) -> tuple[float, ...]:
     return tuple(float(one) for one in raw.split(","))
 
 
-def _toggle_on(page: Page) -> None:
-    page.click("#section-toggle")
+def _mode(page: Page, mode: str) -> None:
+    page.locator(f"#view-modes [data-mode='{mode}']").click()
     page.wait_for_function(
-        "() => document.querySelector('#section-toggle')?.getAttribute('aria-pressed') === 'true'",
+        "(want) => document.querySelector('#canvas3d')?.dataset.mode === want",
+        arg=mode,
         timeout=10_000,
     )
+
+
+def _toggle_on(page: Page) -> None:
+    _mode(page, "section")
 
 
 def _toggle_off(page: Page) -> None:
-    page.click("#section-toggle")
-    page.wait_for_function(
-        "() => document.querySelector('#section-toggle')?.getAttribute('aria-pressed') === 'false'",
-        timeout=10_000,
-    )
+    _mode(page, "assembled")
 
 
 @pytest.mark.e2e
-def test_the_section_toggle_starts_off(page: Page) -> None:
-    assert page.locator("#section-toggle").get_attribute("aria-pressed") == "false"
+def test_the_section_starts_off(page: Page) -> None:
+    assert page.locator("#mode-section").get_attribute("aria-checked") == "false"
     assert _data_section(page) == ""
+    assert page.locator("#section-bar").is_hidden()
     assert page.locator("#section-axis").is_disabled()
     assert page.locator("#section-position").is_disabled()
 
@@ -102,7 +109,7 @@ def test_the_section_toggle_starts_off(page: Page) -> None:
 def test_turning_the_section_on_clips_the_view_and_says_so(page: Page) -> None:
     _toggle_on(page)
     try:
-        assert page.locator("#section-toggle").get_attribute("aria-pressed") == "true"
+        assert page.locator("#mode-section").get_attribute("aria-checked") == "true"
         assert not page.locator("#section-axis").is_disabled()
         assert not page.locator("#section-position").is_disabled()
         said = _data_section(page)
@@ -137,7 +144,7 @@ def test_the_section_stays_exactly_as_set_across_a_parameter_edit(
 
         after = _data_section(page)
         assert after == before, f"the section moved on a re-run: {before} -> {after}"
-        assert page.locator("#section-toggle").get_attribute("aria-pressed") == "true"
+        assert page.locator("#mode-section").get_attribute("aria-checked") == "true"
     finally:
         _toggle_off(page)
         page.click("#crumb-project")

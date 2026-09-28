@@ -5,7 +5,7 @@
  * those numbers into words, so nothing here filters or counts a scene. Every function is pure,
  * which is what makes the wording testable on its own.
  */
-import type { SummaryView } from "./scene";
+import type { BedView, SummaryView } from "./scene";
 
 const plural = (count: number, one: string): string => (count === 1 ? one : `${one}s`);
 
@@ -51,6 +51,34 @@ export function noBodiesReason(summary: SummaryView): string {
     `${summary.unbuilt} ${plural(summary.unbuilt, "part")}, but this run built no body to` +
     " draw: the modeller did not load. Refs, parameters and cut sheets are unaffected."
   );
+}
+
+/** Why *On bed* has nothing on it, or what it is laid on - `""` when the bed speaks for
+ * itself. A cut part is not printed and goes on the sheets; a scene no printer was named for
+ * has no bed to lay anything on. */
+export function onBedReason(summary: SummaryView, bed: BedView | null): string {
+  if (summary.printed === 0) {
+    return summary.parts === 0 ? "" : "nothing here is printed - the cut parts are on their sheets";
+  }
+  if (bed === null) return "no printer named: a script names one by asking check_fits about its volume";
+  return noBodiesReason(summary);
+}
+
+/** The printer a bed is, as the inspector says it: "the H2D (350 × 320 × 325 mm)", or a
+ * volume the script asked about by its size alone. */
+export function printerWords(bed: BedView): string {
+  const [w = 0, d = 0, h = 0] = bed.volume;
+  const size = `${String(w)} × ${String(d)} × ${String(h)} mm`;
+  return bed.printer === null ? `a ${size} volume` : `the ${bed.printer} (${size})`;
+}
+
+/** A way up as a person reads it: "+Z", "−Y", or the three numbers when it is no one axis. */
+export function upWords(up: readonly [number, number, number]): string {
+  const axes = ["X", "Y", "Z"] as const;
+  const along = up.findIndex((one) => Math.abs(one) === 1);
+  const plain = along >= 0 && up.every((one, at) => at === along || one === 0);
+  if (plain) return `${(up[along] ?? 0) > 0 ? "+" : "−"}${axes[along] ?? "?"}`;
+  return up.map((one) => one.toFixed(3)).join(", ");
 }
 
 /** A span of time as a person says it roughly: "a moment", "40 seconds", "3 minutes",

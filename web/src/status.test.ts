@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import type { SummaryView } from "./scene";
-import { built, failing, found, noBodiesReason, readOnlyWords, roughly } from "./status";
+import type { BedView, SummaryView } from "./scene";
+import {
+  built,
+  failing,
+  found,
+  noBodiesReason,
+  onBedReason,
+  printerWords,
+  readOnlyWords,
+  roughly,
+  upWords,
+} from "./status";
 
 describe("readOnlyWords", () => {
   const desk = { label: "Chrome on a Mac", address: "192.168.1.10", forMs: 300_000, heardAgoMs: 4000 };
@@ -49,6 +59,7 @@ const summary = (fields: Partial<SummaryView> = {}): SummaryView => ({
   error_line: null,
   solid: 1,
   unbuilt: 0,
+  printed: 0,
   ...fields,
 });
 
@@ -85,5 +96,48 @@ describe("noBodiesReason", () => {
   it("says how many parts went unbuilt, and why", () => {
     expect(noBodiesReason(summary({ solid: 0, unbuilt: 3 }))).toContain("3 parts");
     expect(noBodiesReason(summary({ solid: 0, unbuilt: 1 }))).toContain("built no body");
+  });
+});
+
+const H2D: BedView = {
+  printer: "H2D",
+  said: "host",
+  volume: [350, 320, 325],
+  bounds: [0, 0, 0, 350, 320, 325],
+  plates: 1,
+  floor: [],
+  edges: [],
+};
+
+describe("onBedReason", () => {
+  it("says nothing when printed parts are laid on a bed", () => {
+    expect(onBedReason(summary({ printed: 2 }), H2D)).toBe("");
+  });
+
+  it("says a run with only cut parts has nothing to print", () => {
+    expect(onBedReason(summary({ parts: 14, printed: 0 }), H2D)).toContain("nothing here is printed");
+  });
+
+  it("says a run no printer was named for has no bed", () => {
+    expect(onBedReason(summary({ printed: 1 }), null)).toContain("no printer named");
+  });
+
+  it("says why printed parts are missing when no body was built", () => {
+    expect(onBedReason(summary({ printed: 1, solid: 0, unbuilt: 1 }), H2D)).toContain("built no body");
+  });
+});
+
+describe("printerWords and upWords", () => {
+  it("names a machine with its size, and a volume by its size alone", () => {
+    expect(printerWords(H2D)).toBe("the H2D (350 × 320 × 325 mm)");
+    expect(printerWords({ ...H2D, printer: null, said: "script", volume: [256, 256, 256] })).toBe(
+      "a 256 × 256 × 256 mm volume",
+    );
+  });
+
+  it("says an axis as an axis, and anything else as its numbers", () => {
+    expect(upWords([0, 0, 1])).toBe("+Z");
+    expect(upWords([0, -1, 0])).toBe("−Y");
+    expect(upWords([1, 1, 0])).toBe("1.000, 1.000, 0.000");
   });
 });

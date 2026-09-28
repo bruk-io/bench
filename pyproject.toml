@@ -191,8 +191,11 @@ transport = ["scene"]
 # a printed part's body built with the kernel - the stage, the files, and every record as its
 # view. It runs no script and knows nothing of one. `solids` is task-61's own addition: a
 # named planar face's frame, from the same `plane_of` a script's `on=` reads, one call per
-# face rather than per triangle.
+# face rather than per triangle. `geometry` is task-89's: the move that lays a drawn body on
+# the printer's bed is composed here, once per part, from the stage's offset, the move
+# `export` lays the STL down with and the bed's own slot, so the view only applies it.
 views = [
+    "geometry",
     "topology",
     "model",
     "ops",
@@ -239,12 +242,15 @@ script = [
 # runs a script with the kernel, so it sits above everything it wires together. Since
 # decision-4 it also places the reference the worker hands `reference=` - `kernel` for the
 # `Mesh` it moves, `placement` for the move itself, `report` for `surveyed`'s own report,
-# mirroring `tools/build.py`'s `[reference]` handling one edge over.
+# mirroring `tools/build.py`'s `[reference]` handling one edge over. `library.print` is for
+# `PRINTER`, the machine a script that names none has its printed parts laid on (task-89): the
+# host's choice, made at this edge, since `script` imports no library.
 worker = [
     "script",
     "transport",
     "adapters.browser",
     "library.gridfinity",
+    "library.print",
     "survey",
     "telemetry",
     "kernel",

@@ -65,7 +65,7 @@ src/bench/
   export.py      SVG and DXF text for parts and sheets (paths carry refs)   [done]
                  + stl() and three_mf() bytes for a printer                  [new]
   scene.py       the closed TypedDicts a run comes back as                  [done]
-  stage.py       where bodies stand in the 3D view, and the floor under them [new]
+  stage.py       where bodies stand in the 3D view, and on a printer's bed   [new]
   script.py      the script runtime: run(source) -> Scene JSON              [done]
                  + run(kernel=), per-part tree and mesh in the scene         [new]
                  + check_* closures, require(), scene violations             [new]
@@ -601,6 +601,13 @@ on every printed part's body before it goes into `scene['files']`, reading `bed_
 which face settles the turn. It runs only on the bytes a maker downloads; the mesh the 3D
 view draws is still the posed one `mating` built, which is the whole point of keeping the
 two apart.
+
+task-89 lets the view show the other half too, without a second mesh: `export.laid_on_bed`
+answers `as_printed`'s mesh together with the rigid move that made it, and `views._bed`
+composes that move with the stage's offset undone and a step across the printer's bed
+(`stage.on_bed`) into one `PrintingView.placement` - twelve numbers the view's *On bed*
+applies to the body it already drew. So what *On bed* shows is the STL, corner for corner,
+and `tests/adapter/test_on_bed.py` checks exactly that against the downloaded bytes.
 
 ## kernel.py [new] and adapters/ [new] - the seam a solid modeller is plugged into
 
