@@ -3,8 +3,9 @@
  * decision-12: every thing has one home, and an action lives next to its subject. The subject is
  * whatever is selected - nothing (the project), a part, a face, or a reference mesh - and this
  * module turns a selection and a scene into that subject and into what the inspector lists under
- * it: a part's findings, its standing, the part the status bar's count jumps to, and the
- * `mated(...)` line a pair of picked faces would write.
+ * it: a part's findings, its standing, the part and place the status bar's count jumps to, the
+ * `mated(...)` line a pair of picked faces would write - and what stays selected when a run
+ * replaces the scene, and the URL hash a selection is linked by (task-92).
  *
  * Pure: data in, data out. Nothing here counts triangles or measures anything - every number is
  * the scene's own, worked out in Python - it only sorts what a run reported by which part it is
@@ -121,6 +122,98 @@ export function worstPart(parts: readonly PartView[], violations: readonly Viola
     }
   }
   return worst?.ref ?? null;
+}
+
+/** Where the status bar's count goes (task-92): the part worst off, and the first place of its
+ * first finding of the worst kind on it - an error when it has one, else a warning - that is on
+ * that part, the place a person would click first in its list. `null` when no part is worse off
+ * than ok, which leaves the project as the place to look. A finding with no place on the part
+ * lights the part itself. */
+export function worstPlace(
+  parts: readonly PartView[],
+  violations: readonly ViolationView[],
+): { readonly part: string; readonly place: string } | null {
+  const part = worstPart(parts, violations);
+  if (part === null) return null;
+  const found = findingsOn(part, violations);
+  const severity = found.some((one) => one.severity === "error") ? "error" : "warning";
+  const first = found.find((one) => one.severity === severity);
+  return { part, place: first?.refs.find((ref) => within(ref, part)) ?? part };
+}
+
+/** What is selected, as the page holds it: the subject, and the ref lit in the view - the
+ * subject's own ref, or a place of one of its findings. */
+export interface Selection {
+  readonly subject: Subject;
+  readonly lit: string | null;
+}
+
+/** Whether a run names `ref`: a part it makes, or anything else it listed a ref for. */
+const named = (ref: string, parts: readonly PartView[], refs: readonly string[]): boolean =>
+  parts.some((part) => part.ref === ref) || refs.includes(ref);
+
+/** The selection after a run that made `parts` and named `refs` (decision-12: selection is by
+ * ref, so it survives a re-run when the ref still exists). A part stays the subject while the
+ * run still makes it, and a face while the run still names it; either gone, the project is the
+ * subject and nothing is lit - not the face's part, which nobody chose. A lit place the run no
+ * longer names goes out, and the subject's own ref is lit instead. A reference mesh is not a
+ * ref, and a run does not take it off the view, so it stays as it was.
+ *
+ * Whatever made the run - a script edit, a knob, the values file - the rule is the same: it
+ * only reads what the newest run made. */
+export function keptAcross(
+  selection: Selection,
+  parts: readonly PartView[],
+  refs: readonly string[],
+): Selection {
+  const { subject, lit } = selection;
+  if (subject.kind === "reference") return selection;
+  const still = lit !== null && named(lit, parts, refs) ? lit : null;
+  if (subject.kind === "project") return { subject, lit: still };
+  if (!named(subject.ref, parts, refs)) return { subject: PROJECT, lit: null };
+  return { subject: subjectOf(subject.ref, parts), lit: still ?? subject.ref };
+}
+
+/** A subject a link asks for: a part or a face, by ref - whether the run has it is the
+ * scene's to say, once one arrives (`linkedIn`). */
+export interface Linked {
+  readonly kind: "part" | "face";
+  readonly ref: string;
+}
+
+/** The URL hash that names `subject`, so a link opens on it: `#part=tote`,
+ * `#face=tote/grip-left/top`, each segment of the ref escaped and its `/` left as they read.
+ * The project, and a reference mesh - a file on the host rather than anything a run named -
+ * are the empty hash. */
+export function linkOf(subject: Subject): string {
+  if (subject.kind !== "part" && subject.kind !== "face") return "";
+  return `#${subject.kind}=${subject.ref.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+/** What a URL hash asks to have selected, or `null` for a hash that asks for nothing this app
+ * knows - empty, another key, or escaping that does not decode - which is simply the project. */
+export function linked(hash: string): Linked | null {
+  const text = hash.startsWith("#") ? hash.slice(1) : hash;
+  const equals = text.indexOf("=");
+  if (equals === -1) return null;
+  const kind = text.slice(0, equals);
+  if (kind !== "part" && kind !== "face") return null;
+  let ref: string;
+  try {
+    ref = text.slice(equals + 1).split("/").map(decodeURIComponent).join("/");
+  } catch {
+    return null;
+  }
+  return ref === "" ? null : { kind, ref };
+}
+
+/** The subject a link's ask makes in a run that made `parts` and named `refs`: the ref as
+ * `subjectOf` reads it when the run names it - so a `#face=` that is a part's own ref is the
+ * part - and otherwise the project, quietly: a link to something since renamed is not an
+ * error, it is somewhere to start. */
+export function linkedIn(asked: Linked | null, parts: readonly PartView[], refs: readonly string[]): Subject {
+  if (asked === null || !named(asked.ref, parts, refs)) return PROJECT;
+  return subjectOf(asked.ref, parts);
 }
 
 /** A part's ref as a Python identifier, the way a maker would type it by hand: `-` turned to
