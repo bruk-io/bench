@@ -4,9 +4,11 @@ title: UI rough edges left after m-13
 status: To Do
 assignee: []
 created_date: '2026-09-28 06:06'
+updated_date: '2026-09-29 00:14'
 labels:
   - web
   - ui
+milestone: m-14
 dependencies: []
 priority: low
 ---

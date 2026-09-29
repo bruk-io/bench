@@ -4,9 +4,11 @@ title: A reference's survey takes 155 s on a large mesh
 status: To Do
 assignee: []
 created_date: '2026-09-28 13:56'
+updated_date: '2026-09-29 00:14'
 labels:
   - worker
   - survey
+milestone: m-14
 dependencies: []
 priority: medium
 ---
